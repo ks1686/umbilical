@@ -40,7 +40,7 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 - `--check-certificate=true` (explicit, so a later change cannot silently disable TLS checks)
 - `--check-integrity=true`, `--auto-file-renaming=true`, `--allow-overwrite=false`
 - `--dir` limited to the user-chosen folder (security-scoped bookmark)
-- The RPC secret lives only in memory in `RPCClient`. It is never logged, written to disk, or shown in the UI.
+- The RPC secret lives only in memory in `RPCClient`. It is never logged or shown in the UI, and is only written to the temporary settings file, which is deleted once aria2 is listening.
 
 ## 4. Security requirements (from Repo Guard, to be re-audited)
 
