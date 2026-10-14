@@ -1,0 +1,19 @@
+included:
+  - App
+  - Tests
+
+excluded:
+  - build
+  - DerivedData
+  - helpers
+
+line_length:
+  warning: 120
+  error: 120
+
+identifier_name:
+  min_length:
+    warning: 1
+    error: 1
+
+reporter: xcode
