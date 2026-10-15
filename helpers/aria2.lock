@@ -13,6 +13,9 @@ tarball_sha256=60a420ad7085eb616cb6e2bdf0a7206d68ff3d37fb5a956dc44242eb2f79b66b
 source_date_epoch=1700050052
 build_date=Nov 15 2023
 build_time=12:07:32
+# touch -t stamp applied to object files before the final link.
+# It is intentionally later than macOS SDK headers so make does not rebuild.
+object_mtime=210001010000.00
 # SHA-256 of the universal Mach-O written to helpers/bin/aria2c.
 # scripts/build-aria2.sh prints the hash and exits nonzero while this is empty.
 binary_sha256=

@@ -43,8 +43,9 @@ OpenSSL or GnuTLS. It compiles arm64 and x86_64, then combines them with
 `scripts/build-aria2.sh --verify-tarball` only checks the tarball hash.
 
 The recipe freezes `__DATE__` and `__TIME__` to the 1.37.0 release instant
-(2023-11-15 12:07:32 UTC) and links with `-Wl,-reproducible`, so the
-universal binary hash in `helpers/aria2.lock` can stay stable.
+(2023-11-15 12:07:32 UTC), pins object mtimes, and links with
+`-Wl,-reproducible`, so the universal binary hash in `helpers/aria2.lock`
+can stay stable.
 
 `scripts/fetch-helpers.sh` downloads the pinned yt-dlp macOS binary. It
 checks the GPG signature on that release's `SHA2-256SUMS` with the published

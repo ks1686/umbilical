@@ -11,9 +11,10 @@
 # aria2 prints __DATE__ and __TIME__ from FeatureConfig.cc. Those macros
 # would change the binary hash on every build. The recipe rewrites them to
 # the release instant in helpers/aria2.lock, exports SOURCE_DATE_EPOCH and
-# ZERO_AR_DATE, and links with -Wl,-reproducible. Object mtimes are set to
-# that same instant before the link. The script links twice and requires
-# the same slice hash before it will accept the universal binary.
+# ZERO_AR_DATE, and links with -Wl,-reproducible. After compile, object
+# mtimes are pinned to object_mtime (a fixed instant after the macOS SDK
+# headers, so make will not rebuild) and the binary is linked twice. The
+# slice hashes must match.
 #
 # Usage:
 #   scripts/build-aria2.sh
@@ -87,6 +88,7 @@ tarball_sha256="$(lock_get tarball_sha256 | tr '[:upper:]' '[:lower:]')"
 source_date_epoch="$(lock_get source_date_epoch)"
 build_date="$(lock_get build_date)"
 build_time="$(lock_get build_time)"
+object_mtime="$(lock_get object_mtime)"
 
 require_url "$tarball_url" "https://github.com/aria2/aria2/releases/download/release-${version}/"
 if [[ "$tarball_sha256" != "$(printf '%s' "$tarball_sha256" | tr -cd '0-9a-f')" ]] \
@@ -111,6 +113,13 @@ case "$build_time" in
   [0-9][0-9]:[0-9][0-9]:[0-9][0-9]) ;;
   *)
     echo "build_time in ${lock_file} must look like '12:07:32'" >&2
+    exit 1
+    ;;
+esac
+case "$object_mtime" in
+  [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].[0-9][0-9]) ;;
+  *)
+    echo "object_mtime in ${lock_file} must look like '210001010000.00'" >&2
     exit 1
     ;;
 esac
@@ -171,7 +180,6 @@ if [[ "$stamp_text" != "${build_date} ${build_time}" ]]; then
   echo "actual   ${stamp_text}" >&2
   exit 1
 fi
-touch_stamp="$(LC_ALL=C TZ=UTC date -r "$source_date_epoch" "+%Y%m%d%H%M.%S")"
 
 export SOURCE_DATE_EPOCH="$source_date_epoch"
 export ZERO_AR_DATE=1
@@ -293,9 +301,8 @@ EOF
   jobs="$(sysctl -n hw.ncpu)"
   make -C "${dest}/tree" -j"$jobs"
 
-  # Age every build input together, then link twice from those bytes.
-  # A later make must not recompile: that would mint new object mtimes.
-  find "${dest}/tree" -type f -exec touch -t "$touch_stamp" {} +
+  # The first link saw clock-dependent object mtimes. Pin those mtimes and
+  # link again. Pinning only the products keeps them newer than SDK headers.
   local first_hash=""
   local attempt
   for attempt in 1 2; do
@@ -337,6 +344,8 @@ link_aria2c() {
   local attempt="$3"
   local tree="${dest}/tree"
   local log="${dest}/relink-${attempt}.log"
+  find "$tree" -type f \( -name '*.o' -o -name '*.a' -o -name '*.lo' -o -name '*.la' \) \
+    -exec touch -t "$object_mtime" {} +
   rm -f "${tree}/src/aria2c" "${tree}/src/.libs/aria2c"
   make -C "${tree}/src" -j"$jobs" aria2c >"$log" 2>&1 || {
     cat "$log" >&2
