@@ -201,6 +201,24 @@ enum ProcessSockets {
         return bytes
     }
 #else
+    private final class LsofCapture {
+        private let lock = NSLock()
+        private var data = Data()
+
+        func store(_ value: Data) {
+            lock.lock()
+            data = value
+            lock.unlock()
+        }
+
+        func copy() -> Data {
+            lock.lock()
+            let value = data
+            lock.unlock()
+            return value
+        }
+    }
+
     private func macRemotes(root: Int32) throws -> [String] {
         var found: [String] = []
         for pid in processIDs(root: root) {
@@ -212,14 +230,21 @@ enum ProcessSockets {
     private func lsofRemotes(pid: Int32) throws -> [String] {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        process.arguments = ["-nP", "-a", "-p", "\(pid)", "-iTCP"]
+        // -b skips kernel calls that can block. Without it, lsof on aria2
+        // has hung for the whole macOS job.
+        process.arguments = ["-nP", "-b", "-a", "-p", "\(pid)", "-iTCP"]
         let output = Pipe()
         process.standardOutput = output
         process.standardError = FileHandle(forWritingAtPath: "/dev/null")
+        let captured = LsofCapture()
         try process.run()
-        process.waitUntilExit()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
-        guard let text = String(bytes: data, encoding: .utf8) else {
+        let reader = Thread {
+            captured.store(output.fileHandleForReading.readDataToEndOfFile())
+        }
+        reader.start()
+        waitForExit(process, seconds: 3)
+        waitForThread(reader, seconds: 1)
+        guard let text = String(bytes: captured.copy(), encoding: .utf8) else {
             throw ProcessSocketError.unreadable("lsof output was not utf-8")
         }
         // lsof exits 1 when this pid has no TCP socket. The watch parent is
@@ -234,6 +259,30 @@ enum ProcessSockets {
             }
         }
         return hosts
+    }
+
+    private func waitForExit(_ process: Process, seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while process.isRunning && Date() < deadline {
+            usleep(20_000)
+        }
+        if process.isRunning {
+            kill(process.processIdentifier, SIGKILL)
+        }
+        let killed = Date().addingTimeInterval(1)
+        while process.isRunning && Date() < killed {
+            usleep(20_000)
+        }
+        if !process.isRunning {
+            process.waitUntilExit()
+        }
+    }
+
+    private func waitForThread(_ thread: Thread, seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while !thread.isFinished && Date() < deadline {
+            usleep(20_000)
+        }
     }
 
     private func remoteHost(_ line: String) throws -> String? {
