@@ -17,7 +17,7 @@ import XCTest
 @MainActor
 final class VideoDownloadSessionTests: XCTestCase {
     func testMissingYtDlpDoesNotStartAria2() async throws {
-        let root = try makeTempDirectory()
+        let root = try videoRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let fixture = makeSession(video: VideoHelpers(ytDlp: nil, watch: nil))
         try await fixture.model.updateDownloadDirectory(root)
@@ -38,7 +38,7 @@ final class VideoDownloadSessionTests: XCTestCase {
     }
 
     func testVideoRowShowsProgressThenCompletes() async throws {
-        let root = try makeTempDirectory()
+        let root = try videoRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let helper = try writeVideoHelper(quickVideoScript, in: root)
         let quarantine = SessionQuarantine()
@@ -65,7 +65,7 @@ final class VideoDownloadSessionTests: XCTestCase {
     }
 
     func testCancelRemovesTheRowAndKillsTheHelper() async throws {
-        let root = try makeTempDirectory()
+        let root = try videoRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let helper = try writeVideoHelper(cancelVideoScript, in: root)
         let fixture = try await runningVideoSession(
@@ -113,6 +113,12 @@ final class VideoDownloadSessionTests: XCTestCase {
             )
         )
     }
+}
+
+@MainActor
+private func videoRoot() throws -> URL {
+    // macOS temporaryDirectory is /var, which is a symlink to /private/var.
+    try makeTempDirectory().resolvingSymlinksInPath()
 }
 
 @MainActor
