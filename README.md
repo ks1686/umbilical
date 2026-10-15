@@ -42,10 +42,11 @@ engine tests. The Xcode scheme test covers the app shell.
 
 Build `aria2c` with `scripts/build-aria2.sh` before a real download. Generate
 the Xcode project, then build. The app target copies `helpers/bin/aria2c` into
-`Contents/Helpers` when that file is already built. `umb-watch` is built with
-the app and bundled in `Contents/MacOS`.
-
-The app also accepts `ARIA2C` and `UMB_WATCH` when those paths are executable.
+`Contents/Helpers` when that file is already built, after checking that its
+`Enabled Features` line does not contain `WebSocket`, and signs it ad hoc
+with the hardened runtime. `umb-watch` is built with the app and bundled in
+`Contents/Helpers`. Release builds use only those two paths. Debug builds
+also honor `ARIA2C` and `UMB_WATCH` when those paths are executable.
 It saves files only inside the folder chosen in Settings. Pause, resume, and
 remove act on the running download. The menu bar shows progress while a
 download is active. Finished and failed downloads can post a notification.

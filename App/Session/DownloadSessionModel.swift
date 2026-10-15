@@ -56,8 +56,8 @@ public final class DownloadSessionModel {
         }
         let names = missing.joined(separator: " and ")
         return "Missing \(names). Build aria2c with scripts/build-aria2.sh. "
-            + "The app checks ARIA2C and Contents/Helpers/aria2c. "
-            + "umb-watch is bundled and can be overridden with UMB_WATCH."
+            + "Release builds use Contents/Helpers only. "
+            + "Debug builds also honor ARIA2C and UMB_WATCH."
     }
 
     public func updateDownloadDirectory(_ folder: URL) async throws {

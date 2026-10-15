@@ -20,10 +20,16 @@ xcodebuild \
   build
 ```
 
-The built app is under DerivedData. `umb-watch` is inside
-`Contents/MacOS`. `aria2c` is inside `Contents/Helpers` when the helper binary
-existed at build time. You can also launch with `ARIA2C` and `UMB_WATCH` set
-to executable paths.
+The built app is under DerivedData. `umb-watch` and `aria2c` are inside
+`Contents/Helpers`. `aria2c` is copied only when `helpers/bin/aria2c` exists.
+The copy script reads `aria2c -v`, keeps the line that starts with
+`Enabled Features`, and fails the build if that line contains `WebSocket`.
+A good line is `Enabled Features: BitTorrent, GZip, HTTPS, Message Digest, Metalink, XML-RPC`.
+It then runs `codesign --force --sign - -o runtime` on the copied binary.
+`ARIA2_CODESIGN_IDENTITY` is `-` until M5 passes a Developer ID. Xcode signs
+`umbilical.app` after that script. A Debug launch may set `ARIA2C` and
+`UMB_WATCH` to executable paths. A Release launch ignores both and uses
+`Contents/Helpers` only.
 
 Confirm App Sandbox is off:
 
@@ -32,6 +38,8 @@ codesign -d --entitlements :- /path/to/umbilical.app
 ```
 
 The entitlements must not contain `com.apple.security.app-sandbox`.
+When aria2c was copied, `codesign -dv /path/to/umbilical.app/Contents/Helpers/aria2c`
+reports flags that include `runtime`.
 
 ## Checklist
 
@@ -70,9 +78,10 @@ The entitlements must not contain `com.apple.security.app-sandbox`.
     that contains `umbilical`.
 11. During a download, inspect the `aria2c` process with `ps eww`. The command
     line and environment do not contain `rpc-secret` or `token:`.
-12. Remove `aria2c` from the app and unset `ARIA2C`. Launch. The window
-    explains that aria2c is missing and does not start a download. Restore the
-    helper and use Try Again. Downloads work again.
+12. Remove `Contents/Helpers/aria2c` from a Release build. That build ignores
+    `ARIA2C` and `UMB_WATCH`. The window explains that aria2c is missing and
+    does not start a download. Restore the helper and use Try Again. Downloads
+    work again.
 13. Idle memory: quit other copies, launch the Release build, leave it with no
     active downloads for a minute, and read Memory in Activity Monitor. It
     should stay under 60 MB.

@@ -13,16 +13,25 @@ enum AppHelpers {
     }
 
     static func locate() -> Located {
-        let environment = ProcessInfo.processInfo.environment
+        // Release builds ignore ARIA2C and UMB_WATCH and only use Contents/Helpers.
+        #if DEBUG
+            let environment = ProcessInfo.processInfo.environment
+            let allowEnvironmentOverride = true
+        #else
+            let environment: [String: String] = [:]
+            let allowEnvironmentOverride = false
+        #endif
         let watch = HelperLocator.firstExecutable(
             environment: environment,
             key: "UMB_WATCH",
-            candidates: watchCandidates()
+            candidates: [contentsHelpers("umb-watch")],
+            allowEnvironmentOverride: allowEnvironmentOverride
         )
         let aria2 = HelperLocator.firstExecutable(
             environment: environment,
             key: "ARIA2C",
-            candidates: aria2Candidates()
+            candidates: [contentsHelpers("aria2c")],
+            allowEnvironmentOverride: allowEnvironmentOverride
         )
         return Located(
             status: HelperStatus(aria2Found: aria2 != nil, watchFound: watch != nil),
@@ -31,26 +40,10 @@ enum AppHelpers {
         )
     }
 
-    private static func watchCandidates() -> [URL] {
-        var urls: [URL] = []
-        if let auxiliary = Bundle.main.url(forAuxiliaryExecutable: "umb-watch") {
-            urls.append(auxiliary)
-        }
-        if let executable = Bundle.main.executableURL {
-            let sibling =
-                executable
-                .deletingLastPathComponent()
-                .appendingPathComponent("umb-watch")
-            urls.append(sibling)
-        }
-        return urls
-    }
-
-    private static func aria2Candidates() -> [URL] {
-        let helpers = Bundle.main.bundleURL
+    private static func contentsHelpers(_ name: String) -> URL {
+        Bundle.main.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)
             .appendingPathComponent("Helpers", isDirectory: true)
-            .appendingPathComponent("aria2c")
-        return [helpers]
+            .appendingPathComponent(name)
     }
 }

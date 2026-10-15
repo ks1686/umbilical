@@ -72,7 +72,8 @@ struct SettingsView: View {
             }
             Text(
                 "Build aria2c with scripts/build-aria2.sh. "
-                    + "The app checks ARIA2C and Contents/Helpers/aria2c."
+                    + "Release builds use Contents/Helpers only. "
+                    + "Debug builds also honor ARIA2C and UMB_WATCH."
             )
             .font(.callout)
             .foregroundStyle(.secondary)

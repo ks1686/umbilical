@@ -8,9 +8,10 @@ public enum HelperLocator {
     public static func firstExecutable(
         environment: [String: String],
         key: String,
-        candidates: [URL]
+        candidates: [URL],
+        allowEnvironmentOverride: Bool = true
     ) -> URL? {
-        if let raw = environment[key], !raw.isEmpty {
+        if allowEnvironmentOverride, let raw = environment[key], !raw.isEmpty {
             let url = URL(fileURLWithPath: raw)
             if FileManager.default.isExecutableFile(atPath: url.path) {
                 return url

@@ -40,6 +40,28 @@ final class HelperLocatorTests: XCTestCase {
         XCTAssertNil(none)
     }
 
+    func testDisabledOverrideIgnoresAnExecutableEnvironmentPath() throws {
+        let directory = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fromEnv = try executable(named: "from-env", in: directory)
+        let bundled = try executable(named: "bundled", in: directory)
+        let found = HelperLocator.firstExecutable(
+            environment: ["ARIA2C": fromEnv.path],
+            key: "ARIA2C",
+            candidates: [bundled],
+            allowEnvironmentOverride: false
+        )
+        XCTAssertEqual(found?.path, bundled.path)
+        let absent = directory.appendingPathComponent("absent")
+        let missing = HelperLocator.firstExecutable(
+            environment: ["UMB_WATCH": fromEnv.path],
+            key: "UMB_WATCH",
+            candidates: [absent],
+            allowEnvironmentOverride: false
+        )
+        XCTAssertNil(missing)
+    }
+
     private func executable(named name: String, in directory: URL) throws -> URL {
         let url = directory.appendingPathComponent(name)
         try Data("#!/bin/sh\nexit 0\n".utf8).write(to: url)
