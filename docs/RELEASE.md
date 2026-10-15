@@ -13,6 +13,7 @@ Recorded October 15, 2026. These apply through v1 and to any future build machin
 - The App Store Connect API key file used by `notarytool` lives on the signing Mac with permissions 600 (file) and 700 (folder). genv sets the identity and key variables.
 - Signing commands read keys from the Keychain or genv. They never print keys or pass them on a command line. Logs posted anywhere are redacted.
 - Keys are never copied to CI, cloud agents, the repo, or chat.
+- The App Store Connect API key is also backed up in the password manager, so the Mac is not the only copy.
 
 ## Sparkle update key
 - Generated near release on the signing Mac with Sparkle's `generate_keys`, stored in the Keychain. Only the public key ships in the app.
@@ -27,4 +28,6 @@ A Mac Studio is joining the setup in one to two months. Machine Keeper will add 
 - Install the Developer ID certificate on it (export from the Keychain as a password-protected .p12, import, delete the .p12).
 - Restore the Sparkle private key from the password manager backup using the same no-plaintext-left-behind steps.
 - Copy the App Store Connect key with the same 600 and 700 permissions.
+- Move the .p12 and the App Store Connect key only through the password manager or a direct encrypted transfer, never iCloud Drive, email, or chat, and delete every temporary copy afterward.
+- Run a test notarization on the new machine before trusting it.
 - Confirm both machines produce builds that verify with the same Sparkle public key.
