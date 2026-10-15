@@ -8,15 +8,15 @@ Last updated October 15, 2026.
 | M0 skeleton (PR #1, merged `d55d279`) | Code Lead | done |
 | M1 engine (PR #2, merged `1e02b8a`) | Code Lead | done |
 | Release decisions doc (PR #3, merged `ec0c5ad`) | Code Lead | done |
-| M2 torrent and magnet, no seeding, packet-capture test | Code Lead | in progress |
+| M2 torrent and magnet, no seeding, packet-capture test (release blocker) | Code Lead | in progress |
 | M2 follow-ups: zizmor online audits, remove `seed-ratio=0.0`, `just test` recipe | Code Lead | in progress |
 | M3 UI | Code Lead | planned |
 | M4 Safari extension | Code Lead | planned |
 | Video downloads with yt-dlp and ffmpeg | Code Lead | planned |
 | M5 ship: dmg, Sparkle update feed | Code Lead | planned |
 | Sparkle key generation on the signing Mac | Machine Keeper | planned |
-| Sparkle private key backup in the password manager | Machine Keeper | planned |
-| App Store Connect API key backup in the password manager | Machine Keeper | planned (pending, not done) |
+| Sparkle private key backup in the password manager (release blocker) | Machine Keeper | planned |
+| App Store Connect API key backup in the password manager (release blocker) | Machine Keeper | planned (pending, not done) |
 | Developer ID signing and notarization of the release dmg | Machine Keeper | planned |
 | License provider choice | Code Lead | planned |
 | Price, offline grace period, device limit | Code Lead | planned |
