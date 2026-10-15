@@ -19,6 +19,20 @@ Recorded October 15, 2026. These apply through v1 and to any future build machin
 
 The Developer ID certificate and the App Store Connect API key are shared with the genv and PeaProxy releases. umbilical signs and notarizes on the Mac, while genv and PeaProxy sign in GitHub Actions with copies stored as `MACOS_*` secrets in each repo's `release` environment (only `v*` tags can use them), so a rotation also means re-uploading them with `scripts/set-macos-signing-secrets.sh --env release`. Changing, rotating, revoking or moving any of them can break signing for those apps too. Before any such change, check the genv and PeaProxy release steps and test a signed build of each. The Sparkle key is umbilical's own and is not shared.
 
+## yt-dlp helper entitlements
+
+The pinned yt-dlp macOS binary is a PyInstaller build. It unpacks a Python runtime at launch. Hardened runtime needs these three entitlements on that helper:
+
+- `com.apple.security.cs.disable-library-validation`, so the extracted libpython can load
+- `com.apple.security.cs.allow-unsigned-executable-memory`, for libffi's writable executable mapping
+- `com.apple.security.cs.allow-jit`, for `MAP_JIT` on arm64
+
+These keys are limited to `helpers/yt-dlp.entitlements`. `scripts/copy-bundled-yt-dlp.sh` applies that file when it signs the helper. App entitlements are unchanged.
+
+`com.apple.security.cs.allow-dyld-environment-variables` is not set, so DYLD injection stays blocked.
+
+The residual risk is a same-user process swapping libraries PyInstaller extracts into its temporary directory. That gives nothing beyond that user's existing access.
+
 ## Sparkle update key
 - Generated near release on the signing Mac with Sparkle's `generate_keys`, stored in the Keychain. Only the public key ships in the app.
 - Backup (planned): `generate_keys -x` writes the private key as plain text. Write it into a folder readable only by Karim's account, then commit it to the genv config repo under the same safeguards as the App Store Connect key, and delete the plain-text file. It must never land in Downloads or iCloud.

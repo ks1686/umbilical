@@ -19,6 +19,90 @@ lock_get() {
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+keyring_snapshot() {
+  local dir="$1"
+  (
+    cd "$dir"
+    find . -print | LC_ALL=C sort | while IFS= read -r path; do
+      if [[ -f "$path" ]]; then
+        sha256sum "$path"
+      else
+        printf 'dir %s\n' "$path"
+      fi
+    done
+  )
+}
+
+echo "Release copy fails when yt-dlp is missing"
+empty_src="${work}/empty-src"
+mkdir -p "$empty_src"
+release_log=""
+if release_log="$(
+  SRCROOT="$empty_src" \
+    TARGET_BUILD_DIR="${work}/build" \
+    WRAPPER_NAME="umbilical.app" \
+    CONFIGURATION="Release" \
+    "${root}/scripts/copy-bundled-yt-dlp.sh" 2>&1
+)"; then
+  echo "Release build continued without yt-dlp" >&2
+  printf '%s\n' "$release_log" >&2
+  exit 1
+fi
+case "$release_log" in
+  *"missing helpers/bin/yt-dlp"*) ;;
+  *)
+    echo "Release failure was not a missing yt-dlp" >&2
+    printf '%s\n' "$release_log" >&2
+    exit 1
+    ;;
+esac
+
+echo "Debug copy warns and continues when yt-dlp is missing"
+debug_log=""
+if ! debug_log="$(
+  SRCROOT="$empty_src" \
+    TARGET_BUILD_DIR="${work}/build" \
+    WRAPPER_NAME="umbilical.app" \
+    CONFIGURATION="Debug" \
+    "${root}/scripts/copy-bundled-yt-dlp.sh" 2>&1
+)"; then
+  echo "Debug build failed without yt-dlp" >&2
+  printf '%s\n' "$debug_log" >&2
+  exit 1
+fi
+case "$debug_log" in
+  *"warning: missing helpers/bin/yt-dlp; continuing"*) ;;
+  *)
+    echo "Debug build did not warn that yt-dlp is missing" >&2
+    printf '%s\n' "$debug_log" >&2
+    exit 1
+    ;;
+esac
+
+helper_entitlements="${root}/helpers/yt-dlp.entitlements"
+app_entitlements="${root}/App/umbilical.entitlements"
+for key in \
+  com.apple.security.cs.disable-library-validation \
+  com.apple.security.cs.allow-unsigned-executable-memory \
+  com.apple.security.cs.allow-jit
+do
+  if ! grep -q "$key" "$helper_entitlements"; then
+    echo "helper entitlements missing ${key}" >&2
+    exit 1
+  fi
+  if grep -q "$key" "$app_entitlements"; then
+    echo "app entitlements include ${key}" >&2
+    exit 1
+  fi
+done
+if grep -q 'com.apple.security.cs.allow-dyld-environment-variables' \
+  "$helper_entitlements" "$app_entitlements"
+then
+  echo "allow-dyld-environment-variables is set" >&2
+  exit 1
+fi
+echo "yt-dlp entitlements stay on the helper"
+
 sums_url="$(lock_get sums_url)"
 sig_url="$(lock_get sums_sig_url)"
 case "$sums_url" in
@@ -41,9 +125,27 @@ curl --fail --silent --show-error --location --retry 3 \
 curl --fail --silent --show-error --location --retry 3 \
   --output "${work}/SHA2-256SUMS.sig" "$sig_url"
 
-echo "valid signature is accepted"
-"${root}/scripts/fetch-helpers.sh" \
+fake_home="${work}/caller-home"
+mkdir -p "${fake_home}/.gnupg"
+chmod 700 "${fake_home}/.gnupg"
+printf 'untouched\n' >"${fake_home}/.gnupg/marker"
+before_keyring="$(keyring_snapshot "$fake_home")"
+
+echo "valid signature is accepted without writing the caller keyring"
+env HOME="${fake_home}" GNUPGHOME="${fake_home}/.gnupg" \
+  "${root}/scripts/fetch-helpers.sh" \
   --verify-sums "${work}/SHA2-256SUMS" "${work}/SHA2-256SUMS.sig"
+env -u GNUPGHOME HOME="${fake_home}" \
+  "${root}/scripts/fetch-helpers.sh" \
+  --verify-sums "${work}/SHA2-256SUMS" "${work}/SHA2-256SUMS.sig"
+
+after_keyring="$(keyring_snapshot "$fake_home")"
+if [[ "$before_keyring" != "$after_keyring" ]]; then
+  echo "caller keyring changed during signature verification" >&2
+  printf 'before:\n%s\n' "$before_keyring" >&2
+  printf 'after:\n%s\n' "$after_keyring" >&2
+  exit 1
+fi
 
 cp "${work}/SHA2-256SUMS" "${work}/SHA2-256SUMS.tampered"
 printf 'tampered\n' >>"${work}/SHA2-256SUMS.tampered"

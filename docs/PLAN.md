@@ -185,7 +185,7 @@ Only `http` and `https` URLs pass `HTTPURLPolicy`. Finished files get `com.apple
 
 Cancel sends `SIGTERM` to `umb-watch`, which kills the yt-dlp process group. The row's button says Cancel and does not ask for confirmation. Pause is not offered.
 
-Release builds ignore `YT_DLP`. Debug builds honor it when the path is executable. The helper is copied and signed by `scripts/copy-bundled-yt-dlp.sh` with `-o runtime`, the same pattern as aria2c. `YT_DLP_CODESIGN_IDENTITY` is `-` until M5. The script does not pass `--timestamp`.
+Release builds ignore `YT_DLP`. Debug builds honor it when the path is executable. The helper is copied and signed by `scripts/copy-bundled-yt-dlp.sh` with `-o runtime`, the same pattern as aria2c. A Release build fails when `helpers/bin/yt-dlp` is missing. Debug warns and continues. `YT_DLP_CODESIGN_IDENTITY` is `-` until M5. The script does not pass `--timestamp`.
 
 Repo Guard: `helpers/yt-dlp.entitlements` is on the helper only. yt-dlp_macos is a PyInstaller binary that unpacks a Python runtime at launch. Hardened runtime needs all three of these or `--version` does not return on current arm64 macOS:
 
@@ -193,6 +193,6 @@ Repo Guard: `helpers/yt-dlp.entitlements` is on the helper only. yt-dlp_macos is
 - `com.apple.security.cs.allow-unsigned-executable-memory` for libffi's writable executable mapping
 - `com.apple.security.cs.allow-jit` for `MAP_JIT` on arm64
 
-`disable-library-validation` alone can hang in libffi. The app entitlements do not gain these keys. `com.apple.security.get-task-allow` is not set. CI signs the pinned binary with `-o runtime` and runs `<app>/Contents/Helpers/yt-dlp --version` from the Release app. Review these keys again before M5 Developer ID signing.
+`disable-library-validation` alone can hang in libffi. The app entitlements do not gain these keys. `com.apple.security.get-task-allow` is not set. CI signs the pinned binary with `-o runtime` and runs `<app>/Contents/Helpers/yt-dlp --version` from the Release app. The decision is recorded in `docs/RELEASE.md`.
 
 `docs/VIDEO-MANUAL.md` is the Mac pass. It has not been run. The checklist item is in progress, not done.

@@ -36,6 +36,11 @@ if printf '%s\n' "$entitlements" | grep -q 'com.apple.security.get-task-allow'; 
   printf '%s\n' "$entitlements" >&2
   exit 1
 fi
+if printf '%s\n' "$entitlements" | grep -q 'com.apple.security.cs.allow-dyld-environment-variables'; then
+  echo "yt-dlp entitlements allow DYLD environment variables" >&2
+  printf '%s\n' "$entitlements" >&2
+  exit 1
+fi
 
 required_keys=(
   com.apple.security.cs.disable-library-validation
