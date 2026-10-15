@@ -248,5 +248,235 @@ class ReleaseToolsTest(unittest.TestCase):
                     os.environ["POLAR_ORGANIZATION_ID"] = previous
 
 
+    def _saved_env(self, names: tuple[str, ...]) -> dict[str, str | None]:
+        return {name: os.environ.get(name) for name in names}
+
+    def _restore_env(self, saved: dict[str, str | None]) -> None:
+        for name, value in saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    def test_prepare_licensing_env_overrides_file(self) -> None:
+        saved = self._saved_env(("POLAR_ORGANIZATION_ID",))
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                dest = Path(tmp) / "Licensing.local.xcconfig"
+                dest.write_text(
+                    "POLAR_ORGANIZATION_ID = aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa\n",
+                    encoding="utf-8",
+                )
+                os.environ["POLAR_ORGANIZATION_ID"] = "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB"
+                value = release_tools.prepare_licensing(dest)
+                self.assertEqual(value, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+                self.assertIn(
+                    "POLAR_ORGANIZATION_ID = bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb\n",
+                    dest.read_text(encoding="utf-8"),
+                )
+                os.environ["POLAR_ORGANIZATION_ID"] = "   "
+                from_file = release_tools.prepare_licensing(dest)
+                self.assertEqual(from_file, "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
+                os.environ.pop("POLAR_ORGANIZATION_ID", None)
+                missing = Path(tmp) / "Licensing.local.xcconfig"
+                missing.unlink()
+                with self.assertRaises(SystemExit) as caught:
+                    release_tools.prepare_licensing(missing)
+                self.assertIn("empty", str(caught.exception))
+                dest.write_text("POLAR_ORGANIZATION_ID = not-a-uuid\n", encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    release_tools.prepare_licensing(dest)
+        finally:
+            self._restore_env(saved)
+
+    def test_repo_from_remote(self) -> None:
+        for url in (
+            "git@github.com:ks1686/umbilical.git",
+            "https://github.com/ks1686/umbilical.git",
+            "https://github.com/ks1686/umbilical",
+            "ssh://git@github.com/ks1686/umbilical.git",
+            "https://github.com/ks1686/umbilical.git/",
+        ):
+            release_tools.assert_repo(release_tools.repo_from_remote(url))
+        token_remote = "https://x-access-token:secret-token@github.com/ks1686/umbilical.git"
+        parsed = release_tools.repo_from_remote(token_remote)
+        self.assertEqual(parsed, "ks1686/umbilical")
+        self.assertNotIn("secret-token", parsed)
+        with self.assertRaises(SystemExit) as caught:
+            release_tools.repo_from_remote("https://user:secret-token@gitlab.com/ks1686/umbilical.git")
+        self.assertNotIn("secret-token", str(caught.exception))
+        with self.assertRaises(SystemExit):
+            release_tools.assert_repo(release_tools.repo_from_remote("git@github.com:other/umbilical.git"))
+
+    def test_developer_id_identity_requires_one(self) -> None:
+        text = '\n'.join(
+            [
+                '  1) AAAA "Apple Development: Karim (TEAM)"',
+                '  2) BBBB "Developer ID Application: Karim Smires (TEAMID)"',
+                "     2 valid identities found",
+            ]
+        )
+        self.assertEqual(
+            release_tools.developer_id_identity(text),
+            "Developer ID Application: Karim Smires (TEAMID)",
+        )
+        self.assertNotIn("Developer ID Installer", release_tools.developer_id_identity(
+            '  1) CCCC "Developer ID Application: Only (TEAM)"\n'
+            '  2) DDDD "Developer ID Installer: Only (TEAM)"\n'
+        ))
+        with self.assertRaises(SystemExit):
+            release_tools.developer_id_identity('  1) AAAA "Apple Development: Karim (TEAM)"\n')
+        with self.assertRaises(SystemExit):
+            release_tools.developer_id_identity(
+                '  1) AAAA "Developer ID Application: One (TEAM)"\n'
+                '  2) BBBB "Developer ID Application: Two (TEAM)"\n'
+            )
+
+    def test_sparkle_key_file_mode_and_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            key = Path(tmp) / "umbilical.key"
+            secret = "sentinel-private-seed-not-printed"
+            key.write_text(secret + "\n", encoding="utf-8")
+            key.chmod(0o644)
+            with self.assertRaises(SystemExit) as caught:
+                release_tools.check_sparkle_key(ROOT / "App" / "Info.plist", key)
+            self.assertIn("mode 600", str(caught.exception))
+            self.assertNotIn(secret, str(caught.exception))
+            seed = base64.b64encode(os.urandom(32)).decode("ascii")
+            key.write_text(seed + "\n", encoding="utf-8")
+            key.chmod(0o600)
+            with self.assertRaises(SystemExit) as caught:
+                release_tools.check_sparkle_key(ROOT / "App" / "Info.plist", key)
+            self.assertIn("does not match", str(caught.exception))
+            self.assertNotIn(seed, str(caught.exception))
+            key.chmod(0o400)
+            with self.assertRaises(SystemExit) as caught:
+                release_tools.check_sparkle_key(ROOT / "App" / "Info.plist", key)
+            self.assertIn("does not match", str(caught.exception))
+            link = Path(tmp) / "link.key"
+            link.symlink_to(key)
+            with self.assertRaises(SystemExit) as caught:
+                release_tools.read_private_key_file(link)
+            self.assertIn("symlink", str(caught.exception))
+
+    def test_notary_profile_or_local_key(self) -> None:
+        names = (
+            "NOTARY_KEYCHAIN_PROFILE",
+            "NOTARY_KEY_PATH",
+            "NOTARY_KEY_ID",
+            "NOTARY_ISSUER_ID",
+        )
+        saved = self._saved_env(names)
+        try:
+            for name in names:
+                os.environ.pop(name, None)
+            with tempfile.TemporaryDirectory() as tmp:
+                config = Path(tmp)
+                (config / "keychain-profile").write_text("umbilical-notary\n", encoding="utf-8")
+                args = release_tools.resolve_notary_auth(config)
+                self.assertEqual(args, ["--keychain-profile", "umbilical-notary"])
+                (config / "keychain-profile").unlink()
+                key = config / "AuthKey.p8"
+                sentinel = "SENTINEL-KEY-BYTES"
+                key.write_text(
+                    "-----BEGIN PRIVATE KEY-----\n" + sentinel + "\n-----END PRIVATE KEY-----\n",
+                    encoding="utf-8",
+                )
+                key.chmod(0o644)
+                with self.assertRaises(SystemExit) as caught:
+                    release_tools.resolve_notary_auth(config)
+                self.assertIn("mode 600", str(caught.exception))
+                self.assertNotIn(sentinel, str(caught.exception))
+                key.chmod(0o600)
+                (config / "key-id").write_text("AB12CD34EF\n", encoding="utf-8")
+                (config / "issuer-id").write_text(
+                    "abcdabcd-abcd-abcd-abcd-abcdabcdabcd\n",
+                    encoding="utf-8",
+                )
+                args = release_tools.resolve_notary_auth(config)
+                self.assertEqual(
+                    args,
+                    [
+                        "--key",
+                        str(key),
+                        "--key-id",
+                        "AB12CD34EF",
+                        "--issuer",
+                        "abcdabcd-abcd-abcd-abcd-abcdabcdabcd",
+                    ],
+                )
+                self.assertNotIn(sentinel, " ".join(args))
+                os.environ["NOTARY_KEYCHAIN_PROFILE"] = "from-env"
+                self.assertEqual(
+                    release_tools.resolve_notary_auth(config),
+                    ["--keychain-profile", "from-env"],
+                )
+        finally:
+            self._restore_env(saved)
+
+    def test_actions_do_not_receive_signing_material(self) -> None:
+        self.assertFalse((ROOT / "scripts" / "release" / "import-developer-id.sh").exists())
+        workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+        self.assertIn("workflow_dispatch", workflow)
+        self.assertNotIn("push:", workflow)
+        self.assertNotIn("secrets.", workflow)
+        self.assertNotRegex(workflow, r"(?m)^\s*environment:")
+        for banned in (
+            "MACOS_SIGN_P12",
+            "MACOS_NOTARY_KEY",
+            "SPARKLE_ED_PRIVATE_KEY",
+            "security import",
+        ):
+            self.assertNotIn(banned, workflow)
+        for path in (ROOT / ".github" / "workflows").glob("*.yml"):
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("MACOS_SIGN_P12", text)
+            self.assertNotIn("SPARKLE_ED_PRIVATE_KEY", text)
+            self.assertNotIn("MACOS_NOTARY_KEY", text)
+        release_doc = (ROOT / "docs" / "RELEASE.md").read_text(encoding="utf-8")
+        for banned in (
+            "MACOS_SIGN_P12",
+            "MACOS_SIGN_PASSWORD",
+            "MACOS_NOTARY_KEY",
+            "MACOS_NOTARY_KEY_ID",
+            "MACOS_NOTARY_ISSUER_ID",
+            "SPARKLE_ED_PRIVATE_KEY",
+            "gh secret set",
+            "environment: release",
+        ):
+            self.assertNotIn(banned, release_doc)
+        self.assertIn("wMhJbYoJtpde3xrtBBL1neu9PM5giL3OnYmE7C04OFY=", release_doc)
+        self.assertIn("~/.config/genv", release_doc)
+        self.assertIn("scripts/release/publish.sh", release_doc)
+        publish = (ROOT / "scripts" / "release" / "publish.sh").read_text(encoding="utf-8")
+        notarize = (ROOT / "scripts" / "release" / "notarize-dmg.sh").read_text(encoding="utf-8")
+        for script in (publish, notarize):
+            self.assertIn("GITHUB_ACTIONS", script)
+            self.assertIn("MACOS_SIGN_P12", script)
+            self.assertIn("MACOS_NOTARY_KEY", script)
+            self.assertIn("SPARKLE_ED_PRIVATE_KEY", script)
+            self.assertNotIn("security import", script)
+            self.assertNotIn("b64decode", script)
+            self.assertNotIn("base64", script)
+        self.assertIn("gh auth status", publish)
+        self.assertIn("--ed-key-file", publish)
+        self.assertIn("SPARKLE_ED_KEY_FILE", publish)
+        self.assertNotIn("SPARKLE_KEY_OUT", publish)
+        self.assertIn('--timestamp "${dmg}"', publish)
+        self.assertNotIn("--options runtime", publish)
+        self.assertIn("stapler staple", notarize)
+        self.assertIn("stapler validate", notarize)
+        self.assertIn("spctl --assess", notarize)
+        self.assertIn("notarytool submit", notarize)
+        sign = (ROOT / "scripts" / "release" / "sign-bundle.sh").read_text(encoding="utf-8")
+        self.assertIn("--options runtime", sign)
+        self.assertIn("--timestamp", sign)
+        self.assertIn("helpers/yt-dlp.entitlements", sign)
+        just = (ROOT / "justfile").read_text(encoding="utf-8")
+        self.assertIn("scripts/release/publish.sh", just)
+        for path in (ROOT / "scripts").rglob("*.sh"):
+            self.assertNotIn("security import", path.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

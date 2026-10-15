@@ -13,7 +13,7 @@
 # Those keys are only in helpers/yt-dlp.entitlements. The decision is
 # recorded in docs/RELEASE.md. The app entitlements do not gain them.
 #
-# "-" is an ad hoc signature. The tag workflow passes the Developer ID.
+# "-" is an ad hoc signature. The Mac release script passes the Developer ID.
 # Ad hoc signatures cannot take a secure timestamp.
 # The entitlements file is helpers/yt-dlp.entitlements and nothing else.
 set -eu

@@ -37,8 +37,8 @@ codesign --force --sign "${YT_DLP_CODESIGN_IDENTITY:--}" -o runtime \
   Contents/Helpers/yt-dlp
 ```
 
-`YT_DLP_CODESIGN_IDENTITY` is `-` for local and pull request builds. The tag
-workflow passes the Developer ID and this script then adds `--timestamp`.
+`YT_DLP_CODESIGN_IDENTITY` is `-` for local and pull request builds. The Mac
+release script passes the Developer ID and this script then adds `--timestamp`.
 Ad hoc signatures cannot use a secure timestamp. See `docs/RELEASE.md`.
 
 Confirm the helper inside the built app:
@@ -66,7 +66,7 @@ at launch, including libffi and a libpython signed by a different team.
 Hardened runtime rejects that. `disable-library-validation` alone can hang
 in libffi on current arm64 macOS. Unsigned executable memory and JIT are
 both required for that unpack to return from `--version`. Do not copy these
-keys onto the app. The tag workflow signs this helper with the same file.
+keys onto the app. The Mac release script signs this helper with the same file.
 See `docs/RELEASE.md`.
 
 A Debug launch may set `YT_DLP` to an executable path. A Release launch

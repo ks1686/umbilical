@@ -54,7 +54,7 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 7. No third-party plugin system.
 8. Archive extraction, if ever added, is off by default with size and ratio limits.
 9. Hardened runtime, notarization, codesigned helpers. App Sandbox evaluated in M1 (aria2 child process and arbitrary folders make it hard; decision recorded in this doc).
-10. Sparkle feed served over HTTPS with EdDSA signatures. The feed URL and the release-environment secret are documented in docs/RELEASE.md. Pull requests do not use that secret. Tag workflows sign the appcast with sign_update.
+10. Sparkle feed served over HTTPS with EdDSA signatures. The feed URL and the Mac signing steps are documented in docs/RELEASE.md. Pull requests do not sign the feed. The Mac release script signs the appcast with sign_update.
 11. CI hardening (M0): GitHub Actions pinned to commit SHAs, least-privilege `permissions:` per workflow, gitleaks, Semgrep and zizmor on every PR.
 12. Helper supply chain: aria2c built from source in this repo (static, `--with-appletls`, universal via `lipo`), source tarball SHA-256 recorded next to the binary hash. yt-dlp pinned only after verifying the GPG signature on its `SHA2-256SUMS`.
 
@@ -185,7 +185,7 @@ Only `http` and `https` URLs pass `HTTPURLPolicy`. Finished files get `com.apple
 
 Cancel sends `SIGTERM` to `umb-watch`, which kills the yt-dlp process group. The row's button says Cancel and does not ask for confirmation. Pause is not offered.
 
-Release builds ignore `YT_DLP`. Debug builds honor it when the path is executable. The helper is copied and signed by `scripts/copy-bundled-yt-dlp.sh` with `--options runtime`, the same pattern as aria2c. A Release build fails when `helpers/bin/yt-dlp` is missing. Debug warns and continues. The same rule applies to `scripts/copy-bundled-aria2.sh`: Release fails when `helpers/bin/aria2c` is missing, and Debug warns and continues. `YT_DLP_CODESIGN_IDENTITY` and `ARIA2_CODESIGN_IDENTITY` stay `-` for ad hoc builds. The tag workflow sets them to the Developer ID and the copy scripts then pass `--timestamp`. Ad hoc signatures still omit `--timestamp`. Xcode's own sign stays ad hoc. `scripts/release/sign-bundle.sh` applies the Developer ID to the helpers, Sparkle, and the app after the build. That is the signature that ships.
+Release builds ignore `YT_DLP`. Debug builds honor it when the path is executable. The helper is copied and signed by `scripts/copy-bundled-yt-dlp.sh` with `--options runtime`, the same pattern as aria2c. A Release build fails when `helpers/bin/yt-dlp` is missing. Debug warns and continues. The same rule applies to `scripts/copy-bundled-aria2.sh`: Release fails when `helpers/bin/aria2c` is missing, and Debug warns and continues. `YT_DLP_CODESIGN_IDENTITY` and `ARIA2_CODESIGN_IDENTITY` stay `-` for ad hoc builds. The Mac release script sets them to the Developer ID and the copy scripts then pass `--timestamp`. Ad hoc signatures still omit `--timestamp`. Xcode's own sign stays ad hoc. `scripts/release/sign-bundle.sh` applies the Developer ID to the helpers, Sparkle, and the app after the build. That is the signature that ships.
 
 Repo Guard: `helpers/yt-dlp.entitlements` is on the helper only. yt-dlp_macos is a PyInstaller binary that unpacks a Python runtime at launch. Hardened runtime needs all three of these or `--version` does not return on current arm64 macOS:
 

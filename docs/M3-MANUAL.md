@@ -27,8 +27,8 @@ the copy script reads `aria2c -v`, keeps the line that starts with
 `Enabled Features`, and fails the build if that line contains `WebSocket`.
 A good line is `Enabled Features: BitTorrent, GZip, HTTPS, Message Digest, Metalink, XML-RPC`.
 It then runs `codesign --force --sign - -o runtime` on the copied binary.
-`ARIA2_CODESIGN_IDENTITY` is `-` for local and pull request builds. The tag
-workflow passes the Developer ID, and that signature can take `--timestamp`.
+`ARIA2_CODESIGN_IDENTITY` is `-` for local and pull request builds. The Mac
+release script passes the Developer ID, and that signature can take `--timestamp`.
 See `docs/RELEASE.md`. Xcode signs `umbilical.app` after that script. A Debug launch may set `ARIA2C` and
 `UMB_WATCH` to executable paths. A Release launch ignores both and uses
 `Contents/Helpers` only.

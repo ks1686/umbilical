@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install the pinned XcodeGen and SwiftLint used by CI and the release workflow.
+# Install the pinned XcodeGen and SwiftLint used by CI and the Mac release script.
 set -euo pipefail
 
 prefix="${HOME}/.local"

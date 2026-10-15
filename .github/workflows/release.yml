@@ -1,15 +1,15 @@
 name: Release
 
+# Unsigned dry run only. Version tags are published from the signing Mac
+# by scripts/release/publish.sh. This workflow must not receive a Developer
+# ID certificate, an App Store Connect API key, or the Sparkle private key.
+
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# A tag publish is not cancelled by a later run of the same ref.
 concurrency:
   group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
@@ -17,7 +17,6 @@ concurrency:
 jobs:
   unsigned:
     name: Unsigned dry run
-    if: github.event_name == 'workflow_dispatch'
     runs-on: macos-26
     timeout-minutes: 60
     permissions:
@@ -85,56 +84,3 @@ jobs:
             dist/umbilical-dry-run.dmg
             dist/umbilical-dry-run.dmg.sha256
           if-no-files-found: error
-
-  signed:
-    name: Sign, notarize, publish
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: macos-26
-    timeout-minutes: 90
-    environment: release
-    permissions:
-      contents: write # Publish the GitHub Release assets for a v* tag.
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Install XcodeGen and SwiftLint
-        run: scripts/ci/install-xcodegen-swiftlint.sh
-
-      - name: Install GnuPG
-        run: |
-          set -euo pipefail
-          export HOMEBREW_NO_AUTO_UPDATE=1
-          export HOMEBREW_NO_ANALYTICS=1
-          if ! command -v gpg >/dev/null 2>&1; then
-            brew install gnupg
-          fi
-          gpg --version
-
-      - name: Fetch pinned yt-dlp
-        run: scripts/fetch-helpers.sh
-
-      - name: Install pkg-config
-        run: |
-          set -euo pipefail
-          export HOMEBREW_NO_AUTO_UPDATE=1
-          export HOMEBREW_NO_ANALYTICS=1
-          brew install pkg-config
-          command -v pkg-config
-
-      - name: Build universal aria2c
-        run: scripts/build-aria2.sh
-
-      - name: Sign, notarize, and publish
-        run: scripts/release/publish.sh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          POLAR_ORGANIZATION_ID: ${{ secrets.POLAR_ORGANIZATION_ID || vars.POLAR_ORGANIZATION_ID }}
-          MACOS_SIGN_P12: ${{ secrets.MACOS_SIGN_P12 }}
-          MACOS_SIGN_PASSWORD: ${{ secrets.MACOS_SIGN_PASSWORD }}
-          MACOS_NOTARY_KEY: ${{ secrets.MACOS_NOTARY_KEY }}
-          MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
-          MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
-          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}

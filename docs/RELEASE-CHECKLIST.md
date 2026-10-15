@@ -13,12 +13,12 @@ Last updated October 15, 2026.
 | M3 UI (Mac checklist in docs/M3-MANUAL.md, not yet run) | Code Lead | in progress |
 | M4 Safari extension (Mac checklist in docs/M4-MANUAL.md, not yet run) | Code Lead | in progress |
 | Video downloads with yt-dlp (ffmpeg and a JS runtime are not bundled; Mac checklist in docs/VIDEO-MANUAL.md, not yet run) | Code Lead | in progress |
-| M5 ship: tag workflow, Sparkle appcast, notarized dmg (workflow is in the repo; a tag has not been published yet) | Code Lead | in progress |
+| M5 ship: Mac release script, Sparkle appcast, notarized dmg (script is in the repo; a tag has not been published yet) | Code Lead | in progress |
 | Signing prerequisites on the Mac (Developer ID cert in Keychain, notarytool settings, App Store Connect key file at 600), verified Oct 15 | Machine Keeper | done |
 | Sparkle key generation on the signing Mac | Machine Keeper | planned |
 | Sparkle private key committed to the local genv config repo (backup model: Karim's self-hosted encrypted git remote and DAS Time Machine, returning with the new machine in about a month; Karim treats this as in place) | Machine Keeper | planned |
 | App Store Connect API key committed to the local genv config repo (same backup model) | Machine Keeper | planned (pending, not done) |
-| Developer ID signing and notarization of the release dmg (tag workflow; not yet run) | Machine Keeper | planned |
+| Developer ID signing and notarization of the release dmg (`scripts/release/publish.sh` on the signing Mac; not yet run) | Machine Keeper | planned |
 | License provider: Polar public customer-portal license keys, no organization access token | Code Lead | done |
 | Price $9.99 one time, lifetime updates, 14-day offline grace, 3 Macs per key | Code Lead | done |
 | Trademark check for umbilical and umb | Code Lead | planned |

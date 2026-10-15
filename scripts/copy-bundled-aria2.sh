@@ -46,7 +46,7 @@ mkdir -p "${dest_dir}"
 cp "${source}" "${dest_dir}/aria2c"
 chmod 755 "${dest_dir}/aria2c"
 
-# "-" is an ad hoc signature. The tag workflow passes the Developer ID.
+# "-" is an ad hoc signature. The Mac release script passes the Developer ID.
 # Ad hoc signatures cannot take a secure timestamp.
 identity="${ARIA2_CODESIGN_IDENTITY:--}"
 if [ "${identity}" = "-" ]; then

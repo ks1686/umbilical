@@ -1,67 +1,61 @@
 #!/usr/bin/env bash
 # Submit a signed dmg to notarytool, staple it, and assess it.
-# Does not print the API key.
+# Credentials come from a notarytool keychain profile or from local files.
+# This script does not read the API key from the environment and does not
+# copy the .p8 into a temp file.
 set -euo pipefail
+
+if [[ "${GITHUB_ACTIONS:-}" != "" ]]; then
+  echo "refusing to notarize from GitHub Actions" >&2
+  exit 1
+fi
+
+refuse_if_set() {
+  local name="$1"
+  if [[ -n "${!name+x}" ]]; then
+    printf '%s is set; notarization does not read signing material from the environment\n' "${name}" >&2
+    exit 1
+  fi
+}
+
+refuse_if_set MACOS_SIGN_P12
+refuse_if_set MACOS_SIGN_PASSWORD
+refuse_if_set MACOS_NOTARY_KEY
+refuse_if_set SPARKLE_ED_PRIVATE_KEY
 
 dmg="${1:-}"
 if [[ -z "${dmg}" || ! -f "${dmg}" ]]; then
   echo "usage: scripts/release/notarize-dmg.sh FILE.dmg" >&2
   exit 2
 fi
-if [[ -z "${MACOS_NOTARY_KEY:-}" ]]; then
-  echo "MACOS_NOTARY_KEY is empty" >&2
-  exit 1
-fi
-if [[ -z "${MACOS_NOTARY_KEY_ID:-}" ]]; then
-  echo "MACOS_NOTARY_KEY_ID is empty" >&2
-  exit 1
-fi
-if [[ -z "${MACOS_NOTARY_ISSUER_ID:-}" ]]; then
-  echo "MACOS_NOTARY_ISSUER_ID is empty" >&2
-  exit 1
-fi
-if [[ -z "${RUNNER_TEMP:-}" ]]; then
-  echo "RUNNER_TEMP is empty" >&2
-  exit 1
-fi
 
-p8="${RUNNER_TEMP}/AuthKey.p8"
-result="${RUNNER_TEMP}/notarization.json"
-
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+config="${HOME}/.config/genv/notarize"
+work="$(mktemp -d "${TMPDIR:-/tmp}/umbilical-notarize.XXXXXX")"
 cleanup() {
-  rm -f "${p8}"
+  rm -rf "${work}"
 }
 trap cleanup EXIT
 
-umask 077
-P8_OUT="${p8}" python3 - <<'PY'
-import base64
-import os
-import pathlib
-import sys
+python3 "${root}/scripts/release/release_tools.py" resolve-notary \
+  --config-dir "${config}" >"${work}/notary-args.txt"
 
-raw = os.environ.get("MACOS_NOTARY_KEY", "").strip()
-if "BEGIN" in raw and "PRIVATE KEY" in raw:
-    data = raw.encode("utf-8")
-    if not data.endswith(b"\n"):
-        data += b"\n"
-else:
-    compact = "".join(raw.split())
-    try:
-        data = base64.b64decode(compact, validate=True)
-    except Exception:
-        sys.exit("MACOS_NOTARY_KEY is not valid base64")
-if b"PRIVATE KEY" not in data:
-    sys.exit("MACOS_NOTARY_KEY is not an App Store Connect API key")
-pathlib.Path(os.environ["P8_OUT"]).write_bytes(data)
-PY
-chmod 600 "${p8}"
+notary_auth=()
+while IFS= read -r line; do
+  if [[ -z "${line}" ]]; then
+    continue
+  fi
+  notary_auth+=("${line}")
+done <"${work}/notary-args.txt"
+if [[ "${#notary_auth[@]}" -lt 2 ]]; then
+  echo "notarytool arguments are missing" >&2
+  exit 1
+fi
 
+result="${work}/notarization.json"
 set +e
 xcrun notarytool submit "${dmg}" \
-  --key "${p8}" \
-  --key-id "${MACOS_NOTARY_KEY_ID}" \
-  --issuer "${MACOS_NOTARY_ISSUER_ID}" \
+  "${notary_auth[@]}" \
   --wait \
   --timeout 30m \
   --output-format json \
@@ -97,10 +91,7 @@ set -e
 if [[ "${py_status}" -ne 0 ]]; then
   if [[ -n "${submission}" ]]; then
     echo "notarytool log:" >&2
-    xcrun notarytool log "${submission}" \
-      --key "${p8}" \
-      --key-id "${MACOS_NOTARY_KEY_ID}" \
-      --issuer "${MACOS_NOTARY_ISSUER_ID}" || true
+    xcrun notarytool log "${submission}" "${notary_auth[@]}" || true
   fi
   exit 1
 fi

@@ -1,70 +1,147 @@
 #!/usr/bin/env bash
-# Sign, notarize, and publish a vX.Y.Z tag. Secrets stay in the environment.
+# Sign, notarize, and publish a vX.Y.Z tag from the signing Mac.
+# The Developer ID certificate, the App Store Connect API key, and the
+# Sparkle private key stay in the login Keychain and under ~/.config/genv.
+# This script does not read that material from the environment.
 set -euo pipefail
 
-root="$(cd "$(dirname "$0")/../.." && pwd)"
-cd "${root}"
-
-if [[ -z "${RUNNER_TEMP:-}" ]]; then
-  echo "RUNNER_TEMP is empty" >&2
-  exit 1
-fi
-if [[ -z "${GITHUB_REF_NAME:-}" ]]; then
-  echo "GITHUB_REF_NAME is empty" >&2
+if [[ "${GITHUB_ACTIONS:-}" != "" ]]; then
+  echo "refusing to publish from GitHub Actions" >&2
   exit 1
 fi
 
-keychain="${RUNNER_TEMP}/umbilical-release.keychain-db"
-sparkle_key="${RUNNER_TEMP}/sparkle-ed.key"
-identity_file="${RUNNER_TEMP}/signing-identity.txt"
-
-cleanup() {
-  rm -f "${sparkle_key}" "${RUNNER_TEMP}/developer-id.p12" "${RUNNER_TEMP}/AuthKey.p8"
-  rm -f "${RUNNER_TEMP}/sign-update.err" "${RUNNER_TEMP}/sign-update-xml.err"
-  rm -f "${RUNNER_TEMP}/sign-update-xml.out" "${RUNNER_TEMP}/dmg-signature.txt"
-  rm -f "${RUNNER_TEMP}/gh-release-view.err"
-  if [[ -e "${keychain}" ]]; then
-    security delete-keychain "${keychain}" >/dev/null 2>&1 || true
-  fi
-}
-trap cleanup EXIT
-
-require_text() {
+# ${!name+x} is set when the named variable is set, including when it is empty.
+# The value is not expanded and is not printed. Bash 3.2 accepts this form.
+refuse_if_set() {
   local name="$1"
-  local value="$2"
-  if [[ -z "${value}" ]]; then
-    echo "${name} is empty" >&2
+  if [[ -n "${!name+x}" ]]; then
+    printf '%s is set; umbilical does not read signing material from the environment\n' "${name}" >&2
     exit 1
   fi
 }
 
-require_text MACOS_SIGN_P12 "${MACOS_SIGN_P12:-}"
-require_text MACOS_SIGN_PASSWORD "${MACOS_SIGN_PASSWORD:-}"
-require_text MACOS_NOTARY_KEY "${MACOS_NOTARY_KEY:-}"
-require_text MACOS_NOTARY_KEY_ID "${MACOS_NOTARY_KEY_ID:-}"
-require_text MACOS_NOTARY_ISSUER_ID "${MACOS_NOTARY_ISSUER_ID:-}"
-require_text SPARKLE_ED_PRIVATE_KEY "${SPARKLE_ED_PRIVATE_KEY:-}"
-require_text POLAR_ORGANIZATION_ID "${POLAR_ORGANIZATION_ID:-}"
-if [[ -z "${GH_TOKEN:-}" && -n "${GITHUB_TOKEN:-}" ]]; then
-  export GH_TOKEN="${GITHUB_TOKEN}"
+refuse_if_set MACOS_SIGN_P12
+refuse_if_set MACOS_SIGN_PASSWORD
+refuse_if_set MACOS_NOTARY_KEY
+refuse_if_set SPARKLE_ED_PRIVATE_KEY
+
+if [[ -n "${SPARKLE_ED_KEY_FILE+x}" ]]; then
+  if [[ -z "${SPARKLE_ED_KEY_FILE}" || "${SPARKLE_ED_KEY_FILE}" == "-" || "${SPARKLE_ED_KEY_FILE}" == *"PRIVATE KEY"* || "${SPARKLE_ED_KEY_FILE}" == *$'\n'* ]]; then
+    echo "SPARKLE_ED_KEY_FILE is not a file path" >&2
+    exit 1
+  fi
 fi
-if [[ -z "${GH_TOKEN:-}" ]]; then
-  echo "GH_TOKEN is empty" >&2
+
+if [[ "$#" -ne 1 ]]; then
+  echo "usage: scripts/release/publish.sh vX.Y.Z" >&2
+  exit 2
+fi
+tag="$1"
+
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "${root}"
+
+require_cmd() {
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "missing command: $1" >&2
+    exit 1
+  fi
+}
+
+for cmd in git gh python3 codesign xcrun hdiutil security xcodegen pkg-config gpg curl unzip ditto plutil xcodebuild openssl spctl; do
+  require_cmd "${cmd}"
+done
+if [[ ! -x /usr/libexec/PlistBuddy ]]; then
+  echo "missing /usr/libexec/PlistBuddy" >&2
   exit 1
 fi
 
-version="$(python3 scripts/release/release_tools.py version-from-tag --tag "${GITHUB_REF_NAME}")"
-python3 scripts/release/release_tools.py assert-repo
-python3 scripts/release/release_tools.py check-sparkle-key --info-plist App/Info.plist
-python3 scripts/release/release_tools.py write-licensing-xcconfig \
-  --dest Config/Licensing.local.xcconfig
+if [[ -n "$(git status --porcelain)" ]]; then
+  echo "working tree is not clean" >&2
+  exit 1
+fi
 
-scripts/release/import-developer-id.sh "${keychain}"
-identity="$(cat "${identity_file}")"
-require_text "signing identity" "${identity}"
+unset GH_TOKEN
+unset GITHUB_TOKEN
+if ! gh auth status; then
+  echo "gh is not logged in on this Mac" >&2
+  exit 1
+fi
+
+origin="$(git remote get-url origin)" || exit 1
+python3 scripts/release/release_tools.py assert-repo --remote "${origin}"
+
+version="$(python3 scripts/release/release_tools.py version-from-tag --tag "${tag}")" || exit 1
+
+if ! git fetch origin "refs/tags/${tag}:refs/tags/${tag}"; then
+  echo "tag ${tag} is missing on origin, or the local tag differs" >&2
+  exit 1
+fi
+head_sha="$(git rev-parse HEAD)" || exit 1
+tag_sha="$(git rev-parse "${tag}^{commit}")" || exit 1
+if [[ "${head_sha}" != "${tag_sha}" ]]; then
+  echo "HEAD ${head_sha} is not ${tag} (${tag_sha})" >&2
+  exit 1
+fi
+
+umask 077
+scratch=""
+cleanup() {
+  if [[ -n "${scratch}" ]]; then
+    rm -rf "${scratch}"
+  fi
+}
+trap cleanup EXIT
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/umbilical-release.XXXXXX")" || exit 1
+export RUNNER_TEMP="${scratch}"
+
+login="${HOME}/Library/Keychains/login.keychain-db"
+if [[ ! -f "${login}" ]]; then
+  login="${HOME}/Library/Keychains/login.keychain"
+fi
+if [[ ! -f "${login}" ]]; then
+  echo "login keychain is missing" >&2
+  exit 1
+fi
+security unlock-keychain "${login}"
+security find-identity -v -p codesigning "${login}" >"${RUNNER_TEMP}/find-identity.txt"
+identity="$(
+  python3 scripts/release/release_tools.py signing-identity \
+    --from-file "${RUNNER_TEMP}/find-identity.txt"
+)" || exit 1
+if [[ -z "${identity}" ]]; then
+  echo "signing identity is empty" >&2
+  exit 1
+fi
+echo "using Developer ID identity: ${identity}"
+
+if [[ -n "${SPARKLE_ED_KEY_FILE+x}" ]]; then
+  sparkle_key="${SPARKLE_ED_KEY_FILE}"
+else
+  sparkle_key="${HOME}/.config/genv/sparkle/umbilical.key"
+fi
+if [[ -z "${sparkle_key}" || "${sparkle_key}" == "-" || "${sparkle_key}" == *"PRIVATE KEY"* || "${sparkle_key}" == *$'\n'* ]]; then
+  echo "Sparkle private key path is not a file path" >&2
+  exit 1
+fi
+python3 scripts/release/release_tools.py check-sparkle-key \
+  --info-plist App/Info.plist \
+  --key-file "${sparkle_key}"
+
+org_id="$(
+  python3 scripts/release/release_tools.py write-licensing-xcconfig \
+    --dest Config/Licensing.local.xcconfig
+)" || exit 1
+if [[ -z "${org_id}" ]]; then
+  echo "POLAR_ORGANIZATION_ID is empty" >&2
+  exit 1
+fi
+export POLAR_ORGANIZATION_ID="${org_id}"
 
 export SIGNING_IDENTITY="${identity}"
 export RELEASE_VERSION="${version}"
+scripts/fetch-helpers.sh
+scripts/build-aria2.sh
 scripts/release/build-release-app.sh
 
 scripts/release/sign-bundle.sh dist/umbilical.app "${identity}" "${root}"
@@ -77,13 +154,14 @@ python3 scripts/release/release_tools.py check-built-app \
 
 minimum="$(
   plutil -extract LSMinimumSystemVersion raw -o - dist/umbilical.app/Contents/Info.plist
-)"
+)" || exit 1
 
 dmg="dist/umbilical-${version}.dmg"
 scripts/release/make-dmg.sh dist/umbilical.app "${dmg}"
+# A disk image is not a bundle. Timestamp the signature. Do not request the hardened runtime on the dmg.
 codesign --force --sign "${identity}" --timestamp "${dmg}"
 codesign --verify --verbose=2 "${dmg}"
-dmg_dump="$(codesign -dv --verbose=4 "${dmg}" 2>&1)"
+dmg_dump="$(codesign -dv --verbose=4 "${dmg}" 2>&1)" || exit 1
 if ! printf '%s\n' "${dmg_dump}" | grep -q 'Authority=Developer ID Application:'; then
   echo "dmg is not signed with Developer ID" >&2
   exit 1
@@ -98,20 +176,6 @@ scripts/release/notarize-dmg.sh "${dmg}"
 tools="${RUNNER_TEMP}/sparkle-tools"
 scripts/release/fetch-sparkle-tools.sh "${tools}"
 sign_update="${tools}/bin/sign_update"
-
-umask 077
-SPARKLE_KEY_OUT="${sparkle_key}" python3 - <<'PY'
-import os
-import pathlib
-import sys
-
-value = os.environ.get("SPARKLE_ED_PRIVATE_KEY", "").strip()
-if not value:
-    sys.exit("SPARKLE_ED_PRIVATE_KEY is empty")
-path = pathlib.Path(os.environ["SPARKLE_KEY_OUT"])
-path.write_text(value + "\n", encoding="utf-8")
-os.chmod(path, 0o600)
-PY
 
 signature_file="${RUNNER_TEMP}/dmg-signature.txt"
 if ! "${sign_update}" --ed-key-file "${sparkle_key}" "${dmg}" \
@@ -183,7 +247,7 @@ if match is None:
     sys.exit("could not read the dmg ed signature")
 sys.stdout.write(match.group(1))
 PY
-)"
+)" || exit 1
 if ! "${sign_update}" --verify --ed-key-file "${sparkle_key}" "${dmg}" "${ed_signature}" \
   >"${RUNNER_TEMP}/sign-update-xml.out" 2>"${RUNNER_TEMP}/sign-update-xml.err"; then
   echo "dmg ed signature did not verify" >&2
@@ -191,7 +255,7 @@ if ! "${sign_update}" --verify --ed-key-file "${sparkle_key}" "${dmg}" "${ed_sig
 fi
 
 sha_file="dist/umbilical-${version}.dmg.sha256"
-sha256="$(scripts/release/sha256-file.sh "${dmg}" "${sha_file}")"
+sha256="$(scripts/release/sha256-file.sh "${dmg}" "${sha_file}")" || exit 1
 cask="dist/umbilical.rb"
 python3 scripts/release/release_tools.py render-cask \
   --version "${version}" \
@@ -208,7 +272,6 @@ The dmg is notarized. appcast.xml is the Sparkle feed.
 umbilical.rb is a Homebrew cask draft. It is not pushed to ks1686/homebrew-tap.
 EOF
 
-tag="v${version}"
 if gh release view "${tag}" --repo ks1686/umbilical >/dev/null 2>&1; then
   gh release upload "${tag}" --repo ks1686/umbilical --clobber \
     "${dmg}" "${sha_file}" "${cask}" "${appcast}"

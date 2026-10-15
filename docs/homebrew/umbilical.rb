@@ -1,5 +1,5 @@
 # Draft for ks1686/homebrew-tap.
-# The release workflow uploads the same cask with the real version and sha256.
+# The Mac release script uploads the same cask with the real version and sha256.
 # Do not push this file. Copy the release asset into the tap after review.
 cask "umbilical" do
   version "0.0.1"

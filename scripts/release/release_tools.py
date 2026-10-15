@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Helpers for the umbilical release workflow.
+"""Helpers for the umbilical Mac release script.
 
-These functions do not print private keys. Callers pass secrets through the
-environment, not through argv.
+These functions do not print private keys. The Sparkle private key and the
+App Store Connect API key are read from local files. Callers do not pass
+key material through argv or the environment.
 """
 
 from __future__ import annotations
@@ -54,6 +55,28 @@ def assert_repo(name: str) -> None:
         fail("signed releases only run from ks1686/umbilical")
 
 
+def repo_from_remote(url: str) -> str:
+    text = url.strip().rstrip("/")
+    if text.endswith(".git"):
+        text = text[:-4]
+    if "://" in text:
+        text = text.split("://", 1)[1]
+        if "@" in text:
+            text = text.split("@", 1)[1]
+    if text.startswith("git@github.com:"):
+        name = text[len("git@github.com:") :]
+    elif text.startswith("github.com/"):
+        name = text[len("github.com/") :]
+    elif text.startswith("github.com:"):
+        name = text[len("github.com:") :]
+    else:
+        fail("origin is not a github.com remote")
+    parts = [part for part in name.strip("/").split("/") if part]
+    if len(parts) != 2:
+        fail("origin is not a github.com remote")
+    return f"{parts[0]}/{parts[1]}"
+
+
 def dmg_name(version: str) -> str:
     if VERSION_RE.fullmatch(version) is None:
         fail("version must look like 1.2.3")
@@ -80,7 +103,7 @@ def write_licensing_xcconfig(organization_id: str, dest: Path) -> None:
         fail("Config directory is missing")
     value = normalize_organization_id(organization_id)
     contents = (
-        "// Written by the release workflow. Not an access token.\n"
+        "// Written by the Mac release script. Not an access token.\n"
         f"POLAR_ORGANIZATION_ID = {value}\n"
     )
     dest.write_text(contents, encoding="utf-8")
@@ -95,14 +118,14 @@ def ed25519_public_key(secret_b64: str) -> str:
     try:
         raw = base64.b64decode(_compact(secret_b64), validate=True)
     except Exception:
-        fail("SPARKLE_ED_PRIVATE_KEY is not valid base64")
+        fail("Sparkle private key is not valid base64")
     if len(raw) == 32:
         public = _public_key_from_seed(raw)
     elif len(raw) == 96:
         public = raw[64:]
     else:
         fail(
-            "SPARKLE_ED_PRIVATE_KEY must decode to 32 bytes "
+            "Sparkle private key must decode to 32 bytes "
             "(current generate_keys -x seed) or 96 bytes (older Sparkle export)"
         )
     if len(public) != 32:
@@ -159,21 +182,36 @@ def load_plist(path: Path) -> dict:
 
 def assert_private_key_matches(secret: str, expected_public: str) -> None:
     if secret.strip() == "":
-        fail("SPARKLE_ED_PRIVATE_KEY is empty")
+        fail("Sparkle private key is empty")
     derived = ed25519_public_key(secret)
     if derived != expected_public:
         fail(
-            "SPARKLE_ED_PRIVATE_KEY does not match SUPublicEDKey "
+            "Sparkle private key does not match SUPublicEDKey "
             f"(derived {derived}, expected {expected_public})"
         )
 
 
-def check_sparkle_key(info_plist: Path) -> None:
+def assert_private_file(path: Path, label: str) -> None:
+    if path.is_symlink():
+        fail(f"{label} must not be a symlink")
+    if not path.is_file():
+        fail(f"{label} is missing")
+    mode = path.stat().st_mode & 0o777
+    if mode not in (0o600, 0o400):
+        fail(f"{label} must be mode 600 or 400")
+
+
+def read_private_key_file(path: Path) -> str:
+    assert_private_file(path, "Sparkle private key file")
+    return path.read_text(encoding="utf-8")
+
+
+def check_sparkle_key(info_plist: Path, key_file: Path) -> None:
     source = load_plist(info_plist)
     expected = plist_string(source, "SUPublicEDKey")
     if expected != PUBLIC_ED_KEY:
         fail("SUPublicEDKey in Info.plist does not match the release feed key")
-    assert_private_key_matches(os.environ.get("SPARKLE_ED_PRIVATE_KEY", ""), expected)
+    assert_private_key_matches(read_private_key_file(key_file), expected)
 
 
 def parse_signature_line(text: str) -> tuple[str, str]:
@@ -281,7 +319,7 @@ def render_cask(version: str, sha256: str, *, draft_header: bool) -> str:
     if draft_header:
         header = (
             "# Draft for ks1686/homebrew-tap.\n"
-            "# The release workflow uploads the same cask with the real version and sha256.\n"
+            "# The Mac release script uploads the same cask with the real version and sha256.\n"
             "# Do not push this file. Copy the release asset into the tap after review.\n"
         )
     return (
@@ -420,20 +458,131 @@ def rfc822_now() -> str:
     )
 
 
+_XCCONFIG_ID_RE = re.compile(r"^POLAR_ORGANIZATION_ID\s*=\s*(\S+)\s*$")
+
+
+def organization_id_from_xcconfig(text: str) -> str | None:
+    for line in text.splitlines():
+        code = line.split("//", 1)[0].strip()
+        if code == "":
+            continue
+        match = _XCCONFIG_ID_RE.fullmatch(code)
+        if match is not None:
+            return match.group(1)
+    return None
+
+
+def prepare_licensing(dest: Path) -> str:
+    env_value = os.environ.get("POLAR_ORGANIZATION_ID", "")
+    if env_value.strip() != "":
+        value = normalize_organization_id(env_value)
+    elif dest.is_file():
+        found = organization_id_from_xcconfig(dest.read_text(encoding="utf-8"))
+        if found is None:
+            fail("POLAR_ORGANIZATION_ID is empty")
+        value = normalize_organization_id(found)
+    else:
+        fail("POLAR_ORGANIZATION_ID is empty")
+    write_licensing_xcconfig(value, dest)
+    return value
+
+
+_DEVELOPER_ID_RE = re.compile(r'"(Developer ID Application:[^"]*)"')
+_NOTARY_KEY_ID_RE = re.compile(r"^[A-Za-z0-9]{10}$")
+
+
+def developer_id_identity(find_identity_text: str) -> str:
+    names = _DEVELOPER_ID_RE.findall(find_identity_text)
+    if len(names) != 1:
+        fail(f"expected one Developer ID Application identity, found {len(names)}")
+    return names[0]
+
+
+def read_single_line(path: Path, label: str) -> str:
+    if path.is_symlink() or not path.is_file():
+        fail(f"{label} is missing")
+    text = path.read_text(encoding="utf-8").strip()
+    if text == "" or any(char.isspace() for char in text):
+        fail(f"{label} must be one line")
+    return text
+
+
+def _notary_profile(config_dir: Path) -> str:
+    profile = os.environ.get("NOTARY_KEYCHAIN_PROFILE", "").strip()
+    if profile == "":
+        profile_file = config_dir / "keychain-profile"
+        if profile_file.is_file():
+            profile = read_single_line(profile_file, "notarytool keychain profile")
+    if profile == "":
+        return ""
+    if any(char.isspace() for char in profile) or "/" in profile:
+        fail("notarytool keychain profile must be a single token")
+    return profile
+
+
+def _pem_private_key(path: Path) -> None:
+    data = path.read_bytes()
+    if b"PRIVATE KEY" not in data:
+        fail("App Store Connect API key file is not a private key")
+
+
+def resolve_notary_auth(config_dir: Path) -> list[str]:
+    profile = _notary_profile(config_dir)
+    if profile != "":
+        return ["--keychain-profile", profile]
+
+    override = os.environ.get("NOTARY_KEY_PATH", "").strip()
+    key_path = Path(override).expanduser() if override else config_dir / "AuthKey.p8"
+    assert_private_file(key_path, "App Store Connect API key file")
+    _pem_private_key(key_path)
+
+    key_id = os.environ.get("NOTARY_KEY_ID", "").strip()
+    if key_id == "" and (config_dir / "key-id").is_file():
+        key_id = read_single_line(config_dir / "key-id", "notary key id")
+    issuer = os.environ.get("NOTARY_ISSUER_ID", "").strip()
+    if issuer == "" and (config_dir / "issuer-id").is_file():
+        issuer = read_single_line(config_dir / "issuer-id", "notary issuer id")
+    if key_id == "" or issuer == "":
+        fail("notarytool key id or issuer id is empty")
+    if _NOTARY_KEY_ID_RE.fullmatch(key_id) is None:
+        fail("notarytool key id is not 10 letters or digits")
+    if UUID_RE.fullmatch(issuer) is None:
+        fail("notarytool issuer id is not a UUID")
+    return ["--key", str(key_path), "--key-id", key_id, "--issuer", issuer]
+
+
 def _cmd_write_licensing(args: argparse.Namespace) -> None:
-    raw = os.environ.get("POLAR_ORGANIZATION_ID", "")
-    write_licensing_xcconfig(raw, Path(args.dest))
+    sys.stdout.write(prepare_licensing(Path(args.dest)) + "\n")
 
 
 def _cmd_check_sparkle_key(args: argparse.Namespace) -> None:
-    check_sparkle_key(Path(args.info_plist))
+    check_sparkle_key(Path(args.info_plist), Path(args.key_file))
 
 
 def _cmd_version_from_tag(args: argparse.Namespace) -> None:
     sys.stdout.write(version_from_tag(args.tag) + "\n")
 
 
-def _cmd_assert_repo(_args: argparse.Namespace) -> None:
+def _cmd_signing_identity(args: argparse.Namespace) -> None:
+    text = Path(args.from_file).read_text(encoding="utf-8", errors="replace")
+    sys.stdout.write(developer_id_identity(text) + "\n")
+
+
+def _cmd_resolve_notary(args: argparse.Namespace) -> None:
+    if args.config_dir:
+        config_dir = Path(args.config_dir).expanduser()
+    else:
+        config_dir = Path.home() / ".config" / "genv" / "notarize"
+    for item in resolve_notary_auth(config_dir):
+        if item == "" or "\n" in item:
+            fail("notarytool argument is empty")
+        sys.stdout.write(item + "\n")
+
+
+def _cmd_assert_repo(args: argparse.Namespace) -> None:
+    if args.remote:
+        assert_repo(repo_from_remote(args.remote))
+        return
     assert_repo(os.environ.get("GITHUB_REPOSITORY", ""))
 
 
@@ -475,13 +624,23 @@ def build_parser() -> argparse.ArgumentParser:
 
     key = sub.add_parser("check-sparkle-key")
     key.add_argument("--info-plist", required=True)
+    key.add_argument("--key-file", required=True)
     key.set_defaults(func=_cmd_check_sparkle_key)
 
     tag = sub.add_parser("version-from-tag")
     tag.add_argument("--tag", required=True)
     tag.set_defaults(func=_cmd_version_from_tag)
 
+    identity = sub.add_parser("signing-identity")
+    identity.add_argument("--from-file", required=True)
+    identity.set_defaults(func=_cmd_signing_identity)
+
+    notary = sub.add_parser("resolve-notary")
+    notary.add_argument("--config-dir")
+    notary.set_defaults(func=_cmd_resolve_notary)
+
     repo = sub.add_parser("assert-repo")
+    repo.add_argument("--remote")
     repo.set_defaults(func=_cmd_assert_repo)
 
     appcast = sub.add_parser("render-appcast")

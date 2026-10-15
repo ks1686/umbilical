@@ -117,7 +117,7 @@ targets:
         # Debug may omit aria2c and yt-dlp. Release fails if either is
         # missing. User script sandboxing would skip these copies.
         ENABLE_USER_SCRIPT_SANDBOXING: "NO"
-        # "-" is an ad hoc signature. The tag workflow passes the Developer ID.
+        # "-" is an ad hoc signature. The Mac release script passes the Developer ID.
         ARIA2_CODESIGN_IDENTITY: "-"
         YT_DLP_CODESIGN_IDENTITY: "-"
       configs:
