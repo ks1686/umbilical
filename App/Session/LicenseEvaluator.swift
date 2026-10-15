@@ -182,9 +182,11 @@ enum LicenseGrant {
     }
 
     static func decide(_ input: LicenseGrantInput) -> Decision {
-        if let existing = input.existing,
-            LicenseClockCheck.isRollback(now: input.now, validation: existing)
-        {
+        let clockMoved =
+            input.existing.map { existing in
+                LicenseClockCheck.isRollback(now: input.now, validation: existing)
+            } ?? false
+        if clockMoved {
             return .clock(nil)
         }
         let trusted = input.serverTime ?? input.now
