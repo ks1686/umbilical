@@ -96,6 +96,7 @@ final class RPCIntegrationTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: downloads) }
         let payload = Data(repeating: 0x61, count: 128 * 1024)
         let server = try LocalHTTPServer(body: payload, hold: true)
+        server.start()
         defer { server.stop() }
         let quarantine = RecordingQuarantine()
         let supervisor = EngineSupervisor(
@@ -149,6 +150,7 @@ final class RPCIntegrationTests: XCTestCase {
         XCTAssertTrue(quarantine.paths.contains(file.path))
 
         let removalServer = try LocalHTTPServer(body: payload, hold: true)
+        removalServer.start()
         defer { removalServer.stop() }
         let removal = try await client.add(
             url: try testURL("http://127.0.0.1:\(removalServer.port)/other.bin"),

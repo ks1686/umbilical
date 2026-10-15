@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import Foundation
+
 #if canImport(Darwin)
-import Darwin
+    import Darwin
 #elseif canImport(Glibc)
-import Glibc
+    import Glibc
 #endif
 
 struct PreparedLaunch {
@@ -82,18 +83,22 @@ public final class EngineSupervisor {
             throw EngineError.executableMissing(watchHelper.path)
         }
         var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: downloadDirectory.path, isDirectory: &isDirectory),
-              isDirectory.boolValue
+        guard
+            FileManager.default.fileExists(
+                atPath: downloadDirectory.path, isDirectory: &isDirectory),
+            isDirectory.boolValue
         else {
             throw EngineError.directoryRejected(downloadDirectory.path)
         }
-        let resolvedRoot = try DownloadPath.resolveInside(root: downloadDirectory, raw: downloadDirectory.path)
+        let resolvedRoot = try DownloadPath.resolveInside(
+            root: downloadDirectory, raw: downloadDirectory.path)
         let directory = URL(fileURLWithPath: try POSIX.makePrivateDirectory(), isDirectory: true)
         let settings = directory.appendingPathComponent("aria2.conf")
         do {
             let secret = try makeSecret()
             let port = try POSIX.freeLoopbackPort()
-            let body = try Aria2Settings.render(secret: secret, port: port, downloadDirectory: resolvedRoot)
+            let body = try Aria2Settings.render(
+                secret: secret, port: port, downloadDirectory: resolvedRoot)
             try POSIX.writeNewFile(path: settings.path, contents: Data(body.utf8))
             return PreparedLaunch(
                 directory: directory,
@@ -109,7 +114,9 @@ public final class EngineSupervisor {
         }
     }
 
-    func completeLaunch(_ prepared: PreparedLaunch, probe: any RPCListening) async throws -> RPCClient {
+    func completeLaunch(_ prepared: PreparedLaunch, probe: any RPCListening) async throws
+        -> RPCClient
+    {
         let process = Process()
         process.executableURL = watchHelper
         process.arguments = [aria2Executable.path] + prepared.arguments
@@ -209,11 +216,13 @@ public final class EngineSupervisor {
 final class PipeDrain {
     private let handle: FileHandle
     private let buffer = LockedData()
+    private let finished = DispatchSemaphore(value: 0)
     private let thread: Thread
 
     init(handle: FileHandle) {
         self.handle = handle
         let buffer = self.buffer
+        let finished = self.finished
         let thread = Thread {
             while true {
                 let chunk = handle.availableData
@@ -222,6 +231,7 @@ final class PipeDrain {
                 }
                 buffer.append(chunk)
             }
+            finished.signal()
         }
         self.thread = thread
         thread.start()
@@ -239,7 +249,7 @@ final class PipeDrain {
     }
 
     func stop() {
-        try? handle.close()
+        _ = finished.wait(timeout: .now() + 2)
     }
 }
 

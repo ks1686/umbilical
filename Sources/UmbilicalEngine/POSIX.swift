@@ -1,18 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import Foundation
+
 #if canImport(Darwin)
-import Darwin
+    import Darwin
 #elseif canImport(Glibc)
-import Glibc
+    import Glibc
 #endif
 
 enum POSIX {
     private static var streamSocket: Int32 {
         #if os(Linux)
-        Int32(SOCK_STREAM.rawValue)
+            Int32(SOCK_STREAM.rawValue)
         #else
-        SOCK_STREAM
+            SOCK_STREAM
         #endif
     }
 
@@ -135,6 +136,19 @@ enum POSIX {
         }
     }
 
+    static func ignorePipe(_ fd: Int32) {
+        #if os(macOS)
+            var disabled: Int32 = 1
+            _ = setsockopt(
+                fd,
+                SOL_SOCKET,
+                SO_NOSIGPIPE,
+                &disabled,
+                socklen_t(MemoryLayout<Int32>.size)
+            )
+        #endif
+    }
+
     static func acceptClient(_ fd: Int32) -> Int32? {
         let client = accept(fd, nil, nil)
         if client < 0 {
@@ -153,7 +167,9 @@ enum POSIX {
         var timeout = timeval()
         timeout.tv_sec = time_t(seconds)
         timeout.tv_usec = 0
-        if setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) != 0 {
+        if setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            != 0
+        {
             throw EngineError.transport(errnoText())
         }
     }
@@ -162,30 +178,34 @@ enum POSIX {
         var timeout = timeval()
         timeout.tv_sec = time_t(seconds)
         timeout.tv_usec = 0
-        if setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) != 0 {
+        if setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            != 0
+        {
             throw EngineError.transport(errnoText())
         }
     }
 
     static func readOnce(fd: Int32, max: Int) throws -> Data? {
         var chunk = [UInt8](repeating: 0, count: max)
-        let n = chunk.withUnsafeMutableBytes { buffer -> Int in
-            guard let base = buffer.baseAddress else { return -1 }
-            return read(fd, base, max)
-        }
-        if n < 0 {
-            if errno == EINTR {
-                return try readOnce(fd: fd, max: max)
+        while true {
+            let n = chunk.withUnsafeMutableBytes { buffer -> Int in
+                guard let base = buffer.baseAddress else { return -1 }
+                return read(fd, base, max)
             }
-            if errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT {
+            if n < 0 {
+                if errno == EINTR {
+                    continue
+                }
+                if errno == EAGAIN || errno == EWOULDBLOCK || errno == ETIMEDOUT {
+                    return nil
+                }
+                throw EngineError.transport(errnoText())
+            }
+            if n == 0 {
                 return nil
             }
-            throw EngineError.transport(errnoText())
+            return Data(chunk.prefix(n))
         }
-        if n == 0 {
-            return nil
-        }
-        return Data(chunk.prefix(n))
     }
 
     static func listenLoopback() throws -> (fd: Int32, port: UInt16) {
@@ -237,8 +257,9 @@ enum POSIX {
             throw EngineError.transport(errnoText())
         }
         #if os(macOS)
-        var nosig: Int32 = 1
-        _ = setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &nosig, socklen_t(MemoryLayout<Int32>.size))
+            var nosig: Int32 = 1
+            _ = setsockopt(
+                fd, SOL_SOCKET, SO_NOSIGPIPE, &nosig, socklen_t(MemoryLayout<Int32>.size))
         #endif
         let flags = fcntl(fd, F_GETFL, 0)
         if flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0 {
@@ -268,7 +289,9 @@ enum POSIX {
             }
             var socketError: Int32 = 0
             var errorLength = socklen_t(MemoryLayout<Int32>.size)
-            if getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &errorLength) != 0 || socketError != 0 {
+            if getsockopt(fd, SOL_SOCKET, SO_ERROR, &socketError, &errorLength) != 0
+                || socketError != 0
+            {
                 if socketError != 0 {
                     errno = socketError
                 }
@@ -285,7 +308,8 @@ enum POSIX {
         var sendTimeout = timeval()
         sendTimeout.tv_sec = time_t(timeoutSeconds)
         sendTimeout.tv_usec = 0
-        _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sendTimeout, socklen_t(MemoryLayout<timeval>.size))
+        _ = setsockopt(
+            fd, SOL_SOCKET, SO_SNDTIMEO, &sendTimeout, socklen_t(MemoryLayout<timeval>.size))
         return fd
     }
 
@@ -295,9 +319,9 @@ enum POSIX {
             var sent = 0
             while sent < raw.count {
                 #if os(Linux)
-                let flags = Int32(MSG_NOSIGNAL)
+                    let flags = Int32(MSG_NOSIGNAL)
                 #else
-                let flags: Int32 = 0
+                    let flags: Int32 = 0
                 #endif
                 let n = send(fd, base.advanced(by: sent), raw.count - sent, flags)
                 if n < 0 {

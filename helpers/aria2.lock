@@ -22,8 +22,6 @@ object_mtime=210001010000.00
 # toolchain_sha256=<xcode>|<clang version>|<64 hex sha256>
 # The tarball SHA-256 above is the trust anchor. A toolchain with no line
 # here is refused.
-# The hashes below were recorded from GitHub Actions run 38661130966,
-# before --disable-websocket. Replace them from the macOS CI log of the
-# websocket-disabled binary. Until then the aria2 jobs fail closed.
-toolchain_sha256=26.6|21.0.0 (clang-2100.1.1.101)|38224f95bae5c47918350e927fbe006521858c2d926bf0218cbfe59cbfb3555f
-toolchain_sha256=27.0|21.0.0 (clang-2100.3.34.2)|e4d48a7fea6a1f7234bcdc4c7f596f6af33badd65db3c872c403e3698503f0d9
+# Recorded from GitHub Actions run 38671621890 after --disable-websocket.
+toolchain_sha256=26.6|21.0.0 (clang-2100.1.1.101)|7cf4417ceed5b43e2484d4e1738ddbf0680904c230a64799bbb16e0dfa075774
+toolchain_sha256=27.0|21.0.0 (clang-2100.3.34.2)|fccf3c476f71cc93895c55caa22d3fd7553ff1d2aec27c23d1c507a0aa948664

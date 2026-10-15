@@ -21,9 +21,12 @@ final class LocalHTTPServer {
         let listened = try POSIX.listenLoopback()
         self.listenFD = listened.fd
         self.port = listened.port
-        Thread.detachNewThread { [weak self] in
-            self?.serve()
-            self?.stopped.signal()
+    }
+
+    func start() {
+        Thread.detachNewThread { [self] in
+            self.serve()
+            self.stopped.signal()
         }
     }
 
@@ -68,10 +71,10 @@ final class LocalHTTPServer {
                 POSIX.closeFD(client)
                 break
             }
-            Thread.detachNewThread { [weak self] in
-                self?.handle(client)
+            Thread.detachNewThread { [self] in
+                self.handle(client)
                 POSIX.closeFD(client)
-                self?.finishHandler()
+                self.finishHandler()
             }
         }
     }
@@ -84,12 +87,13 @@ final class LocalHTTPServer {
     }
 
     private func handle(_ client: Int32) {
+        POSIX.ignorePipe(client)
         _ = try? POSIX.setReceiveTimeout(fd: client, seconds: 5)
         _ = try? POSIX.setSendTimeout(fd: client, seconds: 5)
         let request = readRequest(client)
         let prepared = preparedResponse(for: request)
         if prepared.body.isEmpty {
-            _ = try? POSIX.writeAll(fd: client, data: Data(prepared.header.utf8))
+            _ = try? POSIX.sendAll(fd: client, data: Data(prepared.header.utf8))
             return
         }
         var offset = 0
@@ -107,7 +111,7 @@ final class LocalHTTPServer {
             } else {
                 outgoing = chunk
             }
-            guard (try? POSIX.writeAll(fd: client, data: outgoing)) != nil else {
+            guard (try? POSIX.sendAll(fd: client, data: outgoing)) != nil else {
                 return
             }
             offset += size
