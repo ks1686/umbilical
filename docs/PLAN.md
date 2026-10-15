@@ -6,7 +6,7 @@ Short name: `umb` (binary, bundle id suffix, branding).
 ## 1. Product rules (non-negotiable)
 
 - Lightweight first, feature-full second. Idle memory target under 60 MB, app bundle under 40 MB excluding helpers.
-- Download only. No seeding, ever. We never claim "zero upload" because BitTorrent exchanges pieces while downloading; we claim "never seeds".
+- Download only. It never seeds after a download completes. While a download is in progress, upload is capped at 1 KiB/s. Do not claim zero upload. BitTorrent exchanges pieces during the download.
 - Paid app, open source (GPL-3.0). Anyone may build from source and we will not block it.
 - Native macOS only: Swift and SwiftUI, macOS 14 Sonoma or later, Apple Silicon and Intel.
 
@@ -35,7 +35,8 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 - `--enable-rpc --rpc-listen-port=<random free port> --rpc-secret=<32 random bytes, per launch>` (inside the config file only)
 - `--rpc-listen-all=false --rpc-allow-origin-all=false`
 - `--seed-time=0` stops seeding when the download completes. Do not set `--seed-ratio=0.0`. In aria2 that value means seed regardless of share ratio. Leave the ratio at its default of 1.0.
-- `--max-upload-limit=1K` (0 means unlimited in aria2, so never 0)
+- `--max-upload-limit=1K` (0 means unlimited in aria2, so never 0). This caps upload while a download is in progress. It is not a claim of zero upload.
+- `--follow-torrent=false` and `--follow-metalink=false`. An HTTP download of a `.torrent` or a metalink is saved as that file. aria2 does not start the downloads named inside it. Magnet links are added with `aria2.addUri` and do not use this switch.
 - `--bt-max-peers` capped, DHT and PEX on by default for magnet resolution, toggle in settings
 - `--check-certificate=true` (explicit, so a later change cannot silently disable TLS checks)
 - `--check-integrity=true`, `--auto-file-renaming=true`, `--allow-overwrite=false`
@@ -100,6 +101,8 @@ The engine launches `aria2c` as a child and writes into a folder the user picks 
 
 ### Seeding
 
+The engine never seeds after a download completes. While a download is in progress, upload is capped at 1 KiB/s. Do not claim zero upload.
+
 `seed-time=0` stops seeding when a download completes. aria2 does not treat `seed-ratio=0.0` as "do not seed". That value means seed regardless of share ratio, because the ratio check is not installed. The engine does not set `seed-ratio`. The default remains 1.0. Seeding ends when either the time or the ratio condition is met, so the zero seed time wins as soon as the download completes.
 
 `max-upload-limit=1K` stays. In aria2, 0 means unlimited.
@@ -112,7 +115,11 @@ Per-download RPC options still cannot set `seed-ratio`, `seed-time`, or `max-upl
 
 `RPCClient.addTorrent` reads a `.torrent`, rejects path components that escape the download folder (`..`, absolute paths, empty names, and a name that is a symlink out of the folder), and rejects non-http(s) web seeds. Tracker URLs must be `http`, `https`, or `udp`. `select-file` is 1-based and must name a file in the torrent. The RPC call is `aria2.addTorrent` with the file base64-encoded and no extra web-seed URIs.
 
-Metalink stays unsupported.
+Metalink stays unsupported as an RPC method. `follow-metalink=false` is separate: an HTTP URL that returns a metalink is saved as a file, and aria2 does not start the files named in it. The same rule applies to an HTTP `.torrent` via `follow-torrent=false`. A magnet is still `aria2.addUri`.
+
+### Running the engine tests
+
+`docs/M2-MANUAL.md` is the Mac pass for this milestone. `swift test` is also how M3 package tests run. If the checkout is under `~/Documents`, `swift test` can fail at codesign with `resource fork, Finder information, or similar detritus not allowed`. Use `swift test --scratch-path /tmp/umb-spm`.
 
 ### Packet capture
 

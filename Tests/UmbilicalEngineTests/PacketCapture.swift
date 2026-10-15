@@ -129,7 +129,7 @@ private func tcpdumpPath() -> String? {
     return nil
 }
 
-private func captureInterface() -> String {
+func captureInterface() -> String {
     #if os(Linux)
         return "any"
     #else

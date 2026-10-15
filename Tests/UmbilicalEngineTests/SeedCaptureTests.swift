@@ -10,11 +10,20 @@ final class SeedCaptureTests: XCTestCase {
         defer { rig.stopAll() }
         let trial = try await driveHeldDownload(rig)
         let events = try loadBitTorrentEvents(trial.pcap)
+        let failures = testRun?.failureCount ?? 0
         try assertUploadCeiling(trial, events)
         assertSilentAfterGrace(trial, events)
         assertLoopback(trial)
         try assertPayload(trial)
         assertGlobalCaps(trial)
+        if (testRun?.failureCount ?? 0) == failures {
+            noteSeedCapturePass()
+        }
+    }
+
+    private func noteSeedCapturePass() {
+        let line = "SeedCapture: ran on \(captureInterface()), PASS\n"
+        FileHandle.standardError.write(Data(line.utf8))
     }
 }
 
@@ -98,6 +107,8 @@ private func assertGlobalCaps(_ trial: HeldTrial) {
     XCTAssertTrue(upload == "1K" || upload == "1024", "max-upload-limit=\(upload)")
     let ratio = trial.global["seed-ratio"] ?? ""
     XCTAssertFalse(ratio == "0" || ratio == "0.0", "seed-ratio=\(ratio)")
+    XCTAssertEqual(trial.global["follow-torrent"], "false")
+    XCTAssertEqual(trial.global["follow-metalink"], "false")
 }
 
 private func isEnginePiece(_ event: BTEvent, trial: HeldTrial) -> Bool {

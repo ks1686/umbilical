@@ -204,7 +204,7 @@ private func heldPayload() -> Data {
     return data
 }
 
-private func globalOptions(_ client: RPCClient) async throws -> [String: String] {
+func globalOptions(_ client: RPCClient) async throws -> [String: String] {
     let transport = LoopbackTransport(port: client.port, timeoutSeconds: 5)
     let result = try await transport.call(
         method: "aria2.getGlobalOption",

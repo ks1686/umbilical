@@ -31,6 +31,8 @@ final class RPCIntegrationTests: XCTestCase {
         XCTAssertTrue(settings.contains("check-certificate=true"))
         XCTAssertTrue(settings.contains("seed-time=0"))
         XCTAssertFalse(settings.contains("seed-ratio"))
+        XCTAssertTrue(settings.contains("follow-torrent=false"))
+        XCTAssertTrue(settings.contains("follow-metalink=false"))
         XCTAssertTrue(settings.contains("max-upload-limit=1K"))
         let client = try await supervisor.completeLaunch(prepared, probe: LiveRPCProbe())
         XCTAssertFalse(FileManager.default.fileExists(atPath: prepared.settingsFile.path))

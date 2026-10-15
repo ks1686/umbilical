@@ -26,6 +26,9 @@ enum Aria2Settings {
             "enable-dht=true",
             "enable-peer-exchange=true",
             "enable-rpc=true",
+            // An HTTP download of a .torrent or a metalink stays a file.
+            "follow-metalink=false",
+            "follow-torrent=false",
             "max-upload-limit=\(maxUploadLimit)",
             "rpc-allow-origin-all=false",
             "rpc-listen-all=false",

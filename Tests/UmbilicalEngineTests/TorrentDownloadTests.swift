@@ -31,7 +31,7 @@ final class TorrentDownloadTests: XCTestCase {
     }
 }
 
-private struct DownloadEngine {
+struct DownloadEngine {
     var supervisor: EngineSupervisor
     var client: RPCClient
     var downloads: URL
@@ -42,7 +42,7 @@ private struct DownloadEngine {
     }
 }
 
-private func startDownloadEngine(aria2: URL) async throws -> DownloadEngine {
+func startDownloadEngine(aria2: URL) async throws -> DownloadEngine {
     let downloads = try makeTemporaryDirectory()
     let supervisor = EngineSupervisor(
         aria2Executable: aria2,
@@ -178,6 +178,8 @@ private func startMagnetSeeder(aria2: URL) throws -> MagnetSeed {
 }
 
 private func finishMagnet(_ seeded: MagnetSeed, _ engine: DownloadEngine) async throws {
+    let global = try await globalOptions(engine.client)
+    XCTAssertEqual(global["follow-torrent"], "false")
     do {
         let gid = try await engine.client.add(url: try testURL(seeded.magnet))
         _ = try await waitForStatus(engine.client, gid: gid, timeout: 40) {
@@ -187,7 +189,11 @@ private func finishMagnet(_ seeded: MagnetSeed, _ engine: DownloadEngine) async 
         XCTAssertEqual(try Data(contentsOf: saved), seeded.payload)
     } catch {
         let log = engine.supervisor.launchOutput(redacting: engine.client.secret)
-        XCTFail("magnet failed: \(error) seeder=\(seeded.seeder.output()) aria2=\(log)")
+        let follow = global["follow-torrent"] ?? ""
+        XCTFail(
+            "magnet failed: \(error) follow-torrent=\(follow) "
+                + "seeder=\(seeded.seeder.output()) aria2=\(log)"
+        )
     }
 }
 
