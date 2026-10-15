@@ -22,7 +22,10 @@ Last updated October 15, 2026.
 | License provider choice | Code Lead | planned |
 | Price, offline grace period, device limit | Code Lead | planned |
 | Trademark check for umbilical and umb | Code Lead | planned |
-| Final security review (signing, update feed, license check, App Sandbox, release tag scan) | Repo Guard | planned |
+| License integration: server decides every activation, no key-minting secret in the app, signed activation replies, minimal device data (release blocker) | Code Lead | planned |
+| Homebrew cask in ks1686/homebrew-tap, pinned dmg SHA-256, `auto_updates true` | Code Lead | planned |
+| Cask checks on the Mac: `brew audit --cask`, `brew style`, install from tap, brew still sees app current after a Sparkle update | Machine Keeper | planned |
+| Final security review (signing, update feed, license check against the license rules above, Homebrew cask, App Sandbox, release tag scan) | Repo Guard | planned |
 | Milestone Mac tests with a real aria2c | Machine Keeper | planned for each remaining milestone |
 
 Notes:
