@@ -178,14 +178,6 @@ public final class LicenseService {
         if evaluation.clearValidation {
             store.clearValidation()
         }
-        // Keep a failed Activate or Deactivate on screen. The next tick must
-        // not replace it. Clearing passes nil.
-        if snapshot.actionError != nil, error != nil {
-            snapshot.canDeactivate = canDeactivateNow()
-            snapshot.deviceLabel = displayLabel()
-            snapshot.isBusy = busy
-            return
-        }
         snapshot = LicenseSnapshot(
             status: evaluation.status,
             canDeactivate: canDeactivateNow(),

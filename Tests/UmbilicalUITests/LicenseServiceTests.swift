@@ -68,7 +68,8 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).stopsActiveDownloads)
         await service.tick()
         XCTAssertEqual(service.snapshot.actionError, message)
-        XCTAssertEqual(licenseDenial(service.snapshot.status), .limitReached)
+        XCTAssertEqual(licenseDenial(service.snapshot.status), .missing)
+        XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
         await service.activate(LicenseFixture.key)
         XCTAssertEqual(service.snapshot.actionError, message)
         service.clearActionError()
@@ -101,6 +102,59 @@ final class LicenseServiceTests: XCTestCase {
         guard case .licensed = service.snapshot.status else {
             return XCTFail("expected the current license to stay")
         }
+    }
+
+    func testStickyDeactivateErrorDoesNotExtendGrace() async {
+        let store = MemoryLicenseStore()
+        store.credential = LicenseFixture.credential()
+        store.validation = LicenseFixture.validation(validatedAt: now)
+        let transport = StubLicenseTransport([
+            .success(polarReply(status: 500)),
+            .failure(StubLicenseError())
+        ])
+        let clock = ManualClock(now)
+        let service = makeLicenseService(store: store, transport: transport, clock: clock)
+        await service.deactivate()
+        XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        XCTAssertTrue(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
+
+        clock.now = now.addingTimeInterval(LicensePolicy.offlineGrace + 1)
+        await service.tick()
+
+        XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        XCTAssertEqual(licenseDenial(service.snapshot.status), .graceExpired)
+        let permissions = LicensePermissions.resolve(service.snapshot.status)
+        XCTAssertFalse(permissions.allowsNewDownloads)
+        XCTAssertFalse(permissions.allowsResume)
+        XCTAssertFalse(permissions.stopsActiveDownloads)
+        XCTAssertEqual(store.validation?.validatedAt, now)
+    }
+
+    func testStickyDeactivateErrorDoesNotIgnoreClockRollback() async {
+        let store = MemoryLicenseStore()
+        let observed = now
+        store.credential = LicenseFixture.credential()
+        store.validation = LicenseFixture.validation(
+            validatedAt: now.addingTimeInterval(-3_600),
+            observedAt: observed
+        )
+        let transport = StubLicenseTransport([
+            .success(polarReply(status: 500)),
+            .failure(StubLicenseError())
+        ])
+        let clock = ManualClock(now)
+        let service = makeLicenseService(store: store, transport: transport, clock: clock)
+        await service.deactivate()
+        XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        XCTAssertTrue(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
+
+        clock.now = observed.addingTimeInterval(-(LicensePolicy.clockSkew + 60))
+        await service.tick()
+
+        XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        XCTAssertEqual(licenseDenial(service.snapshot.status), .clockRollback)
+        XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
+        XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).stopsActiveDownloads)
     }
 
     func testValidateRefreshesTheSameActivation() async throws {

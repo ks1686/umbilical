@@ -120,7 +120,6 @@ extension LicenseService {
             return
         }
         refreshPreservingError()
-        guard snapshot.actionError == nil else { return }
         guard LicensePermissions.resolve(snapshot.status).allowsNewDownloads else { return }
         snapshot.status = .unlicensed(.clockRollback)
     }
