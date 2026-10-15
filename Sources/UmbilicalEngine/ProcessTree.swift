@@ -143,12 +143,19 @@ enum ProcessTree {
     private static func darwinArguments(pid: pid_t) -> String? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
-        if sysctl(&mib, 3, nil, &size, nil, 0) != 0 || size <= 0 {
+        let probed = mib.withUnsafeMutableBufferPointer { pointer -> Int32 in
+            guard let base = pointer.baseAddress else { return -1 }
+            return sysctl(base, UInt32(pointer.count), nil, &size, nil, 0)
+        }
+        if probed != 0 || size <= 0 {
             return nil
         }
         var buffer = [UInt8](repeating: 0, count: size)
         let copied = buffer.withUnsafeMutableBytes { raw -> Int32 in
-            sysctl(&mib, 3, raw.baseAddress, &size, nil, 0)
+            mib.withUnsafeMutableBufferPointer { pointer -> Int32 in
+                guard let name = pointer.baseAddress else { return -1 }
+                return sysctl(name, UInt32(pointer.count), raw.baseAddress, &size, nil, 0)
+            }
         }
         if copied != 0 || size < MemoryLayout<Int32>.size {
             return nil

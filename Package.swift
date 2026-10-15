@@ -29,7 +29,10 @@ let package = Package(
         .target(
             name: "CProc",
             path: "Sources/CProc",
-            publicHeadersPath: "include"
+            publicHeadersPath: "include",
+            linkerSettings: [
+                .linkedLibrary("proc", .when(platforms: [.macOS])),
+            ]
         ),
         .target(
             name: "UmbilicalEngine",

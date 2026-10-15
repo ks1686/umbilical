@@ -2,12 +2,14 @@
 
 import Foundation
 import XCTest
-#if canImport(Darwin)
-import Darwin
-#elseif canImport(Glibc)
-import Glibc
-#endif
+
 @testable import UmbilicalEngine
+
+#if canImport(Darwin)
+    import Darwin
+#elseif canImport(Glibc)
+    import Glibc
+#endif
 
 enum TestBins {
     static func watchHelper() throws -> URL {
@@ -33,7 +35,7 @@ enum TestBins {
         let candidates = [
             ProcessInfo.processInfo.environment["ARIA2C"],
             "/tmp/aria2-install/bin/aria2c",
-            "/usr/bin/aria2c",
+            "/usr/bin/aria2c"
         ]
         for candidate in candidates {
             guard let candidate, !candidate.isEmpty else { continue }
@@ -63,13 +65,19 @@ enum TestBins {
             .appendingPathComponent("Sources/umb-watch/main.c")
         let output = FileManager.default.temporaryDirectory
             .appendingPathComponent("umb-watch-\(UUID().uuidString)")
-        let compiler = FileManager.default.isExecutableFile(atPath: "/usr/bin/cc") ? "/usr/bin/cc" : "/usr/bin/gcc"
+        let compiler: String
+        if FileManager.default.isExecutableFile(atPath: "/usr/bin/cc") {
+            compiler = "/usr/bin/cc"
+        } else {
+            compiler = "/usr/bin/gcc"
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: compiler)
         process.arguments = ["-D_GNU_SOURCE", "-O2", "-o", output.path, source.path]
         try process.run()
         process.waitUntilExit()
-        if process.terminationStatus != 0 || !FileManager.default.isExecutableFile(atPath: output.path) {
+        let compiled = FileManager.default.isExecutableFile(atPath: output.path)
+        if process.terminationStatus != 0 || !compiled {
             throw FixtureError.watchCompileFailed
         }
         return output
@@ -109,19 +117,28 @@ final class RecordingQuarantine: QuarantineApplying {
 }
 
 final class RecordingTransport: JSONRPCTransport {
-    private let lock = NSLock()
-    private(set) var methods: [String] = []
+    private let queue = DispatchQueue(label: "umb.test.transport")
+    private var recorded: [String] = []
 
     func call(method: String, parameters: [Any]) async throws -> Any {
-        lock.lock()
-        methods.append(method)
-        lock.unlock()
+        queue.sync {
+            recorded.append(method)
+        }
         return "gid"
+    }
+
+    var methods: [String] {
+        queue.sync { recorded }
     }
 }
 
+func testURL(_ string: String) throws -> URL {
+    try XCTUnwrap(URL(string: string))
+}
+
 func makeTemporaryDirectory() throws -> URL {
-    let url = FileManager.default.temporaryDirectory.appendingPathComponent("umb-test-\(UUID().uuidString)", isDirectory: true)
+    let name = "umb-test-\(UUID().uuidString)"
+    let url = FileManager.default.temporaryDirectory.appendingPathComponent(name, isDirectory: true)
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
     try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: url.path)
     return url
@@ -130,16 +147,22 @@ func makeTemporaryDirectory() throws -> URL {
 func waitForPID(at url: URL, timeout: TimeInterval = 3) throws -> Int32 {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
-        if let text = try? String(contentsOf: url, encoding: .utf8),
-           let pid = Int32(text.trimmingCharacters(in: .whitespacesAndNewlines)) {
-            return pid
+        if let text = try? String(contentsOf: url, encoding: .utf8) {
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let pid = Int32(trimmed) {
+                return pid
+            }
         }
         usleep(20_000)
     }
     throw FixtureError.timedOut
 }
 
-func waitForDescendant(of root: Int32, containing needle: String, timeout: TimeInterval = 3) throws -> Int32 {
+func waitForDescendant(
+    of root: Int32,
+    containing needle: String,
+    timeout: TimeInterval = 3
+) throws -> Int32 {
     let deadline = Date().addingTimeInterval(timeout)
     while Date() < deadline {
         for line in ProcessTree.commandLines(root: root) {
@@ -162,7 +185,8 @@ func pidMatching(root: Int32, needle: String) -> Int32? {
         if !seen.insert(current).inserted {
             continue
         }
-        if let line = ProcessTree.commandLine(pid: current), line.contains(needle), current != root {
+        let line = ProcessTree.commandLine(pid: current)
+        if current != root, let line, line.contains(needle) {
             return current
         }
         pending.append(contentsOf: ProcessTree.children(of: current))

@@ -1,0 +1,169 @@
+name: Security
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gitleaks:
+    name: gitleaks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          version="8.30.1"
+          work="${RUNNER_TEMP}/gitleaks"
+          mkdir -p "${work}"
+          cd "${work}"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output checksums.txt \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_checksums.txt"
+          echo "061476c21adaf5441516f96f185c1a4706a83cd6329b9b38762271b3d4a52fae  checksums.txt" \
+            | sha256sum -c -
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "gitleaks_${version}_linux_x64.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz"
+          grep "gitleaks_${version}_linux_x64.tar.gz$" checksums.txt | sha256sum -c -
+          tar -xzf "gitleaks_${version}_linux_x64.tar.gz" gitleaks
+          install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan
+        run: gitleaks detect --source . --redact --verbose
+
+  semgrep:
+    name: Semgrep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Semgrep
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user --disable-pip-version-check \
+            --require-hashes -r requirements/semgrep.txt
+          echo "${HOME}/.local/bin" >>"${GITHUB_PATH}"
+
+      - name: Scan
+        run: |
+          set -euo pipefail
+          export PATH="${HOME}/.local/bin:${PATH}"
+          semgrep scan --config p/default --error --metrics=off --disable-version-check
+
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: zizmor
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: "1.30.1"
+          advanced-security: false
+          online-audits: false
+          annotations: true
+          persona: regular
+
+  actionlint:
+    name: actionlint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install actionlint and shellcheck
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          version="1.7.12"
+          work="${RUNNER_TEMP}/actionlint"
+          mkdir -p "${work}"
+          cd "${work}"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output checksums.txt \
+            "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_checksums.txt"
+          echo "433028cf0ba3c42163ea1a668dedce30fcdbe84fe912b1a5e288c006eab8a4f5  checksums.txt" \
+            | sha256sum -c -
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "actionlint_${version}_linux_amd64.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${version}/actionlint_${version}_linux_amd64.tar.gz"
+          grep "actionlint_${version}_linux_amd64.tar.gz$" checksums.txt | sha256sum -c -
+          tar -xzf "actionlint_${version}_linux_amd64.tar.gz" actionlint
+          install -m 0755 actionlint /usr/local/bin/actionlint
+          actionlint -version
+          shellcheck --version
+
+      - name: Lint workflows and scripts
+        run: |
+          set -euo pipefail
+          actionlint
+          shellcheck scripts/*.sh scripts/ci/*.sh
+
+  helper-verification:
+    name: helper inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install GnuPG
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gnupg
+
+      - name: Reject bad helper checksums and signatures
+        run: scripts/ci/helper-negative-tests.sh
+
+  helpers:
+    name: yt-dlp fetch
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install GnuPG
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gnupg
+          gpg --version
+
+      - name: Fetch pinned yt-dlp
+        run: scripts/fetch-helpers.sh

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import XCTest
+
 @testable import UmbilicalEngine
 
 final class PolicyTests: XCTestCase {
@@ -39,7 +40,7 @@ final class PolicyTests: XCTestCase {
         for hook in hooks {
             do {
                 _ = try await client.add(
-                    url: URL(string: "https://example.com/file")!,
+                    url: try testURL("https://example.com/file"),
                     options: [hook: "id"]
                 )
                 XCTFail("expected \(hook) to be rejected")
@@ -112,7 +113,7 @@ final class PolicyTests: XCTestCase {
             quarantine: RecordingQuarantine()
         )
         do {
-            _ = try await client.add(url: URL(string: "file:///tmp/x")!)
+            _ = try await client.add(url: try testURL("file:///tmp/x"))
             XCTFail("expected file URL to be rejected")
         } catch let error as EngineError {
             guard case .schemeRejected = error else {
@@ -121,7 +122,8 @@ final class PolicyTests: XCTestCase {
             }
         }
         do {
-            _ = try await client.add(url: URL(string: "https://user:secret@example.com/a")!)
+            let userInfo = try testURL("https://user:secret@example.com/a")
+            _ = try await client.add(url: userInfo)
             XCTFail("expected userinfo to be rejected")
         } catch let error as EngineError {
             guard case .schemeRejected = error else {
@@ -131,7 +133,7 @@ final class PolicyTests: XCTestCase {
         }
         do {
             _ = try await client.add(
-                url: URL(string: "https://example.com/a")!,
+                url: try testURL("https://example.com/a"),
                 options: ["out": "../x"]
             )
             XCTFail("expected output name to be rejected")
@@ -156,13 +158,13 @@ final class PolicyTests: XCTestCase {
             quarantine: RecordingQuarantine()
         )
         _ = try await client.add(
-            url: URL(string: "https://example.com/file.bin")!,
+            url: try testURL("https://example.com/file.bin"),
             options: [
                 "out": "file.bin",
                 "split": "1",
                 "max-download-limit": "1M",
                 "select-file": "1,2",
-                "dir": root.path,
+                "dir": root.path
             ]
         )
         XCTAssertEqual(transport.methods, ["aria2.addUri"])

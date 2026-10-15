@@ -1,0 +1,15 @@
+# yt-dlp 2026.08.19 pin.
+# scripts/fetch-helpers.sh verifies SHA2-256SUMS.sig with helpers/yt-dlp.asc
+# before it trusts sha256. The script never runs yt-dlp and never passes -U.
+# Published key (tag 2026.08.19, identical to master when pinned):
+# https://github.com/yt-dlp/yt-dlp/blob/2026.08.19/public.key
+# Primary key fingerprint AC0C BBE6 848D 6A87 3464 AF4E 57CF 6593 3B5A 7581
+# Signature on the release SHA2-256SUMS was checked with that key.
+version=2026.08.19
+asset=yt-dlp_macos
+asset_url=https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp_macos
+sha256=0f192b7ec147ab6288885d6351d9ab67367640029b4377576ef46dd79cf7b202
+sums_url=https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/SHA2-256SUMS
+sums_sig_url=https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/SHA2-256SUMS.sig
+gpg_key=helpers/yt-dlp.asc
+gpg_fingerprint=AC0CBBE6848D6A873464AF4E57CF65933B5A7581

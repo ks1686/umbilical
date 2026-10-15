@@ -1,4 +1,4 @@
-name: ci
+name: CI
 
 on:
   pull_request:
@@ -9,97 +9,140 @@ on:
 permissions:
   contents: read
 
-defaults:
-  run:
-    shell: bash
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  helper-verification:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  app:
+    name: App
+    runs-on: macos-26
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install GnuPG
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y gnupg
-      - name: Reject bad helper checksums and signatures
-        run: scripts/ci/helper-negative-tests.sh
 
-  semgrep:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install Semgrep from the hash lock
+      - name: Install XcodeGen and SwiftLint
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y python3-venv
-          python3 -m venv "$RUNNER_TEMP/semgrep"
-          "$RUNNER_TEMP/semgrep/bin/pip" install --require-hashes -r requirements/semgrep.txt
-      - name: Scan
-        run: |
-          set -euo pipefail
-          "$RUNNER_TEMP/semgrep/bin/semgrep" scan \
-            --config p/swift \
-            --config p/security-audit \
-            --error \
-            --metrics=off \
-            --disable-version-check \
-            Sources Tests scripts Package.swift
+          prefix="${HOME}/.local"
+          work="${RUNNER_TEMP}/tools"
+          mkdir -p "${prefix}/bin" "${work}"
+          cd "${work}"
 
-  gitleaks:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install gitleaks
-        run: |
-          set -euo pipefail
-          url=https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
-          curl --fail --silent --show-error --location --retry 3 --output /tmp/gitleaks.tar.gz "$url"
-          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tar.gz" | sha256sum -c
-          sudo tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
-      - name: Scan
-        run: gitleaks detect --source . --redact --no-banner --exit-code 1
+          sha256_check() {
+            expected="$1"
+            file="$2"
+            if command -v sha256sum >/dev/null 2>&1; then
+              actual="$(sha256sum "${file}" | awk '{ print $1 }')"
+            else
+              actual="$(shasum -a 256 "${file}" | awk '{ print $1 }')"
+            fi
+            if [[ "${actual}" != "${expected}" ]]; then
+              echo "checksum mismatch for ${file}" >&2
+              echo "expected ${expected}" >&2
+              echo "actual   ${actual}" >&2
+              exit 1
+            fi
+          }
 
-  zizmor:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+          curl --fail --silent --show-error --location --retry 3 \
+            --output xcodegen.zip \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip"
+          sha256_check \
+            "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806" \
+            xcodegen.zip
+          rm -rf xcodegen
+          unzip -q xcodegen.zip
+          PREFIX="${prefix}" bash ./xcodegen/install.sh
+
+          curl --fail --silent --show-error --location --retry 3 \
+            --output portable_swiftlint.zip \
+            "https://github.com/realm/SwiftLint/releases/download/0.65.1/portable_swiftlint.zip"
+          sha256_check \
+            "c1e429b0599cf1b516f369a2d9ec04eaf0e436f3c12b637df8851fa52ff694d0" \
+            portable_swiftlint.zip
+          rm -rf swiftlint-extract
+          unzip -q portable_swiftlint.zip -d swiftlint-extract
+          install -m 0755 swiftlint-extract/swiftlint "${prefix}/bin/swiftlint"
+
+          export PATH="${prefix}/bin:${PATH}"
+          echo "${prefix}/bin" >>"${GITHUB_PATH}"
+          xcodegen version
+          swiftlint version
+
+      - name: Generate the Xcode project
+        run: xcodegen generate
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project umbilical.xcodeproj \
+            -scheme umbilical \
+            -destination 'platform=macOS' \
+            -configuration Debug \
+            build
+
+      - name: Test
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project umbilical.xcodeproj \
+            -scheme umbilical \
+            -destination 'platform=macOS' \
+            -configuration Debug \
+            test
+
+      - name: SwiftLint
+        run: swiftlint lint --strict --config .swiftlint.yml
+
+      - name: swift-format
+        run: |
+          set -euo pipefail
+          swift_format="$(xcrun --find swift-format)"
+          "${swift_format}" lint --strict --recursive \
+            --configuration .swift-format App Tests
+
+  aria2:
+    name: aria2c
+    runs-on: macos-26
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install zizmor
+
+      - name: Install pkg-config
         run: |
           set -euo pipefail
-          url=https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-x86_64-unknown-linux-gnu.tar.gz
-          curl --fail --silent --show-error --location --retry 3 --output /tmp/zizmor.tar.gz "$url"
-          echo "e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a  /tmp/zizmor.tar.gz" | sha256sum -c
-          sudo tar -xzf /tmp/zizmor.tar.gz -C /usr/local/bin zizmor
-      - name: Audit workflows
-        run: zizmor --offline .github/workflows
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_ANALYTICS=1
+          brew install pkg-config
+          command -v pkg-config
+
+      - name: Build universal aria2c
+        run: scripts/build-aria2.sh
+
+      - name: Test the engine
+        run: swift test
+        env:
+          ARIA2C: ${{ github.workspace }}/helpers/bin/aria2c
+          UMB_REQUIRE_ARIA2: "1"
 
   engine:
-    runs-on: ubuntu-latest
+    name: Engine
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
       - name: Install build tools
         run: |
           set -euo pipefail
@@ -107,39 +150,54 @@ jobs:
           sudo apt-get install -y \
             build-essential pkg-config libssl-dev libxml2-dev zlib1g-dev \
             libncurses6 libcurl4-openssl-dev libedit2 libgcc-13-dev \
-            libpython3-dev libsqlite3-0 libstdc++-13-dev libz3-dev \
-            unzip
+            libpython3-dev libsqlite3-0 libstdc++-13-dev libz3-dev unzip
+
       - name: Build aria2 without WebSocket
-        run: scripts/build-aria2.sh "$RUNNER_TEMP/aria2"
+        run: scripts/build-aria2-linux.sh "${RUNNER_TEMP}/aria2"
+
       - name: Install Swift
         run: |
           set -euo pipefail
-          url=https://download.swift.org/swift-6.4.1-release/ubuntu2404/swift-6.4.1-RELEASE/swift-6.4.1-RELEASE-ubuntu24.04.tar.gz
-          curl --fail --silent --show-error --location --retry 3 --output /tmp/swift.tar.gz "$url"
-          echo "7d246c7114077ad01dba4ad897628446ada4c489d6c7dbcf39ae3f25cbe17e8b  /tmp/swift.tar.gz" | sha256sum -c
+          url="https://download.swift.org/swift-6.4.1-release/ubuntu2404/swift-6.4.1-RELEASE/swift-6.4.1-RELEASE-ubuntu24.04.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output /tmp/swift.tar.gz "$url"
+          echo "7d246c7114077ad01dba4ad897628446ada4c489d6c7dbcf39ae3f25cbe17e8b  /tmp/swift.tar.gz" \
+            | sha256sum -c -
           sudo mkdir -p /opt/swift
           sudo tar -xzf /tmp/swift.tar.gz -C /opt/swift --strip-components=1
-          echo /opt/swift/usr/bin >> "$GITHUB_PATH"
+          echo /opt/swift/usr/bin >>"${GITHUB_PATH}"
+
       - name: Test the engine
         run: swift test
         env:
           ARIA2C: ${{ runner.temp }}/aria2/bin/aria2c
           UMB_REQUIRE_ARIA2: "1"
 
-  engine-macos:
-    runs-on: macos-15
-    timeout-minutes: 40
+  aria2-xcode-27:
+    name: aria2c Xcode 27
+    runs-on: xcode-27
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install build dependencies
-        run: brew install libxml2 pkg-config
-      - name: Build aria2 without WebSocket
-        run: scripts/build-aria2.sh "$RUNNER_TEMP/aria2"
-      - name: Test the engine
-        run: swift test
-        env:
-          ARIA2C: ${{ runner.temp }}/aria2/bin/aria2c
-          UMB_REQUIRE_ARIA2: "1"
+
+      - name: Select Xcode 27.0
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_27.app/Contents/Developer
+          xcodebuild -version
+          xcrun --find clang
+          clang --version
+
+      - name: Install pkg-config
+        run: |
+          set -euo pipefail
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_ANALYTICS=1
+          brew install pkg-config
+          command -v pkg-config
+
+      - name: Build universal aria2c
+        run: scripts/build-aria2.sh

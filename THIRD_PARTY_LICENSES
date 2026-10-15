@@ -1,0 +1,38 @@
+Third-party licenses
+====================
+
+umbilical itself is GPL-3.0-or-later. See LICENSE.
+This file lists helper programs the app ships or plans to ship.
+
+aria2
+-----
+Role: HTTP(S), FTP, BitTorrent, and Metalink helper (aria2c), built from
+the official source tarball by scripts/build-aria2.sh.
+License: GPL-2.0-or-later
+Source headers say "either version 2 of the License, or (at your option)
+any later version."
+Project: https://github.com/aria2/aria2
+Pinned version and checksums: helpers/aria2.lock
+
+yt-dlp
+------
+Role: video helper. Phase 2. scripts/fetch-helpers.sh can fetch the pinned
+macOS binary. The app does not launch it in this skeleton, and the fetch
+script does not run self-update.
+License: Unlicense
+The pinned release is yt-dlp_macos, a PyInstaller build. That build also
+includes other third-party licenses. See THIRD_PARTY_LICENSES.txt in the
+pinned yt-dlp tag.
+Project: https://github.com/yt-dlp/yt-dlp
+Pinned version and checksum: helpers/yt-dlp.lock
+
+ffmpeg
+------
+Role: phase 2, remux only. Not fetched and not shipped in this skeleton.
+License: LGPL
+
+Sparkle
+-------
+Role: app updates, later. Not vendored in this skeleton.
+License: MIT
+Project: https://github.com/sparkle-project/Sparkle

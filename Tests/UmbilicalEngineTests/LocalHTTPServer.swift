@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import Foundation
+
 @testable import UmbilicalEngine
 
 final class LocalHTTPServer {
@@ -46,7 +47,7 @@ final class LocalHTTPServer {
         condition.lock()
         let deadline = Date().addingTimeInterval(3)
         while handlers > 0 && Date() < deadline {
-            condition.wait(until: Date().addingTimeInterval(0.2))
+            _ = condition.wait(until: Date().addingTimeInterval(0.2))
         }
         condition.unlock()
         _ = stopped.wait(timeout: .now() + 2)
@@ -115,7 +116,7 @@ final class LocalHTTPServer {
             }
             condition.lock()
             if !released {
-                condition.wait(until: Date().addingTimeInterval(0.25))
+                _ = condition.wait(until: Date().addingTimeInterval(0.25))
             }
             condition.unlock()
         }
@@ -134,7 +135,7 @@ final class LocalHTTPServer {
     }
 
     private func preparedResponse(for request: Data) -> (header: String, body: Data) {
-        let text = String(decoding: request, as: UTF8.self)
+        let text = String(bytes: request, encoding: .utf8) ?? ""
         if let range = byteRange(in: text), range.lowerBound < body.count {
             let end = min(range.upperBound, body.count)
             let slice = body.subdata(in: range.lowerBound..<end)
@@ -146,7 +147,7 @@ final class LocalHTTPServer {
                 "Content-Type: application/octet-stream",
                 "Connection: close",
                 "",
-                "",
+                ""
             ].joined(separator: "\r\n")
             return (header, slice)
         }
@@ -156,22 +157,27 @@ final class LocalHTTPServer {
             "Content-Type: application/octet-stream",
             "Connection: close",
             "",
-            "",
+            ""
         ].joined(separator: "\r\n")
         return (header, body)
     }
 
     private func byteRange(in request: String) -> Range<Int>? {
         for line in request.split(separator: "\r\n", omittingEmptySubsequences: false) {
-            let parts = line.split(separator: ":", maxSplits: 1).map(String.init)
-            guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces).lowercased() == "range" else {
-                continue
-            }
+            let parts = line.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
+                .map(String.init)
+            guard parts.count == 2 else { continue }
+            let name = parts[0].trimmingCharacters(in: .whitespaces).lowercased()
+            guard name == "range" else { continue }
             let value = parts[1].trimmingCharacters(in: .whitespaces)
             guard value.lowercased().hasPrefix("bytes=") else { continue }
             let spec = value.dropFirst("bytes=".count)
-            let bounds = spec.split(separator: "-", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
-            guard let start = Int(bounds[0]), start >= 0 else { continue }
+            let bounds = spec.split(
+                separator: "-",
+                maxSplits: 1,
+                omittingEmptySubsequences: false
+            ).map(String.init)
+            guard let start = bounds.first.flatMap(Int.init), start >= 0 else { continue }
             let end: Int
             if bounds.count == 2, !bounds[1].isEmpty, let parsed = Int(bounds[1]), parsed >= start {
                 end = parsed + 1
