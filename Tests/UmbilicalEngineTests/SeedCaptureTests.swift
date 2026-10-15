@@ -5,6 +5,7 @@ import XCTest
 
 final class SeedCaptureTests: XCTestCase {
     func testUploadStopsAfterCompletionAndStaysCapped() async throws {
+        FileHandle.standardError.write(Data("SeedCapture: begin\n".utf8))
         let aria2 = try TestBins.requireAria2()
         let rig = try makeHeldRig(aria2: aria2)
         defer { rig.stopAll() }

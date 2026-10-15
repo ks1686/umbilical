@@ -130,7 +130,7 @@ public final class EngineSupervisor {
             if needsCleanup {
                 if process.isRunning {
                     process.terminate()
-                    process.waitUntilExit()
+                    reap(process)
                 }
                 if self.process === process {
                     self.process = nil
@@ -195,7 +195,7 @@ public final class EngineSupervisor {
             if process.isRunning && pid > 0 {
                 kill(pid, SIGKILL)
             }
-            process.waitUntilExit()
+            reap(process)
         }
         process = nil
         stderrDrain?.stop()
@@ -209,6 +209,24 @@ public final class EngineSupervisor {
     var processIdentifier: Int32? {
         guard let process, process.isRunning else { return nil }
         return process.processIdentifier
+    }
+
+    /// Give the child a moment, then SIGKILL. `waitUntilExit` can sit forever.
+    private func reap(_ process: Process) {
+        let grace = Date().addingTimeInterval(1)
+        while process.isRunning && Date() < grace {
+            usleep(20_000)
+        }
+        if !process.isRunning {
+            return
+        }
+        if process.processIdentifier > 0 {
+            kill(process.processIdentifier, SIGKILL)
+        }
+        let deadline = Date().addingTimeInterval(1)
+        while process.isRunning && Date() < deadline {
+            usleep(20_000)
+        }
     }
 
     private func makeSecret() throws -> String {
