@@ -17,7 +17,7 @@ Recorded October 15, 2026. These apply through v1 and to any future build machin
 
 ### Shared with other apps
 
-The Developer ID certificate and the App Store Connect API key are shared with the genv and PeaProxy releases. umbilical signs and notarizes on the Mac, while genv and PeaProxy sign in GitHub Actions with copies stored as `MACOS_*` repo secrets, so a rotation also means re-uploading those secrets. Changing, rotating, revoking or moving any of them can break signing for those apps too. Before any such change, check the genv and PeaProxy release steps and test a signed build of each. The Sparkle key is umbilical's own and is not shared.
+The Developer ID certificate and the App Store Connect API key are shared with the genv and PeaProxy releases. umbilical signs and notarizes on the Mac, while genv and PeaProxy sign in GitHub Actions with copies stored as `MACOS_*` secrets in each repo's `release` environment (only `v*` tags can use them), so a rotation also means re-uploading them with `scripts/set-macos-signing-secrets.sh --env release`. Changing, rotating, revoking or moving any of them can break signing for those apps too. Before any such change, check the genv and PeaProxy release steps and test a signed build of each. The Sparkle key is umbilical's own and is not shared.
 
 ## Sparkle update key
 - Generated near release on the signing Mac with Sparkle's `generate_keys`, stored in the Keychain. Only the public key ships in the app.
