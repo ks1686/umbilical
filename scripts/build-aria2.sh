@@ -8,6 +8,13 @@
 # system libc++, libz, libxml2, and Apple frameworks. It must not link
 # OpenSSL, GnuTLS, or a Homebrew library.
 #
+# aria2 prints __DATE__ and __TIME__ from FeatureConfig.cc. Those macros
+# would change the binary hash on every build. The recipe rewrites them to
+# the release instant in helpers/aria2.lock, exports SOURCE_DATE_EPOCH and
+# ZERO_AR_DATE, and links with -Wl,-reproducible. Object mtimes are set to
+# that same instant before the link. The script links twice and requires
+# the same slice hash before it will accept the universal binary.
+#
 # Usage:
 #   scripts/build-aria2.sh
 #   scripts/build-aria2.sh --verify-tarball
@@ -77,6 +84,9 @@ tarball_name="$(lock_get tarball_name)"
 tarball_url="$(lock_get tarball_url)"
 tarball_bytes="$(lock_get tarball_bytes)"
 tarball_sha256="$(lock_get tarball_sha256 | tr '[:upper:]' '[:lower:]')"
+source_date_epoch="$(lock_get source_date_epoch)"
+build_date="$(lock_get build_date)"
+build_time="$(lock_get build_time)"
 
 require_url "$tarball_url" "https://github.com/aria2/aria2/releases/download/release-${version}/"
 if [[ "$tarball_sha256" != "$(printf '%s' "$tarball_sha256" | tr -cd '0-9a-f')" ]] \
@@ -84,6 +94,26 @@ if [[ "$tarball_sha256" != "$(printf '%s' "$tarball_sha256" | tr -cd '0-9a-f')" 
   echo "tarball_sha256 in ${lock_file} is not 64 hex characters" >&2
   exit 1
 fi
+case "$source_date_epoch" in
+  ''|*[!0-9]*)
+    echo "source_date_epoch in ${lock_file} is not an integer" >&2
+    exit 1
+    ;;
+esac
+case "$build_date" in
+  [A-Z][a-z][a-z]' '[0-9][0-9]' '[0-9][0-9][0-9][0-9]) ;;
+  *)
+    echo "build_date in ${lock_file} must look like 'Nov 15 2023'" >&2
+    exit 1
+    ;;
+esac
+case "$build_time" in
+  [0-9][0-9]:[0-9][0-9]:[0-9][0-9]) ;;
+  *)
+    echo "build_time in ${lock_file} must look like '12:07:32'" >&2
+    exit 1
+    ;;
+esac
 
 src_dir="${root}/helpers/src"
 tarball="${src_dir}/${tarball_name}"
@@ -127,12 +157,25 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-for tool in curl xcrun clang clang++ make lipo otool file pkg-config; do
+for tool in curl xcrun clang clang++ make lipo otool file pkg-config perl find touch date; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "missing required tool: ${tool}" >&2
     exit 1
   fi
 done
+
+stamp_text="$(LC_ALL=C TZ=UTC date -r "$source_date_epoch" "+%b %d %Y %H:%M:%S")"
+if [[ "$stamp_text" != "${build_date} ${build_time}" ]]; then
+  echo "source_date_epoch does not format as the lock file build stamp" >&2
+  echo "expected ${build_date} ${build_time}" >&2
+  echo "actual   ${stamp_text}" >&2
+  exit 1
+fi
+touch_stamp="$(LC_ALL=C TZ=UTC date -r "$source_date_epoch" "+%Y%m%d%H%M.%S")"
+
+export SOURCE_DATE_EPOCH="$source_date_epoch"
+export ZERO_AR_DATE=1
+export TZ=UTC
 
 sdk="$(xcrun --sdk macosx --show-sdk-path)"
 xml_header="${sdk}/usr/include/libxml2/libxml/xmlversion.h"
@@ -175,6 +218,7 @@ build_arch() {
   local pcdir="${dest}/pkgconfig"
   local log="${dest}/configure.log"
   local flags="-arch ${arch} -isysroot ${sdk} -mmacosx-version-min=14.0"
+  local link_flags="${flags} -Wl,-reproducible"
 
   mkdir -p "$pcdir" "${dest}/tree"
   cat >"${pcdir}/libxml-2.0.pc" <<EOF
@@ -189,6 +233,7 @@ Cflags: -I\${includedir}/libxml2
 EOF
 
   tar -xJf "$tarball" -C "${dest}/tree" --strip-components=1
+  freeze_build_stamp "${dest}/tree/src/FeatureConfig.cc"
 
   (
     set -euo pipefail
@@ -197,7 +242,7 @@ EOF
     export CXX="clang++"
     export CFLAGS="$flags"
     export CXXFLAGS="$flags"
-    export LDFLAGS="$flags"
+    export LDFLAGS="$link_flags"
     export PKG_CONFIG_PATH="$pcdir"
     unset PKG_CONFIG_SYSROOT_DIR || true
     if ! ./configure \
@@ -248,17 +293,75 @@ EOF
   jobs="$(sysctl -n hw.ncpu)"
   make -C "${dest}/tree" -j"$jobs"
 
-  local candidate="${dest}/tree/src/aria2c"
-  if [[ -f "${dest}/tree/src/.libs/aria2c" ]]; then
-    candidate="${dest}/tree/src/.libs/aria2c"
+  # Age every build input together, then link twice from those bytes.
+  # A later make must not recompile: that would mint new object mtimes.
+  find "${dest}/tree" -type f -exec touch -t "$touch_stamp" {} +
+  local first_hash=""
+  local attempt
+  for attempt in 1 2; do
+    link_aria2c "${dest}" "$jobs" "$attempt"
+    local linked="${dest}/aria2c"
+    local attempt_hash
+    attempt_hash="$(sha256_file "$linked" | tr '[:upper:]' '[:lower:]')"
+    if [[ "$attempt" == "1" ]]; then
+      first_hash="$attempt_hash"
+    elif [[ "$attempt_hash" != "$first_hash" ]]; then
+      echo "aria2c for ${arch} is not reproducible" >&2
+      echo "first  ${first_hash}" >&2
+      echo "second ${attempt_hash}" >&2
+      exit 1
+    fi
+  done
+  echo "built ${arch}: ${dest}/aria2c"
+}
+
+freeze_build_stamp() {
+  local file="$1"
+  local needle='<< __DATE__ << " " << __TIME__;'
+  if ! grep -F "$needle" "$file" >/dev/null; then
+    echo "could not find the build stamp in ${file}" >&2
+    exit 1
+  fi
+  BUILD_DATE="$build_date" BUILD_TIME="$build_time" \
+    perl -i -pe 's/<< __DATE__ << " " << __TIME__;/<< "$ENV{BUILD_DATE}" << " " << "$ENV{BUILD_TIME}";/' \
+    "$file"
+  if grep -F '__DATE__' "$file" >/dev/null || grep -F '__TIME__' "$file" >/dev/null; then
+    echo "build stamp macros remain in ${file}" >&2
+    exit 1
+  fi
+}
+
+link_aria2c() {
+  local dest="$1"
+  local jobs="$2"
+  local attempt="$3"
+  local tree="${dest}/tree"
+  local log="${dest}/relink-${attempt}.log"
+  rm -f "${tree}/src/aria2c" "${tree}/src/.libs/aria2c"
+  make -C "${tree}/src" -j"$jobs" aria2c >"$log" 2>&1 || {
+    cat "$log" >&2
+    exit 1
+  }
+  if grep -E '(^|[[:space:]])(CC|CXX)[[:space:]]' "$log" >/dev/null; then
+    echo "relink ${attempt} recompiled sources for ${dest}" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+  if ! grep -E 'CXXLD|CCLD' "$log" >/dev/null; then
+    echo "relink ${attempt} did not link aria2c for ${dest}" >&2
+    cat "$log" >&2
+    exit 1
+  fi
+  local candidate="${tree}/src/aria2c"
+  if [[ -f "${tree}/src/.libs/aria2c" ]]; then
+    candidate="${tree}/src/.libs/aria2c"
   fi
   if ! file "$candidate" | grep -q 'Mach-O'; then
-    echo "aria2c for ${arch} is not a Mach-O binary: ${candidate}" >&2
+    echo "aria2c relink ${attempt} is not a Mach-O binary: ${candidate}" >&2
     file "$candidate" >&2
     exit 1
   fi
   cp "$candidate" "${dest}/aria2c"
-  echo "built ${arch}: ${dest}/aria2c"
 }
 
 build_arch arm64 aarch64-apple-darwin
@@ -304,6 +407,10 @@ version_text="$("$out" -v)"
 printf '%s\n' "$version_text"
 if ! printf '%s\n' "$version_text" | grep -F "aria2 version ${version}" >/dev/null; then
   echo "built aria2c did not report version ${version}" >&2
+  exit 1
+fi
+if ! printf '%s\n' "$version_text" | grep -F "on        ${build_date} ${build_time}" >/dev/null; then
+  echo "built aria2c does not report the frozen build stamp" >&2
   exit 1
 fi
 

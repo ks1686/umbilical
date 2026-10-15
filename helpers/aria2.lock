@@ -8,6 +8,11 @@ tarball_name=aria2-1.37.0.tar.xz
 tarball_url=https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.xz
 tarball_bytes=1705256
 tarball_sha256=60a420ad7085eb616cb6e2bdf0a7206d68ff3d37fb5a956dc44242eb2f79b66b
-# SHA-256 of the unsigned universal Mach-O written to helpers/bin/aria2c.
+# GitHub published_at for release-1.37.0 is 2023-11-15T12:07:32Z.
+# The build rewrites __DATE__/__TIME__ to build_date and build_time.
+source_date_epoch=1700050052
+build_date=Nov 15 2023
+build_time=12:07:32
+# SHA-256 of the universal Mach-O written to helpers/bin/aria2c.
 # scripts/build-aria2.sh prints the hash and exits nonzero while this is empty.
 binary_sha256=
