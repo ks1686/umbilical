@@ -66,7 +66,8 @@ program that opened the link. The extension sends the URL and an optional file n
 It does not send cookies, headers, or aria2 options. Video uses the bundled
 yt-dlp for one combined file. It does not merge separate streams, and it
 does not ship ffmpeg or a JavaScript runtime. License checks are described
-in `docs/LICENSING.md`. Sparkle is a later milestone. App Sandbox stays off
+in `docs/LICENSING.md`. Sparkle checks the GitHub Releases appcast. See
+`docs/RELEASE.md`. App Sandbox stays off
 for the app. The Safari extension
 is sandboxed. See `docs/PLAN.md`.
 

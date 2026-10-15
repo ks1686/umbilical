@@ -4,6 +4,18 @@
 <dict>
 	<key>PolarOrganizationID</key>
 	<string>$(POLAR_ORGANIZATION_ID)</string>
+	<key>SUFeedURL</key>
+	<string>https://github.com/ks1686/umbilical/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>wMhJbYoJtpde3xrtBBL1neu9PM5giL3OnYmE7C04OFY=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
+	<key>SURequireSignedFeed</key>
+	<true/>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>

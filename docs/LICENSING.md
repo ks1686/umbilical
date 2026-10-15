@@ -139,6 +139,11 @@ The app target writes that setting into `Info.plist` as
 `PolarOrganizationID`. Do not commit the local file. Do not put an access
 token in either file, in CI, or in the app.
 
+The signed tag workflow writes `Config/Licensing.local.xcconfig` from the
+release environment value `POLAR_ORGANIZATION_ID` before it builds. The
+workflow fails if that value is empty. Pull requests and the unsigned dry
+run do not set it, so those builds stay unofficial.
+
 ## Polar dashboard
 
 Someone still has to create the product before a Release build with the

@@ -34,6 +34,8 @@ License: LGPL
 
 Sparkle
 -------
-Role: app updates, later. Not vendored in this skeleton.
+Role: app updates. The app links Sparkle 2.9.6 through Swift Package Manager.
+The framework is not vendored in this repo. The tag workflow signs Sparkle's
+XPC services, Updater.app, and Autoupdate with Developer ID.
 License: MIT
 Project: https://github.com/sparkle-project/Sparkle

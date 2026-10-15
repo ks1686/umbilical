@@ -8,6 +8,7 @@ import UmbilicalEngine
 @main
 struct UmbilicalApp: App {
     @StateObject private var model = AppModel()
+    @StateObject private var updates = UpdateController()
     @NSApplicationDelegateAdaptor(AppTermination.self) private var termination
 
     var body: some Scene {
@@ -18,9 +19,16 @@ struct UmbilicalApp: App {
                 }
         }
         .defaultSize(width: 760, height: 520)
+        .commands {
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates") {
+                    updates.checkForUpdates()
+                }
+            }
+        }
 
         MenuBarExtra {
-            MenuBarMenu(model: model)
+            MenuBarMenu(model: model, updates: updates)
         } label: {
             MenuBarTitle(model: model)
         }

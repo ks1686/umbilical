@@ -130,7 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           actionlint
-          shellcheck scripts/*.sh scripts/ci/*.sh
+          shellcheck scripts/*.sh scripts/ci/*.sh scripts/release/*.sh
 
   helper-verification:
     name: helper inputs
