@@ -15,6 +15,10 @@ Recorded October 15, 2026. These apply through v1 and to any future build machin
 - Keys are never copied to CI, cloud agents, the repo, or chat.
 - The App Store Connect API key is also backed up in the password manager, so the Mac is not the only copy.
 
+### Shared with other apps
+
+The Developer ID certificate, the App Store Connect API key and the notarytool setup on the Mac are shared with the genv and PeaProxy releases. Changing, rotating, revoking or moving any of them can break signing for those apps too. Before any such change, check the genv and PeaProxy release steps and test a signed build of each. The Sparkle key is umbilical's own and is not shared.
+
 ## Sparkle update key
 - Generated near release on the signing Mac with Sparkle's `generate_keys`, stored in the Keychain. Only the public key ships in the app.
 - Backup: `generate_keys -x` writes the private key as plain text. Write it into a folder readable only by Karim's account, store it in the password manager immediately, then delete the file. It must never land in Downloads, iCloud, or Time Machine first.
