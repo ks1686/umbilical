@@ -11,6 +11,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            LicenseSettingsSection(model: model)
             downloadsSection
             notificationsSection
             helpersSection

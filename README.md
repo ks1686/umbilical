@@ -65,8 +65,9 @@ starting the download. The sheet shows the host and does not name the
 program that opened the link. The extension sends the URL and an optional file name.
 It does not send cookies, headers, or aria2 options. Video uses the bundled
 yt-dlp for one combined file. It does not merge separate streams, and it
-does not ship ffmpeg or a JavaScript runtime. Licensing and Sparkle are
-later milestones. App Sandbox stays off for the app. The Safari extension
+does not ship ffmpeg or a JavaScript runtime. License checks are described
+in `docs/LICENSING.md`. Sparkle is a later milestone. App Sandbox stays off
+for the app. The Safari extension
 is sandboxed. See `docs/PLAN.md`.
 
 ## Helpers

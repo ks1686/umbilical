@@ -1,0 +1,6 @@
+// Polar organization id for the public license-key API.
+// This is not an access token. Leave it empty for an unofficial release build.
+// A machine-local override belongs in Licensing.local.xcconfig, which is gitignored.
+#include? "Licensing.local.xcconfig"
+
+POLAR_ORGANIZATION_ID ?=

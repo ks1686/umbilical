@@ -50,7 +50,7 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 3. Output paths sanitized: reject `..`, absolute paths and symlink escapes from torrent metadata or server filenames.
 4. Safari handoff is the URL and an optional file name. No cookies, headers, referrer, or aria2 options. Only `http`, `https`, and `magnet` are accepted; `file:`, `javascript:`, and every other scheme are rejected. The file name is checked with the output-name rules and is the only RPC option the handoff may set (`out`). The extension opens `umbilical://download`. The app treats that URL as untrusted: it runs `HTTPURLPolicy` or `MagnetLink.canonical`, then `RPCOptionPolicy`, and waits for the user to confirm before starting the download.
 5. No helper self-update (`yt-dlp -U` disabled). Helpers update only with an app release, pinned by version and SHA-256.
-6. Credentials (HTTP auth, license key) stored in the Keychain only.
+6. Credentials (HTTP auth, license key) stored in the Keychain only. The license validation record is bound to this Mac: the key, the Polar activation id, and a SHA-256 of IOPlatformUUID. Items use `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and are not synchronizable.
 7. No third-party plugin system.
 8. Archive extraction, if ever added, is off by default with size and ratio limits.
 9. Hardened runtime, notarization, codesigned helpers. App Sandbox evaluated in M1 (aria2 child process and arbitrary folders make it hard; decision recorded in this doc).
@@ -61,8 +61,8 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 ## 5. Licensing and distribution
 
 - Sold direct (not Mac App Store, GPL conflict). Notarized dmg built with plain `hdiutil` from a repo script.
-- License check: server-side activation, offline grace period (proposal 14 days), device limit (proposal 3). Provider to pick: Lemon Squeezy, Paddle or Keygen. Open question for Karim.
-- Source builds: a `UMB_UNLICENSED` build flag skips the check. Documented, not hidden.
+- License check: Polar public customer-portal license keys. $9.99 once, lifetime updates, 3 Macs per key, 14-day offline grace (`LicensePolicy.offlineGrace`). Polar enforces the Mac limit. The app sends the organization id and does not use an access token. See `docs/LICENSING.md`.
+- Source builds and Debug builds skip the check and say they are unofficial. An empty organization id is that path. There is no hidden flag.
 - `THIRD_PARTY_LICENSES` bundled: aria2 (GPLv2+), yt-dlp (Unlicense), ffmpeg (LGPL, with source offer), Sparkle (MIT).
 
 ## 6. Milestones
@@ -80,7 +80,7 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 
 ## 7. Open questions
 
-1. License provider and price.
+1. License provider and price: decided. Polar, $9.99, 14 days, 3 Macs. Still open: create that product in the Polar dashboard and put the organization id in `Config/Licensing.local.xcconfig` on the build machine. Trademark search stays item 4.
 2. Minimum macOS (14 proposed).
 3. App Sandbox: decided in M1. Off. See section 8.
 4. Trademark search for umbilical and umb before M5.

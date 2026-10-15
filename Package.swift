@@ -43,7 +43,11 @@ let package = Package(
         .target(
             name: "UmbilicalUI",
             dependencies: ["UmbilicalEngine"],
-            path: "App/Session"
+            path: "App/Session",
+            linkerSettings: [
+                .linkedFramework("IOKit", .when(platforms: [.macOS])),
+                .linkedFramework("Security", .when(platforms: [.macOS])),
+            ]
         ),
         .testTarget(
             name: "UmbilicalEngineTests",
