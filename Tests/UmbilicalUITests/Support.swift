@@ -122,6 +122,8 @@ func makeSession(
     client: FakeDownloads = FakeDownloads(),
     store: MemorySettings = MemorySettings(),
     helpers: HelperStatus = HelperStatus(aria2Found: true, watchFound: true),
+    video: VideoHelpers = VideoHelpers(ytDlp: nil, watch: nil),
+    quarantine: any QuarantineApplying = SystemQuarantine(),
     now: Date = Date(timeIntervalSince1970: 1_700_000_000)
 ) -> SessionFixture {
     let engine = FakeEngine(client: client)
@@ -129,6 +131,8 @@ func makeSession(
         engine: engine,
         store: store,
         helpers: helpers,
+        video: video,
+        quarantine: quarantine,
         clock: { now }
     )
     return SessionFixture(model: model, engine: engine, client: client, store: store)

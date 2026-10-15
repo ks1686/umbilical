@@ -14,10 +14,22 @@ public enum SessionPhase: Equatable {
 public struct HelperStatus: Equatable {
     public var aria2Found: Bool
     public var watchFound: Bool
+    public var ytDlpFound: Bool
 
-    public init(aria2Found: Bool, watchFound: Bool) {
+    public init(aria2Found: Bool, watchFound: Bool, ytDlpFound: Bool = false) {
         self.aria2Found = aria2Found
         self.watchFound = watchFound
+        self.ytDlpFound = ytDlpFound
+    }
+}
+
+public struct VideoHelpers: Equatable {
+    public var ytDlp: URL?
+    public var watch: URL?
+
+    public init(ytDlp: URL?, watch: URL?) {
+        self.ytDlp = ytDlp
+        self.watch = watch
     }
 }
 
@@ -53,6 +65,7 @@ public struct DownloadRow: Equatable, Identifiable {
     public var canPause: Bool
     public var canResume: Bool
     public var canRemove: Bool
+    public var cancelsLiveVideo: Bool
     public var isComplete: Bool
     public var isActive: Bool
     public var showsInMenu: Bool

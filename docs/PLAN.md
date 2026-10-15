@@ -23,8 +23,8 @@ umbilical.app
 ├── Safari Web Extension (bundled appex)
 └── Helpers/ (pinned, checksummed, codesigned)
     ├── aria2c             HTTP(S)/FTP parallel, magnet, torrent
-    ├── yt-dlp             phase 2, video
-    └── ffmpeg (LGPL, remux only)  phase 2
+    ├── yt-dlp             v1 video, single-file formats, no self-update
+    └── ffmpeg             not bundled (separate streams are a documented gap)
 ```
 
 The app never links aria2; it launches `aria2c` as a child process and talks JSON-RPC. This keeps the GPL boundary clean and lets us swap helper versions.
@@ -74,8 +74,9 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 | M2 Torrent | Magnet and .torrent, no-seed config, file selection | Packet capture shows seeding stops at completion and upload stays capped (blocking test) |
 | M3 UI | Main window list, menu bar progress, notifications | docs/M3-MANUAL.md passes, idle memory under 60 MB |
 | M4 Safari | Web extension handoff | docs/M4-MANUAL.md passes |
+| Video | yt-dlp, single-file formats, no ffmpeg and no JS runtime | docs/VIDEO-MANUAL.md passes. In progress, not done |
 | M5 Ship | License, Sparkle, notarized dmg, landing page | Notarized build installs and updates on a clean Mac |
-| Phase 2 | yt-dlp video, ffmpeg remux, scheduling, speed limits per task | |
+| Phase 2 | ffmpeg remux, scheduling, speed limits per task | v1 video is section 11 |
 
 ## 7. Open questions
 
@@ -165,3 +166,33 @@ Permissions in `Extension/Resources/manifest.json`:
 No host permission, `webRequest`, `cookies`, `tabs`, or `scripting`.
 
 `docs/M4-MANUAL.md` is the Mac pass. `swift test` covers the handoff parser. It does not load Safari.
+
+## 11. Video downloads
+
+v1 launches the pinned yt-dlp binary. It does not download yt-dlp, ffmpeg, or a JavaScript runtime at runtime, and it does not pass `-U` or `--update`.
+
+The add sheet has a Video control. Known hosts turn it on until the user changes it. Any other http(s) URL stays off until the user turns it on. The host check is the exact host or a dot-suffix (`m.youtube.com`), not a substring (`notyoutube.com`).
+
+A video download does not go through aria2. The app launches `umb-watch` with yt-dlp and a fixed argument list built in `VideoDownloadPlan`. The user cannot add flags. The child environment is an allowlist (`PATH`, `HOME`, `LC_ALL`, `LANG`, and `TMPDIR` when it is an absolute path). Config files, cookies, plugins, `--exec`, remote components, and JS runtimes are turned off (`--ignore-config`, `--no-config-locations`, `--no-plugin-dirs`, `--no-exec`, `--no-remote-components`, `--no-js-runtimes`). The downloader is `--downloader native`.
+
+The format selector is `b/bv*/ba`. A `+` merge is not requested. `--fixup never` is set. `--ffmpeg-location` is the private staging directory, so yt-dlp does not search `PATH` for ffmpeg. Separate audio and video streams fail. That gap stays until ffmpeg is bundled on purpose.
+
+`--no-js-runtimes` and `--no-remote-components` mean a system deno or node is not executed and yt-dlp-ejs is not downloaded. YouTube's web client may be skipped. A direct media URL is the v1 pass. A YouTube failure is not a pass.
+
+The output template is the constant `umb-video.%(ext)s` inside a mode `0700` staging directory `umb-video-<32 hex>` under the chosen folder. The save-as name is not placed in the argument list, because `%` is a template metacharacter and is rejected. After success, exactly one regular file matching `umb-video.<ext>` is quarantined, then renamed into the chosen folder. A name that contains a dot is used as-is. A name without a dot gets `.<ext>`. The default name is `umb-video-<32 hex>.<ext>`. Symlinks, extra files, and an existing destination are rejected. Partials (`*.part`, `*.ytdl`, `*.temp`) are unlinked. The staging directory is removed without following a directory symlink.
+
+Only `http` and `https` URLs pass `HTTPURLPolicy`. Finished files get `com.apple.quarantine`, same as other downloads.
+
+Cancel sends `SIGTERM` to `umb-watch`, which kills the yt-dlp process group. The row's button says Cancel and does not ask for confirmation. Pause is not offered.
+
+Release builds ignore `YT_DLP`. Debug builds honor it when the path is executable. The helper is copied and signed by `scripts/copy-bundled-yt-dlp.sh` with `-o runtime`, the same pattern as aria2c. `YT_DLP_CODESIGN_IDENTITY` is `-` until M5. The script does not pass `--timestamp`.
+
+Repo Guard: `helpers/yt-dlp.entitlements` is on the helper only. yt-dlp_macos is a PyInstaller binary that unpacks a Python runtime at launch. Hardened runtime needs all three of these or `--version` does not return on current arm64 macOS:
+
+- `com.apple.security.cs.disable-library-validation` so the extracted libpython, signed by another team, can load
+- `com.apple.security.cs.allow-unsigned-executable-memory` for libffi's writable executable mapping
+- `com.apple.security.cs.allow-jit` for `MAP_JIT` on arm64
+
+`disable-library-validation` alone can hang in libffi. The app entitlements do not gain these keys. `com.apple.security.get-task-allow` is not set. CI signs the pinned binary with `-o runtime` and runs `<app>/Contents/Helpers/yt-dlp --version` from the Release app. Review these keys again before M5 Developer ID signing.
+
+`docs/VIDEO-MANUAL.md` is the Mac pass. It has not been run. The checklist item is in progress, not done.

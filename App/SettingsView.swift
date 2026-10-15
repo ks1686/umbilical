@@ -70,10 +70,14 @@ struct SettingsView: View {
             LabeledContent("umb-watch") {
                 Text(model.snapshot.helpers.watchFound ? "Ready" : "Not found")
             }
+            LabeledContent("yt-dlp") {
+                Text(model.snapshot.helpers.ytDlpFound ? "Ready" : "Not found")
+            }
             Text(
                 "Build aria2c with scripts/build-aria2.sh. "
+                    + "Fetch yt-dlp with scripts/fetch-helpers.sh. "
                     + "Release builds use Contents/Helpers only. "
-                    + "Debug builds also honor ARIA2C and UMB_WATCH."
+                    + "Debug builds also honor ARIA2C, UMB_WATCH, and YT_DLP."
             )
             .font(.callout)
             .foregroundStyle(.secondary)

@@ -20,9 +20,14 @@ struct TrackedDownload {
     var filePath: String?
     var historyID: String?
     var fixedTitle: String?
+    var pausable: Bool
 
     var allowsPause: Bool {
-        track && (state == .active || state == .waiting)
+        pausable && track && (state == .active || state == .waiting)
+    }
+
+    var cancelsLiveVideo: Bool {
+        !pausable && track && (state == .active || state == .waiting || state == .paused)
     }
 
     var allowsResume: Bool {
@@ -61,6 +66,7 @@ enum RowBuilder {
             canPause: item.allowsPause,
             canResume: item.allowsResume,
             canRemove: true,
+            cancelsLiveVideo: item.cancelsLiveVideo,
             isComplete: item.state == .complete,
             isActive: item.state == .active,
             showsInMenu: showsInMenu(item.state),

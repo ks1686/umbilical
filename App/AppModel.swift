@@ -23,7 +23,8 @@ final class AppModel: ObservableObject {
         let session = DownloadSessionModel(
             engine: ConfiguredEngine(aria2: located.aria2, watch: located.watch),
             store: UserDefaultsSettingsStore(defaults: .standard),
-            helpers: located.status
+            helpers: located.status,
+            video: VideoHelpers(ytDlp: located.ytDlp, watch: located.watch)
         )
         self.session = session
         self.snapshot = session.snapshot
@@ -57,9 +58,13 @@ final class AppModel: ObservableObject {
         try session.checkedChildFolder(folder)
     }
 
-    func add(urlText: String, outputName: String, folder: URL?) async throws {
+    func add(urlText: String, outputName: String, folder: URL?, video: Bool = false) async throws {
         defer { publish() }
-        try await session.add(urlText: urlText, outputName: outputName, folder: folder)
+        if video {
+            try await session.addVideo(urlText: urlText, outputName: outputName, folder: folder)
+        } else {
+            try await session.add(urlText: urlText, outputName: outputName, folder: folder)
+        }
     }
 
     func receiveExternalURL(_ url: URL) {

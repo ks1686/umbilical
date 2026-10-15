@@ -62,6 +62,20 @@ final class HelperLocatorTests: XCTestCase {
         XCTAssertNil(missing)
     }
 
+    func testDisabledOverrideIgnoresYTDLP() throws {
+        let directory = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let fromEnv = try executable(named: "from-env", in: directory)
+        let bundled = try executable(named: "bundled", in: directory)
+        let found = HelperLocator.firstExecutable(
+            environment: ["YT_DLP": fromEnv.path],
+            key: "YT_DLP",
+            candidates: [bundled],
+            allowEnvironmentOverride: false
+        )
+        XCTAssertEqual(found?.path, bundled.path)
+    }
+
     private func executable(named name: String, in directory: URL) throws -> URL {
         let url = directory.appendingPathComponent(name)
         try Data("#!/bin/sh\nexit 0\n".utf8).write(to: url)
