@@ -103,8 +103,8 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/umbilical.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
         ENABLE_TESTABILITY: "YES"
-        # Helpers may be absent when these scripts run. User script sandboxing
-        # would skip or fail that optional copy.
+        # Debug may omit aria2c and yt-dlp. Release fails if either is
+        # missing. User script sandboxing would skip these copies.
         ENABLE_USER_SCRIPT_SANDBOXING: "NO"
         # M5 sets these to the Developer ID. "-" is an ad hoc signature.
         ARIA2_CODESIGN_IDENTITY: "-"

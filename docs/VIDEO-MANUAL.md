@@ -23,11 +23,13 @@ xcodebuild \
 ```
 
 The fetch script checks the GPG signature on `SHA2-256SUMS` before it trusts
-`helpers/yt-dlp.lock`. It does not run yt-dlp and it does not pass `-U`.
+`helpers/yt-dlp.lock`. The check uses a temporary keyring and removes it on
+exit. It does not run yt-dlp and it does not pass `-U`.
 
 The built app is under DerivedData. `scripts/copy-bundled-yt-dlp.sh` copies
-`helpers/bin/yt-dlp` into `Contents/Helpers` when that file exists, checks
-its SHA-256 against the lock, and signs it:
+`helpers/bin/yt-dlp` into `Contents/Helpers`, checks its SHA-256 against the
+lock, and signs it. A Release build fails when that binary is missing. A
+Debug build warns and continues.
 
 ```bash
 codesign --force --sign "${YT_DLP_CODESIGN_IDENTITY:--}" -o runtime \

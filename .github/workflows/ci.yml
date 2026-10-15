@@ -109,6 +109,17 @@ jobs:
             -configuration Debug \
             test
 
+      - name: Install pkg-config
+        run: |
+          set -euo pipefail
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_ANALYTICS=1
+          brew install pkg-config
+          command -v pkg-config
+
+      - name: Build universal aria2c
+        run: scripts/build-aria2.sh
+
       - name: Build Release
         run: |
           set -euo pipefail

@@ -1,6 +1,7 @@
 #!/bin/sh
-# Copy the pinned yt-dlp into Contents/Helpers when helpers/bin/yt-dlp exists.
-# A missing binary is success so a local build can proceed without the helper.
+# Copy the pinned yt-dlp into Contents/Helpers.
+# Release fails when helpers/bin/yt-dlp is missing.
+# Debug warns and continues so a local Debug build can proceed without it.
 # When the binary is present, its SHA-256 must match helpers/yt-dlp.lock.
 # This phase runs before Xcode signs umbilical.app. Sign the helper first.
 #
@@ -9,7 +10,8 @@
 #   com.apple.security.cs.disable-library-validation
 #   com.apple.security.cs.allow-unsigned-executable-memory
 #   com.apple.security.cs.allow-jit
-# Those keys are not on the app. Repo Guard should review them before M5.
+# Those keys are only in helpers/yt-dlp.entitlements. The decision is
+# recorded in docs/RELEASE.md. The app entitlements do not gain them.
 #
 # M5 sets YT_DLP_CODESIGN_IDENTITY to the Developer ID. Ad hoc until then.
 # M5 also adds --timestamp. Ad hoc signatures cannot use a secure timestamp,
@@ -31,6 +33,11 @@ lock="${src_root}/helpers/yt-dlp.lock"
 entitlements="${src_root}/helpers/yt-dlp.entitlements"
 
 if [ ! -f "${source}" ]; then
+  if [ "${CONFIGURATION:-}" = "Release" ]; then
+    echo "copy-bundled-yt-dlp: missing helpers/bin/yt-dlp" >&2
+    exit 1
+  fi
+  echo "copy-bundled-yt-dlp: warning: missing helpers/bin/yt-dlp; continuing" >&2
   exit 0
 fi
 

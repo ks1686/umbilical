@@ -44,7 +44,8 @@ Build `aria2c` with `scripts/build-aria2.sh` before a real download. Generate
 the Xcode project, then build. The app target copies `helpers/bin/aria2c` into
 `Contents/Helpers` when that file is already built, after checking that its
 `Enabled Features` line does not contain `WebSocket`, and signs it ad hoc
-with the hardened runtime. `umb-watch` is built with the app and bundled in
+with the hardened runtime. A Release build fails when that file is missing.
+A Debug build warns and continues. `umb-watch` is built with the app and bundled in
 `Contents/Helpers`. `scripts/fetch-helpers.sh` installs the pinned yt-dlp,
 and the app copies it into `Contents/Helpers` and signs it with the hardened
 runtime. Release builds use only those helper paths. Debug builds also honor
@@ -90,7 +91,9 @@ no recorded hash stops the script.
 `scripts/fetch-helpers.sh` downloads the pinned yt-dlp macOS binary. It
 checks the GPG signature on that release's `SHA2-256SUMS` with the published
 key in `helpers/yt-dlp.asc` before it trusts the SHA-256 in
-`helpers/yt-dlp.lock`. It does not run yt-dlp, and it does not pass `-U`.
+`helpers/yt-dlp.lock`. The check imports that key into a temporary keyring
+and removes the keyring on exit. It does not run yt-dlp, and it does not
+pass `-U`.
 The app launches that pinned binary. It does not update yt-dlp at runtime.
 ffmpeg is not fetched and is not shipped.
 
