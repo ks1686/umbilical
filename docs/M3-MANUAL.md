@@ -21,8 +21,9 @@ xcodebuild \
 ```
 
 The built app is under DerivedData. `umb-watch` and `aria2c` are inside
-`Contents/Helpers`. `aria2c` is copied only when `helpers/bin/aria2c` exists.
-The copy script reads `aria2c -v`, keeps the line that starts with
+`Contents/Helpers`. A Release build fails when `helpers/bin/aria2c` is
+missing. A Debug build warns and continues. When the binary is present,
+the copy script reads `aria2c -v`, keeps the line that starts with
 `Enabled Features`, and fails the build if that line contains `WebSocket`.
 A good line is `Enabled Features: BitTorrent, GZip, HTTPS, Message Digest, Metalink, XML-RPC`.
 It then runs `codesign --force --sign - -o runtime` on the copied binary.

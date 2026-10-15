@@ -1,7 +1,10 @@
 #!/bin/sh
-# Copy a locally built aria2c into Contents/Helpers when it exists.
-# The App CI job does not build aria2c, so a missing binary is success.
-# This phase runs before Xcode signs umbilical.app. Sign the helper first.
+# Copy a locally built aria2c into Contents/Helpers.
+# Release fails when helpers/bin/aria2c is missing.
+# Debug warns and continues so a local Debug build can proceed without it.
+# When the binary is present, its Enabled Features line must not contain
+# WebSocket. This phase runs before Xcode signs umbilical.app. Sign the
+# helper first.
 set -eu
 
 src_root="${SRCROOT:-}"
@@ -17,6 +20,11 @@ source="${src_root}/helpers/bin/aria2c"
 dest_dir="${target_build}/${wrapper}/Contents/Helpers"
 
 if [ ! -x "${source}" ]; then
+  if [ "${CONFIGURATION:-}" = "Release" ]; then
+    echo "copy-bundled-aria2: missing helpers/bin/aria2c" >&2
+    exit 1
+  fi
+  echo "copy-bundled-aria2: warning: missing helpers/bin/aria2c; continuing" >&2
   exit 0
 fi
 

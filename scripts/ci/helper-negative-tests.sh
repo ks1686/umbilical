@@ -103,6 +103,50 @@ then
 fi
 echo "yt-dlp entitlements stay on the helper"
 
+echo "Release copy fails when aria2c is missing"
+aria_release_log=""
+if aria_release_log="$(
+  SRCROOT="$empty_src" \
+    TARGET_BUILD_DIR="${work}/build" \
+    WRAPPER_NAME="umbilical.app" \
+    CONFIGURATION="Release" \
+    "${root}/scripts/copy-bundled-aria2.sh" 2>&1
+)"; then
+  echo "Release build continued without aria2c" >&2
+  printf '%s\n' "$aria_release_log" >&2
+  exit 1
+fi
+case "$aria_release_log" in
+  *"missing helpers/bin/aria2c"*) ;;
+  *)
+    echo "Release failure was not a missing aria2c" >&2
+    printf '%s\n' "$aria_release_log" >&2
+    exit 1
+    ;;
+esac
+
+echo "Debug copy warns and continues when aria2c is missing"
+aria_debug_log=""
+if ! aria_debug_log="$(
+  SRCROOT="$empty_src" \
+    TARGET_BUILD_DIR="${work}/build" \
+    WRAPPER_NAME="umbilical.app" \
+    CONFIGURATION="Debug" \
+    "${root}/scripts/copy-bundled-aria2.sh" 2>&1
+)"; then
+  echo "Debug build failed without aria2c" >&2
+  printf '%s\n' "$aria_debug_log" >&2
+  exit 1
+fi
+case "$aria_debug_log" in
+  *"warning: missing helpers/bin/aria2c; continuing"*) ;;
+  *)
+    echo "Debug build did not warn that aria2c is missing" >&2
+    printf '%s\n' "$aria_debug_log" >&2
+    exit 1
+    ;;
+esac
+
 sums_url="$(lock_get sums_url)"
 sig_url="$(lock_get sums_sig_url)"
 case "$sums_url" in
