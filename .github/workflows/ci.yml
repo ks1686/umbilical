@@ -1,0 +1,145 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  helper-verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install GnuPG
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gnupg
+      - name: Reject bad helper checksums and signatures
+        run: scripts/ci/helper-negative-tests.sh
+
+  semgrep:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install Semgrep from the hash lock
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y python3-venv
+          python3 -m venv "$RUNNER_TEMP/semgrep"
+          "$RUNNER_TEMP/semgrep/bin/pip" install --require-hashes -r requirements/semgrep.txt
+      - name: Scan
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/semgrep/bin/semgrep" scan \
+            --config p/swift \
+            --config p/security-audit \
+            --error \
+            --metrics=off \
+            --disable-version-check \
+            Sources Tests scripts Package.swift
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install gitleaks
+        run: |
+          set -euo pipefail
+          url=https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          curl --fail --silent --show-error --location --retry 3 --output /tmp/gitleaks.tar.gz "$url"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  /tmp/gitleaks.tar.gz" | sha256sum -c
+          sudo tar -xzf /tmp/gitleaks.tar.gz -C /usr/local/bin gitleaks
+      - name: Scan
+        run: gitleaks detect --source . --redact --no-banner --exit-code 1
+
+  zizmor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install zizmor
+        run: |
+          set -euo pipefail
+          url=https://github.com/zizmorcore/zizmor/releases/download/v1.30.1/zizmor-x86_64-unknown-linux-gnu.tar.gz
+          curl --fail --silent --show-error --location --retry 3 --output /tmp/zizmor.tar.gz "$url"
+          echo "e65324f4430c2717591937edcec90ccbefaf14c174f8ec9415e03ca875b46e1a  /tmp/zizmor.tar.gz" | sha256sum -c
+          sudo tar -xzf /tmp/zizmor.tar.gz -C /usr/local/bin zizmor
+      - name: Audit workflows
+        run: zizmor --offline .github/workflows
+
+  engine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config libssl-dev libxml2-dev zlib1g-dev \
+            libncurses6 libcurl4-openssl-dev libedit2 libgcc-13-dev \
+            libpython3-dev libsqlite3-0 libstdc++-13-dev libz3-dev \
+            unzip
+      - name: Build aria2 without WebSocket
+        run: scripts/build-aria2.sh "$RUNNER_TEMP/aria2"
+      - name: Install Swift
+        run: |
+          set -euo pipefail
+          url=https://download.swift.org/swift-6.4.1-release/ubuntu2404/swift-6.4.1-RELEASE/swift-6.4.1-RELEASE-ubuntu24.04.tar.gz
+          curl --fail --silent --show-error --location --retry 3 --output /tmp/swift.tar.gz "$url"
+          echo "7d246c7114077ad01dba4ad897628446ada4c489d6c7dbcf39ae3f25cbe17e8b  /tmp/swift.tar.gz" | sha256sum -c
+          sudo mkdir -p /opt/swift
+          sudo tar -xzf /tmp/swift.tar.gz -C /opt/swift --strip-components=1
+          echo /opt/swift/usr/bin >> "$GITHUB_PATH"
+      - name: Test the engine
+        run: swift test
+        env:
+          ARIA2C: ${{ runner.temp }}/aria2/bin/aria2c
+          UMB_REQUIRE_ARIA2: "1"
+
+  engine-macos:
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install build dependencies
+        run: brew install libxml2 pkg-config
+      - name: Build aria2 without WebSocket
+        run: scripts/build-aria2.sh "$RUNNER_TEMP/aria2"
+      - name: Test the engine
+        run: swift test
+        env:
+          ARIA2C: ${{ runner.temp }}/aria2/bin/aria2c
+          UMB_REQUIRE_ARIA2: "1"

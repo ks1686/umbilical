@@ -1,0 +1,9 @@
+title = "umbilical"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "RFC 6455 sample WebSocket nonce used to prove the handshake is rejected"
+paths = ['''Tests/UmbilicalEngineTests/RPCIntegrationTests.swift''']
+regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
