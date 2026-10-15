@@ -17,5 +17,6 @@ build_time=12:07:32
 # It is intentionally later than macOS SDK headers so make does not rebuild.
 object_mtime=210001010000.00
 # SHA-256 of the universal Mach-O written to helpers/bin/aria2c.
-# scripts/build-aria2.sh prints the hash and exits nonzero while this is empty.
-binary_sha256=
+# Recorded from GitHub Actions run 38659275769 on macos-26
+# (Apple LLVM 21.0.0, clang-2100.1.1.101).
+binary_sha256=1adc4953732f19e5df4f98896a85f05ffdf3dbf8b0d9d4f6f5b81540cc59a09c
