@@ -16,8 +16,8 @@ Last updated October 15, 2026.
 | M5 ship: dmg, Sparkle update feed | Code Lead | planned |
 | Signing prerequisites on the Mac (Developer ID cert in Keychain, notarytool settings, App Store Connect key file at 600), verified Oct 15 | Machine Keeper | done |
 | Sparkle key generation on the signing Mac | Machine Keeper | planned |
-| Sparkle private key backup in the password manager (release blocker) | Machine Keeper | planned |
-| App Store Connect API key backup in the password manager (release blocker) | Machine Keeper | planned (pending, not done) |
+| Sparkle private key committed to the local genv config repo (backup model: Karim's self-hosted encrypted git remote and DAS Time Machine, returning with the new machine in about a month; Karim treats this as in place) | Machine Keeper | planned |
+| App Store Connect API key committed to the local genv config repo (same backup model) | Machine Keeper | planned (pending, not done) |
 | Developer ID signing and notarization of the release dmg | Machine Keeper | planned |
 | License provider choice | Code Lead | planned |
 | Price, offline grace period, device limit | Code Lead | planned |
