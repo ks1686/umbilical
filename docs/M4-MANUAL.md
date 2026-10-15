@@ -35,6 +35,11 @@ The app entitlements must not contain `com.apple.security.app-sandbox`.
 The appex entitlements must contain `com.apple.security.app-sandbox` set to
 true, and must not add network, file, cookie, or Apple Events exceptions.
 
+A Debug build may include `com.apple.security.get-task-allow` so the debugger
+can attach. A Release build must not. CI runs
+`scripts/check-no-get-task-allow.sh` on the Release app, the appex, and
+`Contents/Helpers`.
+
 ## Extension permissions
 
 `Extension/Resources/manifest.json` requests only these:
@@ -61,18 +66,19 @@ permission. The message may contain `url` and `filename` only.
 
 ## Checklist
 
-1. Right-click an `https` link, for example `https://example.com/` on a page you are allowed to fetch. Choose "Download with umbilical". The app comes forward. The sheet shows the URL and says nothing starts until you confirm. No download row exists yet.
-2. Click Cancel. The sheet closes. The list is unchanged.
-3. Right-click the same link again. Click Download. A row appears and moves through waiting or active. The file lands in the download folder.
-4. Repeat with a link whose path ends in a file name, such as a `.zip` or `.txt` you are allowed to fetch. The sheet shows "Save as" with that file name and no directory part. After Download, the saved file uses that name.
-5. Magnet. From Terminal, with the app running:
+1. Right-click an `https` link, for example `https://example.com/` on a page you are allowed to fetch. Choose "Download with umbilical". The app comes forward. The sheet shows the host in large type (`example.com` for that link) and the full URL under it. The text says a download was requested. It does not name Safari or any other app. No download row exists yet.
+2. Immediately press Return, then click Download. The sheet stays open. The list stays empty. Return is not Download.
+3. Wait about a second. Press Return. The sheet closes. The list is still empty.
+4. Right-click the same link again. Wait about a second. Click Download. A row appears and moves through waiting or active. The file lands in the download folder.
+5. Repeat with a link whose path ends in a file name, such as a `.zip` or `.txt` you are allowed to fetch. The sheet shows "Save as" with that file name and no directory part. After Download, the saved file uses that name.
+6. Magnet. From Terminal, with the app running:
 
    ```bash
    open 'umbilical://download?url=magnet:?xt=urn:btih:abababababababababababababababababababab'
    ```
 
-   The sheet shows the magnet. Cancel once and confirm the list is unchanged. Open it again and click Download. A row appears. It may later fail to find peers. That still counts: the handoff was accepted. The add sheet still rejects the same magnet.
-6. Rejected schemes and fields. None of these add a row. Each one shows "Download rejected" (or the sheet stays closed) and does not start a download:
+   The sheet shows `magnet` in large type, not a sender name. Press Return before a second has passed and confirm the list is unchanged. Open it again, wait about a second, and click Download. A row appears. It may later fail to find peers. That still counts: the handoff was accepted. The add sheet still rejects the same magnet.
+7. Rejected schemes and fields. None of these add a row. Each one shows "Download rejected" (or the sheet stays closed) and does not start a download:
 
    ```bash
    open 'umbilical://download?url=file:///tmp/x'
@@ -82,15 +88,16 @@ permission. The message may contain `url` and `filename` only.
    open 'umbilical://download?url=https://example.com/a.bin&filename=../x'
    ```
 
-7. Quit from the menu bar. `pgrep aria2c` prints nothing.
+8. Quit from the menu bar. `pgrep aria2c` prints nothing.
 
 ## Package tests
 
 `swift test` covers handoff parsing: allowed fields, `HTTPURLPolicy`,
 `MagnetLink.canonical`, output names, and `RPCOptionPolicy`. A confirmed
 handoff is the only value the session will add, and a poisoned options
-dictionary is rebuilt from the URL and file name. Those tests do not replace
-this Mac pass.
+dictionary is rebuilt from the URL and file name. It also covers the
+confirmation gate: Return and a click in the first second do not confirm.
+Those tests do not replace this Mac pass.
 
 If the checkout is under `~/Documents`, `swift test` can fail at codesign
 with `resource fork, Finder information, or similar detritus not allowed`.

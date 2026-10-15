@@ -58,7 +58,8 @@ is in `docs/M4-MANUAL.md`.
 The add sheet still rejects torrent and magnet links. The engine accepts a
 validated magnet and a `.torrent`. Safari can hand the app an `http`, `https`,
 or `magnet` link. The app validates it and waits for confirmation before
-starting the download. The extension sends the URL and an optional file name.
+starting the download. The sheet shows the host and does not name the
+program that opened the link. The extension sends the URL and an optional file name.
 It does not send cookies, headers, or aria2 options. Video, licensing, and
 Sparkle are later milestones. App Sandbox stays off for the app. The Safari
 extension is sandboxed. See `docs/PLAN.md`.

@@ -9,25 +9,26 @@ import UmbilicalUI
 struct StagedHandoff: Identifiable, Equatable {
     let id: UUID
     let handoff: ExtensionHandoff
-    let source: String
 
-    init(handoff: ExtensionHandoff, source: String, id: UUID = UUID()) {
+    init(handoff: ExtensionHandoff, id: UUID = UUID()) {
         self.id = id
         self.handoff = handoff
-        self.source = source
     }
 }
 
 struct HandoffConfirmSheet: View {
     @ObservedObject var model: AppModel
     let staged: StagedHandoff
+    @State private var appearedAt = Date()
+    @State private var armed = false
     @State private var submitting = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Download with umbilical")
-                .font(.title2)
-            Text(prompt)
+            Text(hostLabel)
+                .font(.largeTitle)
+                .textSelection(.enabled)
+            Text("A download was requested. Nothing starts until you confirm.")
                 .fixedSize(horizontal: false, vertical: true)
             link
             if let name = staged.handoff.outputName {
@@ -47,10 +48,13 @@ struct HandoffConfirmSheet: View {
         }
         .padding(20)
         .frame(width: 520)
+        .task(id: staged.id) {
+            await arm()
+        }
     }
 
-    private var prompt: String {
-        "\(staged.source) asked to download this link. Nothing starts until you confirm."
+    private var hostLabel: String {
+        HandoffConfirmationGate.prominentLabel(for: staged.handoff.url)
     }
 
     private var link: some View {
@@ -78,19 +82,32 @@ struct HandoffConfirmSheet: View {
         HStack {
             Spacer()
             Button("Cancel", role: .cancel) {
-                model.declineStagedHandoff()
+                decline()
             }
-            .disabled(submitting)
+            .keyboardShortcut(.defaultAction)
+            .disabled(!armed || submitting)
             Button("Download") {
                 accept()
             }
-            .keyboardShortcut(.defaultAction)
-            .disabled(!model.snapshot.canAdd || submitting)
+            .disabled(!armed || !model.snapshot.canAdd || submitting)
         }
     }
 
+    private func arm() async {
+        appearedAt = Date()
+        armed = false
+        let nanos = UInt64(HandoffConfirmationGate.armDelay * 1_000_000_000)
+        do {
+            try await Task.sleep(nanoseconds: nanos)
+        } catch {
+            return
+        }
+        armed = true
+    }
+
     private func accept() {
-        if submitting {
+        let decision = HandoffConfirmationGate(appearedAt: appearedAt).decide(.download, at: Date())
+        guard decision == .confirm, !submitting else {
             return
         }
         submitting = true
@@ -98,5 +115,13 @@ struct HandoffConfirmSheet: View {
             await model.confirmStagedHandoff()
             submitting = false
         }
+    }
+
+    private func decline() {
+        let decision = HandoffConfirmationGate(appearedAt: appearedAt).decide(.cancel, at: Date())
+        guard decision == .decline else {
+            return
+        }
+        model.declineStagedHandoff()
     }
 }

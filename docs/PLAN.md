@@ -146,11 +146,11 @@ The Safari Web Extension is an appex embedded in `umbilical.app`. Its context me
 
 The app validates that URL with `HTTPURLPolicy` for `http` and `https`, `MagnetLink.canonical` for magnets, `DownloadPath.validateOutputName` for the optional file name, and `RPCOptionPolicy` on the resulting options. The only option is `out`. The add sheet still rejects magnets. This path accepts them after confirmation.
 
-`umbilical://` can be opened by any local process, so the scheme is not proof that the bundled extension sent it. The confirmation sheet names the sender when macOS provides one. The download starts only after the user chooses Download. Cancel leaves the queue unchanged.
+`umbilical://` can be opened by any local process, so the scheme is not proof that the bundled extension sent it. The sheet says a download was requested and shows the link's host. It does not name a sender. Download is not the default button. For the first second the sheet ignores clicks and Return. The download starts only after the user chooses Download. Cancel, including Return after that second, leaves the queue unchanged.
 
 ### Extension sandbox and permissions
 
-App Sandbox stays off for the app (section 8). The extension entitlements enable App Sandbox, which Safari requires. The extension does not get the network, file, cookie, or Apple Events entitlements.
+App Sandbox stays off for the app (section 8). The extension entitlements enable App Sandbox, which Safari requires. The extension does not get the network, file, cookie, or Apple Events entitlements. Release signatures do not include `com.apple.security.get-task-allow`. Debug may, so the debugger can attach. CI checks the Release app, the appex, and the helpers.
 
 Permissions in `Extension/Resources/manifest.json`:
 

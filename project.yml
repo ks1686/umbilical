@@ -19,6 +19,11 @@ settings:
     DEVELOPMENT_TEAM: ""
     SDKROOT: macosx
     SUPPORTED_PLATFORMS: macosx
+  configs:
+    # Debug keeps the injected entitlement so the debugger can attach.
+    # Release must not include com.apple.security.get-task-allow.
+    Release:
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: "NO"
 packages:
   Umbilical:
     path: .
@@ -40,6 +45,9 @@ targets:
         CODE_SIGNING_ALLOWED: "YES"
         ENABLE_HARDENED_RUNTIME: "YES"
         SKIP_INSTALL: "YES"
+      configs:
+        Release:
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: "NO"
   umbilical:
     type: application
     platform: macOS
@@ -96,6 +104,10 @@ targets:
         ENABLE_USER_SCRIPT_SANDBOXING: "NO"
         # M5 sets this to the Developer ID. "-" is an ad hoc signature.
         ARIA2_CODESIGN_IDENTITY: "-"
+      configs:
+        Release:
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: "NO"
+          ENABLE_TESTABILITY: "NO"
   umbilicalTests:
     type: bundle.unit-test
     platform: macOS
@@ -141,6 +153,9 @@ targets:
         SKIP_INSTALL: "YES"
         APPLICATION_EXTENSION_API_ONLY: "YES"
         LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"
+      configs:
+        Release:
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: "NO"
 schemes:
   umbilical:
     build:

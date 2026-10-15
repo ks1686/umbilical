@@ -76,7 +76,7 @@ final class AppModel: ObservableObject {
             ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
         do {
             let handoff = try ExternalDownload.stage(openURL: url, downloadRoot: root)
-            stagedHandoff = StagedHandoff(handoff: handoff, source: ExternalURLSender.label())
+            stagedHandoff = StagedHandoff(handoff: handoff)
             handoffError = nil
         } catch {
             stagedHandoff = nil
