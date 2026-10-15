@@ -147,8 +147,10 @@ public final class EngineSupervisor {
         }
         self.process = process
         self.stderrDrain = collector
-        if ProcessTree.containsSecret(root: process.processIdentifier, secret: prepared.secret) {
-            throw EngineError.secretExposed
+        if let location = ProcessTree.secretLocation(
+            root: process.processIdentifier, secret: prepared.secret)
+        {
+            throw EngineError.secretExposed(location)
         }
         let deadline = Date().addingTimeInterval(listenTimeout)
         var listening = false
@@ -165,8 +167,10 @@ public final class EngineSupervisor {
         if !listening {
             throw EngineError.listenTimeout
         }
-        if ProcessTree.containsSecret(root: process.processIdentifier, secret: prepared.secret) {
-            throw EngineError.secretExposed
+        if let location = ProcessTree.secretLocation(
+            root: process.processIdentifier, secret: prepared.secret)
+        {
+            throw EngineError.secretExposed(location)
         }
         try POSIX.removeFile(prepared.settingsFile.path)
         try? FileManager.default.removeItem(at: prepared.directory)
