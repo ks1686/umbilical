@@ -1,0 +1,29 @@
+# v1 release checklist
+
+Each item has an owner and a state. An item is marked done only after it has been verified.
+Last updated October 15, 2026.
+
+| Item | Owner | State |
+| --- | --- | --- |
+| M0 skeleton (PR #1, merged `d55d279`) | Code Lead | done |
+| M1 engine (PR #2, merged `1e02b8a`) | Code Lead | done |
+| Release decisions doc (PR #3, merged `ec0c5ad`) | Code Lead | done |
+| M2 torrent and magnet, no seeding, packet-capture test | Code Lead | in progress |
+| M2 follow-ups: zizmor online audits, remove `seed-ratio=0.0`, `just test` recipe | Code Lead | in progress |
+| M3 UI | Code Lead | planned |
+| M4 Safari extension | Code Lead | planned |
+| Video downloads with yt-dlp and ffmpeg | Code Lead | planned |
+| M5 ship: dmg, Sparkle update feed | Code Lead | planned |
+| Sparkle key generation on the signing Mac | Machine Keeper | planned |
+| Sparkle private key backup in the password manager | Machine Keeper | planned |
+| App Store Connect API key backup in the password manager | Machine Keeper | planned (pending, not done) |
+| Developer ID signing and notarization of the release dmg | Machine Keeper | planned |
+| License provider choice | Code Lead | planned |
+| Price, offline grace period, device limit | Code Lead | planned |
+| Trademark check for umbilical and umb | Code Lead | planned |
+| Final security review (signing, update feed, license check, App Sandbox, release tag scan) | Repo Guard | planned |
+| Milestone Mac tests with a real aria2c | Machine Keeper | planned for each remaining milestone |
+
+Notes:
+- The signing Mac's config lives in `~/.config/genv`, which is local only with no remote. GitHub `ks1686/genv` is the public Go genv CLI, a separate project.
+- See `docs/RELEASE.md` for the signing and key handling rules.
