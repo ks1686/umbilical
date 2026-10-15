@@ -150,7 +150,8 @@ jobs:
           sudo apt-get install -y \
             build-essential pkg-config libssl-dev libxml2-dev zlib1g-dev \
             libncurses6 libcurl4-openssl-dev libedit2 libgcc-13-dev \
-            libpython3-dev libsqlite3-0 libstdc++-13-dev libz3-dev unzip
+            libpython3-dev libsqlite3-0 libstdc++-13-dev libz3-dev unzip \
+            tcpdump
 
       - name: Build aria2 without WebSocket
         run: scripts/build-aria2-linux.sh "${RUNNER_TEMP}/aria2"

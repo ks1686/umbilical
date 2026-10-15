@@ -88,6 +88,11 @@ enum FixtureError: Error {
     case missingAria2
     case watchCompileFailed
     case timedOut
+    case badFixture
+}
+
+struct TrialFailure: Error, CustomStringConvertible {
+    var description: String
 }
 
 struct ImmediateProbe: RPCListening {
@@ -119,10 +124,12 @@ final class RecordingQuarantine: QuarantineApplying {
 final class RecordingTransport: JSONRPCTransport {
     private let queue = DispatchQueue(label: "umb.test.transport")
     private var recorded: [String] = []
+    private var recordedParameters: [[Any]] = []
 
     func call(method: String, parameters: [Any]) async throws -> Any {
         queue.sync {
             recorded.append(method)
+            recordedParameters.append(parameters)
         }
         return "gid"
     }
@@ -130,10 +137,34 @@ final class RecordingTransport: JSONRPCTransport {
     var methods: [String] {
         queue.sync { recorded }
     }
+
+    var parameters: [[Any]] {
+        queue.sync { recordedParameters }
+    }
 }
 
 func testURL(_ string: String) throws -> URL {
     try XCTUnwrap(URL(string: string))
+}
+
+func waitForStatus(
+    _ client: RPCClient,
+    gid: String,
+    timeout: TimeInterval,
+    where predicate: (DownloadStatus) -> Bool
+) async throws -> DownloadStatus {
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+        let status = try await client.status(gid: gid)
+        if status.state == .error {
+            throw EngineError.unexpectedStatus(status.errorMessage ?? "error")
+        }
+        if predicate(status) {
+            return status
+        }
+        try await Task.sleep(nanoseconds: 50_000_000)
+    }
+    throw EngineError.listenTimeout
 }
 
 func makeTemporaryDirectory() throws -> URL {

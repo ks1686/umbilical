@@ -61,6 +61,16 @@ yt-dlp is phase 2. ffmpeg is phase 2 and is not fetched yet.
 
 Both scripts need `curl`. The yt-dlp script also needs `gpg`.
 
+## Engine tests
+
+`just test` builds `aria2c`, then runs `swift test` with `UMB_REQUIRE_ARIA2=1`.
+On macOS the binary comes from `scripts/build-aria2.sh`. On Linux it comes from
+`scripts/build-aria2-linux.sh`. A local run cannot pass by skipping the real
+aria2 tests.
+
+The seeding test records TCP with tcpdump. It needs permission to capture.
+The test tries tcpdump directly, then `sudo -n tcpdump` when that is refused.
+
 ## License
 
 See `LICENSE` and `THIRD_PARTY_LICENSES`.

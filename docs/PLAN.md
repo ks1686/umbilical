@@ -34,7 +34,7 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 - All options are written to a per-launch config file in a private temp folder (mode 0700 folder, 0600 file) and passed with `--conf-path`. Nothing secret goes on the command line, since `ps` exposes argv. The file is deleted once aria2 is listening.
 - `--enable-rpc --rpc-listen-port=<random free port> --rpc-secret=<32 random bytes, per launch>` (inside the config file only)
 - `--rpc-listen-all=false --rpc-allow-origin-all=false`
-- `--seed-time=0` (this is what stops seeding; `--seed-ratio=0.0` means ignore ratio and is set only for clarity)
+- `--seed-time=0` stops seeding when the download completes. Do not set `--seed-ratio=0.0`. In aria2 that value means seed regardless of share ratio. Leave the ratio at its default of 1.0.
 - `--max-upload-limit=1K` (0 means unlimited in aria2, so never 0)
 - `--bt-max-peers` capped, DHT and PEX on by default for magnet resolution, toggle in settings
 - `--check-certificate=true` (explicit, so a later change cannot silently disable TLS checks)
@@ -95,3 +95,38 @@ The engine launches `aria2c` as a child and writes into a folder the user picks 
 ### WebSocket
 
 `rpc-allow-origin-all=false` stops aria2 from sending `Access-Control-Allow-Origin: *`. It does not reject a browser WebSocket handshake. aria2 answers `101 Switching Protocols` when WebSocket support is compiled in. The bundled `aria2c` is built with `--disable-websocket`. The engine still talks JSON-RPC over HTTP on `127.0.0.1`. A browser page cannot complete a WebSocket handshake, and a missing or wrong per-launch secret is rejected for JSON-RPC calls.
+
+## 9. M2 decisions
+
+### Seeding
+
+`seed-time=0` stops seeding when a download completes. aria2 does not treat `seed-ratio=0.0` as "do not seed". That value means seed regardless of share ratio, because the ratio check is not installed. The engine does not set `seed-ratio`. The default remains 1.0. Seeding ends when either the time or the ratio condition is met, so the zero seed time wins as soon as the download completes.
+
+`max-upload-limit=1K` stays. In aria2, 0 means unlimited.
+
+Per-download RPC options still cannot set `seed-ratio`, `seed-time`, or `max-upload-limit`.
+
+### Magnets and torrents
+
+`RPCClient.add` accepts `http`, `https`, and `magnet`. A magnet must carry a BitTorrent v1 info hash (`urn:btih`, 40 hex characters or 32 base32 characters). Display names, trackers, and web seeds are checked before the URI is sent. `file`, `javascript`, and every other scheme are rejected.
+
+`RPCClient.addTorrent` reads a `.torrent`, rejects path components that escape the download folder (`..`, absolute paths, empty names, and a name that is a symlink out of the folder), and rejects non-http(s) web seeds. Tracker URLs must be `http`, `https`, or `udp`. `select-file` is 1-based and must name a file in the torrent. The RPC call is `aria2.addTorrent` with the file base64-encoded and no extra web-seed URIs.
+
+Metalink stays unsupported.
+
+### Packet capture
+
+`SeedCaptureTests` runs whenever the engine tests run against aria2. It is not a skip. The test builds a private torrent, serves it from loopback peers, and records TCP with tcpdump. If capture does not start, the test fails. A skip would not prove the claim.
+
+When capture runs, the pcap must show all of the following:
+
+- Piece payload from the local seeder, so the download is visible on the wire.
+- While the download is incomplete, piece payload from the engine stays at or below `1KiB/s`, plus one 16KiB block of scheduler burst and 4KiB of slack. The peer has much more than that available to upload.
+- After `tellStatus` reports `complete`, and 1.5 seconds for packets already in flight, the engine sends no further piece payload. The leecher is still requesting during the last 2 seconds before completion. `seed-time=0` then closes the peer connections, so a later request has no open session to land on.
+- During the download, the aria2 process has at least one established TCP connection, and every established remote address is loopback.
+
+Linux captures on every interface (`tcpdump -i any`, Linux cooked v2). macOS captures on `lo0`. Off-machine TCP is checked from the process socket table on both systems, not only from the pcap.
+
+If tcpdump cannot capture, the failure says what was not proved: piece payload stopping after completion, and the 1KiB upload cap on the wire. Other tests still check that the config contains `seed-time=0` and `max-upload-limit=1K` and does not contain `seed-ratio`. Those config checks are not a packet capture.
+
+The test tries tcpdump directly, then `sudo -n tcpdump` when the direct capture is refused.

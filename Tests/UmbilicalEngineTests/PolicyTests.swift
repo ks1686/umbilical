@@ -16,7 +16,7 @@ final class PolicyTests: XCTestCase {
         XCTAssertTrue(text.contains("rpc-allow-origin-all=false"))
         XCTAssertTrue(text.contains("check-certificate=true"))
         XCTAssertTrue(text.contains("seed-time=0"))
-        XCTAssertTrue(text.contains("seed-ratio=0.0"))
+        XCTAssertFalse(text.contains("seed-ratio"))
         XCTAssertTrue(text.contains("max-upload-limit=1K"))
         XCTAssertTrue(text.contains("allow-overwrite=false"))
         XCTAssertTrue(text.contains("check-integrity=true"))
@@ -65,7 +65,15 @@ final class PolicyTests: XCTestCase {
             transport: transport,
             quarantine: RecordingQuarantine()
         )
-        let rejected = ["check-certificate", "rpc-secret", "log", "always-resume"]
+        let rejected = [
+            "check-certificate",
+            "rpc-secret",
+            "log",
+            "always-resume",
+            "seed-ratio",
+            "seed-time",
+            "max-upload-limit"
+        ]
         for name in rejected {
             do {
                 try await client.changeGlobalOption([name: "false"])

@@ -20,6 +20,8 @@ public enum EngineError: Error, Equatable, CustomStringConvertible {
     case rpc(code: Int, message: String)
     case transport(String)
     case unexpectedStatus(String)
+    case torrentRejected(String)
+    case magnetRejected(String)
     case notSupported(String)
 
     public var description: String {
@@ -58,6 +60,10 @@ public enum EngineError: Error, Equatable, CustomStringConvertible {
             return "transport error: \(detail)"
         case .unexpectedStatus(let status):
             return "unexpected download status: \(status)"
+        case .torrentRejected(let detail):
+            return "torrent rejected: \(detail)"
+        case .magnetRejected(let detail):
+            return "magnet rejected: \(detail)"
         case .notSupported(let feature):
             return "not supported: \(feature)"
         }
