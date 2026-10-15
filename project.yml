@@ -67,10 +67,10 @@ targets:
         products:
           - UmbilicalUI
           - UmbilicalEngine
+      # Xcode embeds this binary framework when the product is linked.
+      # An extra embed phase looks up a product file named Sparkle and fails the build.
       - package: Sparkle
         product: Sparkle
-        embed: true
-        codeSign: true
       - target: umb-watch
         link: false
         embed: true

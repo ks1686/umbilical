@@ -143,6 +143,16 @@ class ReleaseToolsTest(unittest.TestCase):
             self.assertNotIn("stale==", text)
             self.assertIn("<sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>", text)
 
+    def test_previous_appcast_rejects_doctype(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            previous = Path(tmp) / "bad.xml"
+            previous.write_text(
+                '<!DOCTYPE rss [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><rss version="2.0"></rss>',
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit):
+                release_tools._load_previous_items(previous, "1.2.3")
+
     def test_pubdate_uses_english_names(self) -> None:
         text = release_tools.rfc822_now()
         self.assertRegex(

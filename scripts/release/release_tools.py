@@ -196,8 +196,13 @@ def _sparkle_version(item: ET.Element) -> str:
 def _load_previous_items(path: Path | None, version: str) -> list[ET.Element]:
     if path is None or not path.is_file() or path.stat().st_size == 0:
         return []
+    data = path.read_bytes()
+    lowered = data.lower()
+    if b"<!doctype" in lowered or b"<!entity" in lowered:
+        fail("previous appcast contains a doctype or entity")
     try:
-        root = ET.parse(path).getroot()
+        # Our own GitHub release asset. DOCTYPE and ENTITY are rejected above.
+        root = ET.fromstring(data)  # nosemgrep: python.lang.security.use-defused-xml-parse.use-defused-xml-parse
     except ET.ParseError:
         fail("previous appcast is not XML")
     channel = root.find("channel")
