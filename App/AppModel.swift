@@ -10,11 +10,15 @@ import UmbilicalUI
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var snapshot: SessionSnapshot
+    @Published private(set) var license: LicenseSnapshot
     @Published private(set) var stagedHandoff: StagedHandoff?
     @Published private(set) var handoffError: String?
 
     private let session: DownloadSessionModel
+    private let licensing: LicenseService
     private var loop: Task<Void, Never>?
+    private var licenseStartup: Task<Void, Never>?
+    private var licenseLaunched = false
     private var lastExternalURL = ""
     private var lastExternalAt = Date.distantPast
 
@@ -27,7 +31,10 @@ final class AppModel: ObservableObject {
             video: VideoHelpers(ytDlp: located.ytDlp, watch: located.watch)
         )
         self.session = session
+        let licensing = LicenseEnvironment.make()
+        self.licensing = licensing
         self.snapshot = session.snapshot
+        self.license = licensing.snapshot
         AppTermination.attach(self)
         loop = Task { @MainActor [weak self] in
             await self?.run()
@@ -58,7 +65,16 @@ final class AppModel: ObservableObject {
         try session.checkedChildFolder(folder)
     }
 
+    var licenseAllowsNewDownloads: Bool {
+        LicensePermissions.resolve(license.status).allowsNewDownloads
+    }
+
+    var licenseAllowsResume: Bool {
+        LicensePermissions.resolve(license.status).allowsResume
+    }
+
     func add(urlText: String, outputName: String, folder: URL?, video: Bool = false) async throws {
+        try requireNewDownload()
         defer { publish() }
         if video {
             try await session.addVideo(urlText: urlText, outputName: outputName, folder: folder)
@@ -92,6 +108,11 @@ final class AppModel: ObservableObject {
 
     func confirmStagedHandoff() async {
         guard let staged = stagedHandoff else { return }
+        guard licenseAllowsNewDownloads else {
+            handoffError = LicenseCopy.actionBlocked
+            publish()
+            return
+        }
         guard let root = downloadDirectory else {
             handoffError = DownloadMessage.text(for: SessionError.folderMissing)
             return
@@ -122,6 +143,7 @@ final class AppModel: ObservableObject {
     }
 
     func resume(id: String) async {
+        guard licenseAllowsResume else { return }
         await session.resume(id: id)
         publish()
     }
@@ -138,6 +160,7 @@ final class AppModel: ObservableObject {
 
     func stop() {
         loop?.cancel()
+        licenseStartup?.cancel()
         session.stop()
         publish()
     }
@@ -152,20 +175,48 @@ final class AppModel: ObservableObject {
         publish()
     }
 
+    func activateLicense(_ rawKey: String) async -> Bool {
+        await licensing.activate(rawKey)
+        publish()
+        guard license.actionError == nil else { return false }
+        return licenseAllowsNewDownloads
+    }
+
+    func deactivateLicense() async {
+        await licensing.deactivate()
+        publish()
+    }
+
+    private func requireNewDownload() throws {
+        guard licenseAllowsNewDownloads else {
+            throw LicenseBlocked(message: LicenseCopy.actionBlocked)
+        }
+    }
+
     private func run() async {
         await session.start()
         publish()
+        licenseStartup = Task { @MainActor [weak self] in
+            await self?.licensing.launch()
+            guard let self, !Task.isCancelled else { return }
+            self.licenseLaunched = true
+            self.publish()
+        }
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             if Task.isCancelled {
                 break
             }
             await session.refresh()
+            if licenseLaunched {
+                await licensing.tick()
+            }
             publish()
         }
     }
 
     private func publish() {
+        license = licensing.snapshot
         snapshot = session.snapshot
         for notice in session.takeNotices() {
             DownloadNotifier.post(notice)

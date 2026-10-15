@@ -66,6 +66,9 @@ struct HandoffConfirmSheet: View {
     }
 
     private var blockedReason: String? {
+        if !model.licenseAllowsNewDownloads {
+            return LicenseCopy.actionBlocked
+        }
         if let handoffError = model.handoffError, !handoffError.isEmpty {
             return handoffError
         }
@@ -89,8 +92,12 @@ struct HandoffConfirmSheet: View {
             Button("Download") {
                 accept()
             }
-            .disabled(!armed || !model.snapshot.canAdd || submitting)
+            .disabled(!armed || !canDownload || submitting)
         }
+    }
+
+    private var canDownload: Bool {
+        model.snapshot.canAdd && model.licenseAllowsNewDownloads
     }
 
     private func arm() async {

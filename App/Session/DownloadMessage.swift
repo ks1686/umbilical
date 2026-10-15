@@ -19,6 +19,9 @@ public enum DownloadMessage {
     }
 
     private static func describe(_ error: Error) -> String {
+        if let blocked = error as? LicenseBlocked {
+            return blocked.message
+        }
         if let session = error as? SessionError {
             return session.description
         }

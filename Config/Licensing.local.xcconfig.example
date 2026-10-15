@@ -1,0 +1,5 @@
+// Copy this file to Config/Licensing.local.xcconfig.
+// That copy is gitignored. Set the organization UUID from the Polar dashboard.
+// This value is not an access token.
+//
+// POLAR_ORGANIZATION_ID = paste-the-organization-uuid-here

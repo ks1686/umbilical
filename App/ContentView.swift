@@ -12,7 +12,11 @@ struct ContentView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                unofficialCaption
                 if showsBanner, let message = model.snapshot.message {
+                    banner(message)
+                }
+                if showsLicenseBanner, let message = licenseBanner {
                     banner(message)
                 }
                 main
@@ -125,11 +129,11 @@ struct ContentView: View {
                 Label("No downloads", systemImage: "arrow.down.circle")
             },
             description: {
-                Text("Add an http or https URL. Active downloads stop when umbilical quits.")
+                Text(emptyDownloadText)
             },
             actions: {
                 Button("Add Download") { showingAdd = true }
-                    .disabled(!model.snapshot.canAdd)
+                    .disabled(!canStartDownload)
             }
         )
     }
@@ -178,12 +182,43 @@ struct ContentView: View {
             } label: {
                 Label("Add Download", systemImage: "plus")
             }
-            .disabled(!model.snapshot.canAdd)
+            .disabled(!canStartDownload)
             .keyboardShortcut("n", modifiers: [.command, .shift])
         }
         ToolbarItem(placement: .automatic) {
             Button("Choose Folder…") { chooseRoot() }
         }
+    }
+
+    @ViewBuilder
+    private var unofficialCaption: some View {
+        if case .unofficial = model.license.status {
+            Text(LicenseCopy.panel(for: model.license).statusText)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .padding(.top, 8)
+        }
+    }
+
+    private var licenseBanner: String? {
+        LicenseCopy.banner(for: model.license.status)
+    }
+
+    private var showsLicenseBanner: Bool {
+        licenseBanner != nil && !model.snapshot.rows.isEmpty
+    }
+
+    private var canStartDownload: Bool {
+        model.snapshot.canAdd && model.licenseAllowsNewDownloads
+    }
+
+    private var emptyDownloadText: String {
+        if let licenseBanner {
+            return licenseBanner
+        }
+        return "Add an http or https URL. Active downloads stop when umbilical quits."
     }
 
     private func chooseRoot() {

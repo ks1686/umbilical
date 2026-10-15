@@ -1,0 +1,4 @@
+// Polar organization id for the public license-key API.
+// This is not an access token. When the id is unset, a Release build is unofficial.
+// Set it in Licensing.local.xcconfig, which is gitignored.
+#include? "Licensing.local.xcconfig"

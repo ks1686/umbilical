@@ -9,6 +9,9 @@ build/
 .build/
 .venv/
 
+# Machine-local Polar organization id. Not an access token, and not committed.
+Config/Licensing.local.xcconfig
+
 # Helper build products. Lock files and the yt-dlp public key stay tracked.
 helpers/bin/
 helpers/src/

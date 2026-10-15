@@ -99,7 +99,7 @@ struct DownloadRowView: View {
             Button(row.canResume ? "Resume" : "Pause") {
                 Task { await toggleRun() }
             }
-            .disabled(!row.canPause && !row.canResume)
+            .disabled(runControlDisabled)
             Button(row.cancelsLiveVideo ? "Cancel" : "Remove") {
                 if row.cancelsLiveVideo {
                     Task { await model.remove(id: row.id) }
@@ -115,6 +115,13 @@ struct DownloadRowView: View {
             }
         }
         .buttonStyle(.borderless)
+    }
+
+    private var runControlDisabled: Bool {
+        if row.canResume {
+            return !model.licenseAllowsResume
+        }
+        return !row.canPause
     }
 
     private func toggleRun() async {

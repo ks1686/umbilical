@@ -6,7 +6,7 @@ Recorded October 15, 2026. These apply through v1 and to any future build machin
 - Code Lead plans, implements, and merges milestone PRs after Repo Guard's security sign-off and Machine Keeper's Mac test. Karim gave standing merge and release permission through v1.
 - Repo Guard reviews every milestone and runs a final security pass before release.
 - Machine Keeper runs signing, notarization, and Sparkle key work on the Mac.
-- Code Lead picks the license provider and price and runs the trademark check for umbilical and umb.
+- Code Lead picked Polar's public license-key API and the price. The trademark check for umbilical and umb is still open.
 
 ## Signing and notarization
 - Developer ID Application certificate lives in the login Keychain on the signing Mac.
@@ -38,8 +38,14 @@ The residual risk is a same-user process swapping libraries PyInstaller extracts
 - Backup (planned): `generate_keys -x` writes the private key as plain text. Write it into a folder readable only by Karim's account, then commit it to the genv config repo under the same safeguards as the App Store Connect key, and delete the plain-text file. It must never land in Downloads or iCloud.
 - Losing this key means installed copies stop accepting updates, so the backup is required before any release.
 
+## License checks
+- The app calls Polar's public customer-portal license-key validate, activate, and deactivate routes. The body includes the organization id. There is no organization access token in the app, this repo, or CI.
+- The organization id is build configuration (`Config/Licensing.xcconfig` and a gitignored local file). It is not a secret, and it is not an access token.
+- Transport security is HTTPS to `api.polar.sh`. The app refuses redirects. Activation replies are not separately signed.
+- The Keychain cache is bound to this Mac and this key. A copied record does not grant offline use.
+
 ## Before release
-- Repo Guard verifies the shipped dmg's notarization and the update feed's signatures, rechecks the App Sandbox decision, reviews the server-side license check, and scans the release tag for secrets and vulnerable dependencies.
+- Repo Guard verifies the shipped dmg's notarization and the update feed's signatures, rechecks the App Sandbox decision, reviews the Polar license check, and scans the release tag for secrets and vulnerable dependencies.
 
 ## Second signing machine (planned)
 A Mac Studio is joining the setup in one to two months. Machine Keeper will add it to genv so development, signing, and notarization work there too. To get there:

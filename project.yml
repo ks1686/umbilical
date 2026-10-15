@@ -74,6 +74,9 @@ targets:
         link: false
         embed: true
         codeSign: true
+    configFiles:
+      Debug: Config/Licensing.xcconfig
+      Release: Config/Licensing.xcconfig
     # These scripts run before Xcode signs umbilical.app, so the helpers
     # are signed first. The Xcode 26.6 App log signs the app after them.
     postBuildScripts:
