@@ -45,6 +45,7 @@ final class LicenseServiceTests: XCTestCase {
     }
 
     func testActivationLimitSaysHowManyMacs() async throws {
+        XCTAssertEqual(LicensePolicy.activationLimit, 1)
         let store = MemoryLicenseStore()
         let transport = StubLicenseTransport([
             .success(polarReply(status: 403, body: Data("{\"error\":\"NotPermitted\"}".utf8)))
@@ -55,8 +56,9 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertEqual(licenseDenial(service.snapshot.status), .limitReached)
         XCTAssertNil(store.credential)
         let message = LicenseCopy.denialText(.limitReached)
-        XCTAssertTrue(message.contains(String(LicensePolicy.activationLimit)))
-        XCTAssertTrue(message.contains("Macs"))
+        XCTAssertTrue(message.contains("1 Mac."))
+        XCTAssertFalse(message.contains("Macs"))
+        XCTAssertTrue(message.contains("Polar customer portal"))
         XCTAssertEqual(LicenseCopy.panel(for: service.snapshot).statusText, message)
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).stopsActiveDownloads)

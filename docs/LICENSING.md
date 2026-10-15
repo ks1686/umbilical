@@ -8,8 +8,10 @@ when the check is off.
 
 - Price: $9.99, paid once.
 - Updates: lifetime.
-- One key can be active on 3 Macs at a time. Polar enforces that limit. The
-  app only explains it.
+- One key can be active on 1 Mac at a time. Polar enforces that limit and
+  returns 403 NotPermitted when it is already reached. The app constant
+  `LicensePolicy.activationLimit` is for display and expected-error messaging
+  only.
 
 The grace period after the last successful check is 14 days. The constant is
 `LicensePolicy.offlineGrace`.
@@ -66,8 +68,8 @@ Deactivate This Mac frees the slot. The key and activation id are removed
 from this Mac. The random label stays, so the next activation on this Mac
 uses the same label.
 
-If Polar says the key is already active on 3 Macs, deactivate it on another
-Mac, or in the Polar customer portal, then try again.
+If Polar says the key is already active on 1 Mac, deactivate that instance
+in the Polar customer portal, or on that Mac, then try again.
 
 ## What is stored
 
@@ -151,7 +153,7 @@ Someone still has to create the product before a Release build with the
 organization id can activate a real key:
 
 - Price $9.99, one time.
-- A license-key benefit with an activation limit of 3.
+- A license-key benefit with an activation limit of 1.
 - No expiry, so Polar leaves `expires_at` empty.
 - Copy the organization id into `Config/Licensing.local.xcconfig` on the
   build machine.

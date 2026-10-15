@@ -61,7 +61,7 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 ## 5. Licensing and distribution
 
 - Sold direct (not Mac App Store, GPL conflict). Notarized dmg built with plain `hdiutil` from a repo script.
-- License check: Polar public customer-portal license keys. $9.99 once, lifetime updates, 3 Macs per key, 14-day offline grace (`LicensePolicy.offlineGrace`). Polar enforces the Mac limit. The app sends the organization id and does not use an access token. See `docs/LICENSING.md`.
+- License check: Polar public customer-portal license keys. $9.99 once, lifetime updates, 1 Mac per key, 14-day offline grace (`LicensePolicy.offlineGrace`). Polar enforces the Mac limit with 403 NotPermitted. `LicensePolicy.activationLimit` is display and expected-error messaging only. The app sends the organization id and does not use an access token. See `docs/LICENSING.md`.
 - Source builds and Debug builds skip the check and say they are unofficial. An empty organization id is that path. There is no hidden flag.
 - `THIRD_PARTY_LICENSES` bundled: aria2 (GPLv2+), yt-dlp (Unlicense), ffmpeg (LGPL, with source offer), Sparkle (MIT).
 
@@ -80,7 +80,7 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 
 ## 7. Open questions
 
-1. License provider and price: decided. Polar, $9.99, 14 days, 3 Macs. Still open: create that product in the Polar dashboard and put the organization id in `Config/Licensing.local.xcconfig` on the build machine. Trademark search stays item 4.
+1. License provider and price: decided. Polar, $9.99, 14 days, 1 Mac. Still open: create that product in the Polar dashboard and put the organization id in `Config/Licensing.local.xcconfig` on the build machine. Trademark search stays item 4.
 2. Minimum macOS (14 proposed).
 3. App Sandbox: decided in M1. Off. See section 8.
 4. Trademark search for umbilical and umb before M5.

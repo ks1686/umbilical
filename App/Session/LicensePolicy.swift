@@ -12,8 +12,9 @@ public enum LicensePolicy {
     /// A clock step smaller than this is not treated as rollback.
     public static let clockSkew: TimeInterval = 5 * 60
     public static let observationStep: TimeInterval = 60 * 60
-    /// Polar enforces this. The app only explains it.
-    public static let activationLimit = 3
+    /// Shown in Settings and in the over-limit error. Polar enforces the
+    /// limit and returns 403 NotPermitted. This value does not enforce it.
+    public static let activationLimit = 1
 
     public static var offlineGraceDays: Int {
         Int(offlineGrace / (24 * 60 * 60))
