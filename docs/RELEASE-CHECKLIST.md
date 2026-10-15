@@ -10,7 +10,7 @@ Last updated October 15, 2026.
 | Release decisions doc (PR #3, merged `ec0c5ad`) | Code Lead | done |
 | M2 torrent and magnet, no seeding, packet-capture test (release blocker) | Code Lead | in progress |
 | M2 follow-ups: zizmor online audits, remove `seed-ratio=0.0`, `just test` recipe | Code Lead | in progress |
-| M3 UI | Code Lead | planned |
+| M3 UI (Mac checklist in docs/M3-MANUAL.md, not yet run) | Code Lead | in progress |
 | M4 Safari extension | Code Lead | planned |
 | Video downloads with yt-dlp and ffmpeg | Code Lead | planned |
 | M5 ship: dmg, Sparkle update feed | Code Lead | planned |

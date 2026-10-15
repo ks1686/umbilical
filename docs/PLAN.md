@@ -72,7 +72,7 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 | M0 Skeleton | XcodeGen `project.yml` (no checked-in .xcodeproj), aria2c build recipe, SwiftLint, swift-format, CI build on macOS runner, helper fetch script with checksums | CI green on a PR |
 | M1 Engine | EngineSupervisor + RPCClient, add/pause/resume/remove HTTP downloads | Unit tests against a real aria2c. Requests with no secret or a wrong secret are rejected, a browser page cannot open the WebSocket, and disallowed options are refused |
 | M2 Torrent | Magnet and .torrent, no-seed config, file selection | Packet capture shows seeding stops at completion and upload stays capped (blocking test) |
-| M3 UI | Main window list, menu bar progress, notifications | Manual test script passes, idle memory target met |
+| M3 UI | Main window list, menu bar progress, notifications | docs/M3-MANUAL.md passes, idle memory under 60 MB |
 | M4 Safari | Web extension handoff | Download link in Safari lands in umbilical |
 | M5 Ship | License, Sparkle, notarized dmg, landing page | Notarized build installs and updates on a clean Mac |
 | Phase 2 | yt-dlp video, ffmpeg remux, scheduling, speed limits per task | |

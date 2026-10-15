@@ -8,8 +8,4 @@ final class SkeletonTests: XCTestCase {
     func testShortNameIsUmb() {
         XCTAssertEqual(UmbilicalMarker.shortName, "umb")
     }
-
-    func testEngineStubHasNotStarted() {
-        XCTAssertEqual(EngineStub.status, "not-started")
-    }
 }

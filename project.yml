@@ -19,7 +19,27 @@ settings:
     DEVELOPMENT_TEAM: ""
     SDKROOT: macosx
     SUPPORTED_PLATFORMS: macosx
+packages:
+  Umbilical:
+    path: .
 targets:
+  umb-watch:
+    type: tool
+    platform: macOS
+    sources:
+      - path: Sources/umb-watch
+    settings:
+      base:
+        PRODUCT_NAME: umb-watch
+        PRODUCT_BUNDLE_IDENTIFIER: me.peapod.umbilical.umb-watch
+        GENERATE_INFOPLIST_FILE: "YES"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "YES"
+        ENABLE_HARDENED_RUNTIME: "YES"
+        SKIP_INSTALL: "YES"
   umbilical:
     type: application
     platform: macOS
@@ -27,6 +47,24 @@ targets:
       - path: App
         excludes:
           - umbilical.entitlements
+          - Session
+          - Session/**
+    dependencies:
+      - package: Umbilical
+        products:
+          - UmbilicalUI
+          - UmbilicalEngine
+      - target: umb-watch
+        link: false
+        embed: true
+        codeSign: true
+        copy:
+          destination: executables
+    postBuildScripts:
+      - path: scripts/copy-bundled-aria2.sh
+        name: Copy bundled aria2c
+        basedOnDependencyAnalysis: false
+        showEnvVars: false
     settings:
       base:
         PRODUCT_NAME: umbilical
@@ -44,6 +82,9 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/umbilical.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
         ENABLE_TESTABILITY: "YES"
+        # aria2c may be absent when this script runs. User script sandboxing
+        # would skip or fail that optional copy.
+        ENABLE_USER_SCRIPT_SANDBOXING: "NO"
   umbilicalTests:
     type: bundle.unit-test
     platform: macOS
@@ -51,8 +92,8 @@ targets:
       - path: Tests
         excludes:
           - UmbilicalEngineTests
+          - UmbilicalUITests
       - path: App/UmbilicalMarker.swift
-      - path: App/EngineStub.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: me.peapod.umbilical.tests
@@ -65,6 +106,7 @@ schemes:
       targets:
         umbilical: all
         umbilicalTests: [test]
+        umb-watch: all
     run:
       config: Debug
     test:

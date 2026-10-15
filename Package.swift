@@ -10,6 +10,7 @@ let package = Package(
     ],
     products: [
         .library(name: "UmbilicalEngine", targets: ["UmbilicalEngine"]),
+        .library(name: "UmbilicalUI", targets: ["UmbilicalUI"]),
         .executable(name: "umb-watch", targets: ["umb-watch"]),
     ],
     targets: [
@@ -39,10 +40,20 @@ let package = Package(
             dependencies: ["CXAttr", "CProc"],
             path: "Sources/UmbilicalEngine"
         ),
+        .target(
+            name: "UmbilicalUI",
+            dependencies: ["UmbilicalEngine"],
+            path: "App/Session"
+        ),
         .testTarget(
             name: "UmbilicalEngineTests",
             dependencies: ["UmbilicalEngine"],
             path: "Tests/UmbilicalEngineTests"
+        ),
+        .testTarget(
+            name: "UmbilicalUITests",
+            dependencies: ["UmbilicalUI", "UmbilicalEngine"],
+            path: "Tests/UmbilicalUITests"
         ),
     ],
     swiftLanguageVersions: [.v5]
