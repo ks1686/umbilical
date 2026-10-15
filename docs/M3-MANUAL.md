@@ -90,3 +90,7 @@ reports flags that include `runtime`.
 
 `swift test` covers the view models, folder rules, and engine. It does not
 replace this Mac pass.
+
+If the checkout is under `~/Documents`, `swift test` can fail at codesign
+with `resource fork, Finder information, or similar detritus not allowed`.
+Use `swift test --scratch-path /tmp/umb-spm`.
