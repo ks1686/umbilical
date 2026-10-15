@@ -27,6 +27,9 @@ settings:
 packages:
   Umbilical:
     path: .
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.9.6
 targets:
   umb-watch:
     type: tool
@@ -55,6 +58,7 @@ targets:
       - path: App
         excludes:
           - umbilical.entitlements
+          - umbilical-debug.entitlements
           - Info.plist
           - Session
           - Session/**
@@ -63,6 +67,10 @@ targets:
         products:
           - UmbilicalUI
           - UmbilicalEngine
+      # Xcode embeds this binary framework when the product is linked.
+      # An extra embed phase looks up a product file named Sparkle and fails the build.
+      - package: Sparkle
+        product: Sparkle
       - target: umb-watch
         link: false
         embed: true
@@ -109,11 +117,16 @@ targets:
         # Debug may omit aria2c and yt-dlp. Release fails if either is
         # missing. User script sandboxing would skip these copies.
         ENABLE_USER_SCRIPT_SANDBOXING: "NO"
-        # M5 sets these to the Developer ID. "-" is an ad hoc signature.
+        # "-" is an ad hoc signature. The Mac release script passes the Developer ID.
         ARIA2_CODESIGN_IDENTITY: "-"
         YT_DLP_CODESIGN_IDENTITY: "-"
       configs:
+        Debug:
+          # Ad hoc Sparkle cannot load while library validation is on.
+          # Release keeps validation. See docs/RELEASE.md.
+          CODE_SIGN_ENTITLEMENTS: App/umbilical-debug.entitlements
         Release:
+          CODE_SIGN_ENTITLEMENTS: App/umbilical.entitlements
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: "NO"
           ENABLE_TESTABILITY: "NO"
   umbilicalTests:

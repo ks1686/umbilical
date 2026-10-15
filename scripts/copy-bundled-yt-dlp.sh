@@ -13,9 +13,9 @@
 # Those keys are only in helpers/yt-dlp.entitlements. The decision is
 # recorded in docs/RELEASE.md. The app entitlements do not gain them.
 #
-# M5 sets YT_DLP_CODESIGN_IDENTITY to the Developer ID. Ad hoc until then.
-# M5 also adds --timestamp. Ad hoc signatures cannot use a secure timestamp,
-# so this script does not pass --timestamp.
+# "-" is an ad hoc signature. The Mac release script passes the Developer ID.
+# Ad hoc signatures cannot take a secure timestamp.
+# The entitlements file is helpers/yt-dlp.entitlements and nothing else.
 set -eu
 
 src_root="${SRCROOT:-}"
@@ -71,6 +71,12 @@ cp "${source}" "${dest_dir}/yt-dlp"
 chmod 755 "${dest_dir}/yt-dlp"
 
 identity="${YT_DLP_CODESIGN_IDENTITY:--}"
-codesign --force --sign "${identity}" -o runtime \
-  --entitlements "${entitlements}" \
-  "${dest_dir}/yt-dlp"
+if [ "${identity}" = "-" ]; then
+  codesign --force --sign "${identity}" --options runtime \
+    --entitlements "${entitlements}" \
+    "${dest_dir}/yt-dlp"
+else
+  codesign --force --sign "${identity}" --options runtime --timestamp \
+    --entitlements "${entitlements}" \
+    "${dest_dir}/yt-dlp"
+fi

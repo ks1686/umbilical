@@ -16,6 +16,7 @@ struct MenuBarTitle: View {
 
 struct MenuBarMenu: View {
     @ObservedObject var model: AppModel
+    var updates: UpdateController
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openSettings) private var openSettings
 
@@ -30,6 +31,8 @@ struct MenuBarMenu: View {
         Divider()
         Button("Open umbilical") { showMainWindow() }
         Button("Settings…") { showSettings() }
+        Divider()
+        Button("Check for Updates") { updates.checkForUpdates() }
         Divider()
         Button("Quit umbilical") { quit() }
     }

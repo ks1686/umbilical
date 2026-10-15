@@ -4,10 +4,13 @@
 xcuserdata/
 DerivedData/
 build/
+dist/
 .DS_Store
 .swiftpm/
 .build/
 .venv/
+__pycache__/
+*.pyc
 
 # Machine-local Polar organization id. Not an access token, and not committed.
 Config/Licensing.local.xcconfig

@@ -7,3 +7,7 @@ useDefault = true
 description = "RFC 6455 sample WebSocket nonce used to prove the handshake is rejected"
 paths = ['''Tests/UmbilicalEngineTests/RPCIntegrationTests.swift''']
 regexes = ['''dGhlIHNhbXBsZSBub25jZQ==''']
+
+[[allowlists]]
+description = "Sparkle SUPublicEDKey. This is the public Ed25519 key, not a private key."
+regexes = ['''wMhJbYoJtpde3xrtBBL1neu9PM5giL3OnYmE7C04OFY=''']

@@ -46,6 +46,11 @@ mkdir -p "${dest_dir}"
 cp "${source}" "${dest_dir}/aria2c"
 chmod 755 "${dest_dir}/aria2c"
 
-# M5 sets ARIA2_CODESIGN_IDENTITY to the Developer ID. Ad hoc until then.
+# "-" is an ad hoc signature. The Mac release script passes the Developer ID.
+# Ad hoc signatures cannot take a secure timestamp.
 identity="${ARIA2_CODESIGN_IDENTITY:--}"
-codesign --force --sign "${identity}" -o runtime "${dest_dir}/aria2c"
+if [ "${identity}" = "-" ]; then
+  codesign --force --sign "${identity}" --options runtime "${dest_dir}/aria2c"
+else
+  codesign --force --sign "${identity}" --options runtime --timestamp "${dest_dir}/aria2c"
+fi

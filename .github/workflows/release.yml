@@ -1,0 +1,86 @@
+name: Release
+
+# Unsigned dry run only. Version tags are published from the signing Mac
+# by scripts/release/publish.sh. This workflow must not receive a Developer
+# ID certificate, an App Store Connect API key, or the Sparkle private key.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  unsigned:
+    name: Unsigned dry run
+    runs-on: macos-26
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: write # Upload the unsigned dmg artifact for the dry run.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install XcodeGen and SwiftLint
+        run: scripts/ci/install-xcodegen-swiftlint.sh
+
+      - name: Install GnuPG
+        run: |
+          set -euo pipefail
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_ANALYTICS=1
+          if ! command -v gpg >/dev/null 2>&1; then
+            brew install gnupg
+          fi
+          gpg --version
+
+      - name: Fetch pinned yt-dlp
+        run: scripts/fetch-helpers.sh
+
+      - name: Install pkg-config
+        run: |
+          set -euo pipefail
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_ANALYTICS=1
+          brew install pkg-config
+          command -v pkg-config
+
+      - name: Build universal aria2c
+        run: scripts/build-aria2.sh
+
+      - name: Build unsigned Release app
+        run: scripts/release/build-release-app.sh
+
+      - name: Sign the Release app ad hoc
+        run: scripts/release/sign-bundle.sh dist/umbilical.app - "${GITHUB_WORKSPACE}"
+
+      - name: Reject get-task-allow
+        run: scripts/check-no-get-task-allow.sh dist/umbilical.app
+
+      - name: Run signed yt-dlp from the Release app
+        run: scripts/ci/yt-dlp-version.sh dist/umbilical.app
+
+      - name: Check the unsigned bundle
+        run: python3 scripts/release/release_tools.py check-built-app --app dist/umbilical.app
+
+      - name: Build dmg
+        run: scripts/release/make-dmg.sh dist/umbilical.app dist/umbilical-dry-run.dmg
+
+      - name: SHA-256
+        run: scripts/release/sha256-file.sh dist/umbilical-dry-run.dmg dist/umbilical-dry-run.dmg.sha256
+
+      - name: Upload unsigned artifacts
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: umbilical-unsigned
+          path: |
+            dist/umbilical-dry-run.dmg
+            dist/umbilical-dry-run.dmg.sha256
+          if-no-files-found: error
