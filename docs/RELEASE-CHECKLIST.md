@@ -14,6 +14,7 @@ Last updated October 15, 2026.
 | M4 Safari extension | Code Lead | planned |
 | Video downloads with yt-dlp and ffmpeg | Code Lead | planned |
 | M5 ship: dmg, Sparkle update feed | Code Lead | planned |
+| Signing prerequisites on the Mac (Developer ID cert in Keychain, notarytool settings, App Store Connect key file at 600), verified Oct 15 | Machine Keeper | done |
 | Sparkle key generation on the signing Mac | Machine Keeper | planned |
 | Sparkle private key backup in the password manager (release blocker) | Machine Keeper | planned |
 | App Store Connect API key backup in the password manager (release blocker) | Machine Keeper | planned (pending, not done) |
