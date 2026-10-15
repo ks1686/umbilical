@@ -61,7 +61,8 @@ jobs:
       - name: Install Semgrep
         run: |
           set -euo pipefail
-          python3 -m pip install --user --disable-pip-version-check "semgrep==1.181.0"
+          python3 -m pip install --user --disable-pip-version-check \
+            --require-hashes -r requirements/semgrep.txt
           echo "${HOME}/.local/bin" >>"${GITHUB_PATH}"
 
       - name: Scan
@@ -126,7 +127,26 @@ jobs:
         run: |
           set -euo pipefail
           actionlint
-          shellcheck scripts/*.sh
+          shellcheck scripts/*.sh scripts/ci/*.sh
+
+  helper-verification:
+    name: helper inputs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install GnuPG
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y gnupg
+
+      - name: Reject bad helper checksums and signatures
+        run: scripts/ci/helper-negative-tests.sh
 
   helpers:
     name: yt-dlp fetch

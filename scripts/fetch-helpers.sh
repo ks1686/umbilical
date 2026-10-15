@@ -5,14 +5,30 @@
 # on the release SHA2-256SUMS file verifies against the published key in
 # helpers/yt-dlp.asc. The script does not run yt-dlp and does not pass -U.
 # ffmpeg is phase 2 and is not fetched here.
+#
+# Usage:
+#   scripts/fetch-helpers.sh
+#   scripts/fetch-helpers.sh --verify-sums SHA2-256SUMS SIGNATURE
+#
+# --verify-sums checks SIGNATURE against the vendored key and does not
+# download the yt-dlp binary.
 
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 lock_file="${root}/helpers/yt-dlp.lock"
+mode="fetch"
+sums_path=""
+sig_path=""
 
-if [[ $# -ne 0 ]]; then
-  echo "usage: scripts/fetch-helpers.sh" >&2
+if [[ $# -eq 0 ]]; then
+  mode="fetch"
+elif [[ $# -eq 3 && "$1" == "--verify-sums" ]]; then
+  mode="verify-sums"
+  sums_path="$2"
+  sig_path="$3"
+else
+  echo "usage: scripts/fetch-helpers.sh [--verify-sums SHA2-256SUMS SIGNATURE]" >&2
   exit 2
 fi
 
@@ -115,25 +131,42 @@ mkdir -p "$GNUPGHOME"
 chmod 700 "$GNUPGHOME"
 gpg --batch --import "$key_path" >/dev/null
 
+verify_signed_sums() {
+  local sums="$1"
+  local signature="$2"
+  local status_file="$3"
+  if [[ ! -f "$sums" || ! -f "$signature" ]]; then
+    echo "missing SHA2-256SUMS or signature" >&2
+    return 1
+  fi
+  if ! gpg --batch --trust-model always --status-file "$status_file" \
+    --verify "$signature" "$sums"; then
+    echo "GPG rejected SHA2-256SUMS" >&2
+    return 1
+  fi
+  if grep -Eq '^\[GNUPG:\] (BADSIG|ERRSIG|NODATA|NO_PUBKEY) ' "$status_file"; then
+    echo "GPG rejected SHA2-256SUMS" >&2
+    return 1
+  fi
+  if ! grep -Eq "^\\[GNUPG:\\] GOODSIG " "$status_file"; then
+    echo "GPG did not report GOODSIG for SHA2-256SUMS" >&2
+    return 1
+  fi
+  if ! grep -Eq "^\\[GNUPG:\\] VALIDSIG ${gpg_fingerprint}( |$)" "$status_file"; then
+    echo "SHA2-256SUMS was not signed by ${gpg_fingerprint}" >&2
+    return 1
+  fi
+}
+
+if [[ "$mode" == "verify-sums" ]]; then
+  verify_signed_sums "$sums_path" "$sig_path" "${tmp}/gpg-status"
+  echo "SHA2-256SUMS signature ok"
+  exit 0
+fi
+
 download "$sums_url" "${tmp}/SHA2-256SUMS"
 download "$sums_sig_url" "${tmp}/SHA2-256SUMS.sig"
-
-status_file="${tmp}/gpg-status"
-gpg --batch --trust-model always --status-file "$status_file" \
-  --verify "${tmp}/SHA2-256SUMS.sig" "${tmp}/SHA2-256SUMS"
-
-if grep -Eq '^\[GNUPG:\] (BADSIG|ERRSIG|NODATA|NO_PUBKEY) ' "$status_file"; then
-  echo "GPG rejected SHA2-256SUMS" >&2
-  exit 1
-fi
-if ! grep -Eq "^\\[GNUPG:\\] GOODSIG " "$status_file"; then
-  echo "GPG did not report GOODSIG for SHA2-256SUMS" >&2
-  exit 1
-fi
-if ! grep -Eq "^\\[GNUPG:\\] VALIDSIG ${gpg_fingerprint}( |$)" "$status_file"; then
-  echo "SHA2-256SUMS was not signed by ${gpg_fingerprint}" >&2
-  exit 1
-fi
+verify_signed_sums "${tmp}/SHA2-256SUMS" "${tmp}/SHA2-256SUMS.sig" "${tmp}/gpg-status"
 
 signed_sha256="$(
   awk -v asset="$asset" '

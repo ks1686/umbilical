@@ -6,8 +6,9 @@ Apple Silicon and Intel. It only downloads. It never seeds.
 The app is paid. It is also GPL-3.0-or-later, and anyone can build it from
 this source tree. Nothing here is meant to stop a source build.
 
-The app does not link aria2. A later milestone launches `aria2c` as a child
-process. This skeleton is the Xcode project, the helper recipes, and CI.
+The app does not link aria2. The engine launches the bundled `aria2c` as a
+child process and talks to it over loopback JSON-RPC. The Xcode project is
+the app shell. Engine tests run through Swift Package Manager.
 
 ## Build the app
 
@@ -37,8 +38,10 @@ xcrun swift-format lint --strict --recursive --configuration .swift-format App T
 
 `scripts/build-aria2.sh` downloads aria2 1.37.0 from the official GitHub
 release, checks the SHA-256 in `helpers/aria2.lock`, and builds a universal
-`aria2c`. The build is static, uses `--with-appletls`, and does not use
-OpenSSL or GnuTLS. It compiles arm64 and x86_64, then combines them with
+`aria2c`. The build is static, uses `--with-appletls` and
+`--disable-websocket`, and does not use OpenSSL or GnuTLS. WebSocket is
+left out because aria2 would still accept a browser handshake when that
+server is compiled in. It compiles arm64 and x86_64, then combines them with
 `lipo`. The compile needs macOS, Xcode, `pkg-config`, and `perl`.
 `scripts/build-aria2.sh --verify-tarball` only checks the tarball hash.
 

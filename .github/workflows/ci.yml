@@ -109,7 +109,7 @@ jobs:
   aria2:
     name: aria2c
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,6 +126,52 @@ jobs:
 
       - name: Build universal aria2c
         run: scripts/build-aria2.sh
+
+      - name: Test the engine
+        run: swift test
+        env:
+          ARIA2C: ${{ github.workspace }}/helpers/bin/aria2c
+          UMB_REQUIRE_ARIA2: "1"
+
+  engine:
+    name: Engine
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install build tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config libssl-dev libxml2-dev zlib1g-dev \
+            libncurses6 libcurl4-openssl-dev libedit2 libgcc-13-dev \
+            libpython3-dev libsqlite3-0 libstdc++-13-dev libz3-dev unzip
+
+      - name: Build aria2 without WebSocket
+        run: scripts/build-aria2-linux.sh "${RUNNER_TEMP}/aria2"
+
+      - name: Install Swift
+        run: |
+          set -euo pipefail
+          url="https://download.swift.org/swift-6.4.1-release/ubuntu2404/swift-6.4.1-RELEASE/swift-6.4.1-RELEASE-ubuntu24.04.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output /tmp/swift.tar.gz "$url"
+          echo "7d246c7114077ad01dba4ad897628446ada4c489d6c7dbcf39ae3f25cbe17e8b  /tmp/swift.tar.gz" \
+            | sha256sum -c -
+          sudo mkdir -p /opt/swift
+          sudo tar -xzf /tmp/swift.tar.gz -C /opt/swift --strip-components=1
+          echo /opt/swift/usr/bin >>"${GITHUB_PATH}"
+
+      - name: Test the engine
+        run: swift test
+        env:
+          ARIA2C: ${{ runner.temp }}/aria2/bin/aria2c
+          UMB_REQUIRE_ARIA2: "1"
 
   aria2-xcode-27:
     name: aria2c Xcode 27

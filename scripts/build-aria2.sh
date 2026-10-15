@@ -2,7 +2,10 @@
 # Build a universal aria2c from the pinned official source tarball.
 #
 # The recipe configures a static build (--enable-static --disable-shared and
-# ARIA2_STATIC=yes) with --with-appletls and without OpenSSL or GnuTLS.
+# ARIA2_STATIC=yes) with --with-appletls, --disable-websocket, and without
+# OpenSSL or GnuTLS. WebSocket support answers a browser handshake with
+# 101 even when rpc-allow-origin-all is false, so the bundled binary
+# leaves it out. JSON-RPC stays on HTTP.
 # It compiles arm64 and x86_64 separately, then combines them with lipo.
 # macOS cannot fully static-link libSystem, so the binary still links the
 # system libc++, libz, libxml2, and Apple frameworks. It must not link
@@ -24,20 +27,34 @@
 # Usage:
 #   scripts/build-aria2.sh
 #   scripts/build-aria2.sh --verify-tarball
+#   scripts/build-aria2.sh --verify-file FILE
 #
 # --verify-tarball checks the recorded SHA-256 and does not compile.
-# That mode runs on any OS. The compile requires macOS 14 or later.
+# --verify-file checks FILE against that SHA-256 and does not download.
+# Both modes run on any OS. The compile requires macOS 14 or later.
 
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 lock_file="${root}/helpers/aria2.lock"
 mode="build"
+verify_file=""
 
 if [[ "${1:-}" == "--verify-tarball" ]]; then
+  if [[ $# -ne 1 ]]; then
+    echo "usage: scripts/build-aria2.sh [--verify-tarball | --verify-file FILE]" >&2
+    exit 2
+  fi
   mode="verify"
+elif [[ "${1:-}" == "--verify-file" ]]; then
+  if [[ $# -ne 2 || -z "${2:-}" ]]; then
+    echo "usage: scripts/build-aria2.sh [--verify-tarball | --verify-file FILE]" >&2
+    exit 2
+  fi
+  mode="verify-file"
+  verify_file="$2"
 elif [[ $# -ne 0 ]]; then
-  echo "usage: scripts/build-aria2.sh [--verify-tarball]" >&2
+  echo "usage: scripts/build-aria2.sh [--verify-tarball | --verify-file FILE]" >&2
   exit 2
 fi
 
@@ -128,6 +145,22 @@ case "$object_mtime" in
     exit 1
     ;;
 esac
+
+if [[ "$mode" == "verify-file" ]]; then
+  if [[ ! -f "$verify_file" ]]; then
+    echo "missing tarball: ${verify_file}" >&2
+    exit 1
+  fi
+  actual="$(sha256_file "$verify_file" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$actual" != "$tarball_sha256" ]]; then
+    echo "tarball SHA-256 mismatch" >&2
+    echo "expected ${tarball_sha256}" >&2
+    echo "actual   ${actual}" >&2
+    exit 1
+  fi
+  echo "tarball SHA-256 ok"
+  exit 0
+fi
 
 src_dir="${root}/helpers/src"
 tarball="${src_dir}/${tarball_name}"
@@ -337,6 +370,7 @@ EOF
       --enable-static \
       --disable-shared \
       --disable-nls \
+      --disable-websocket \
       --with-appletls \
       --without-openssl \
       --without-gnutls \
@@ -371,6 +405,10 @@ EOF
   fi
   if ! grep -Eq '^Static build:[[:space:]]+yes([[:space:]]|$)' "$log"; then
     echo "static build was not enabled for ${arch}. See ${log}" >&2
+    exit 1
+  fi
+  if ! grep -Eq '^WebSocket:[[:space:]]+no([[:space:]]|$)' "$log"; then
+    echo "WebSocket was not disabled for ${arch}. See ${log}" >&2
     exit 1
   fi
 

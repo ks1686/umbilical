@@ -6,6 +6,8 @@ DerivedData/
 build/
 .DS_Store
 .swiftpm/
+.build/
+.venv/
 
 # Helper build products. Lock files and the yt-dlp public key stay tracked.
 helpers/bin/

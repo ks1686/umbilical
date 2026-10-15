@@ -38,7 +38,7 @@ targets:
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright (C) 2026 Karim Smires"
         MARKETING_VERSION: "0.0.1"
         CURRENT_PROJECT_VERSION: "1"
-        # App Sandbox stays off until the M1 spike. Hardened runtime is on.
+        # App Sandbox is off. See docs/PLAN.md section 8. Hardened runtime is on.
         ENABLE_HARDENED_RUNTIME: "YES"
         CODE_SIGNING_ALLOWED: "YES"
         CODE_SIGN_ENTITLEMENTS: App/umbilical.entitlements
@@ -49,6 +49,8 @@ targets:
     platform: macOS
     sources:
       - path: Tests
+        excludes:
+          - UmbilicalEngineTests
       - path: App/UmbilicalMarker.swift
       - path: App/EngineStub.swift
     settings:
