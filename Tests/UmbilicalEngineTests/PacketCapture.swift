@@ -114,10 +114,7 @@ final class RunningCapture {
         while process.isRunning && Date() < deadline {
             usleep(50_000)
         }
-        if process.isRunning {
-            kill(process.processIdentifier, SIGKILL)
-            process.waitUntilExit()
-        }
+        reap(process)
     }
 }
 
@@ -180,10 +177,7 @@ private func finish(_ process: Process, file: URL, sudo: Bool) {
     while process.isRunning && Date() < deadline {
         usleep(50_000)
     }
-    if process.isRunning {
-        kill(process.processIdentifier, SIGKILL)
-    }
-    process.waitUntilExit()
+    reap(process)
 }
 
 private func runQuiet(_ argv: [String]) -> Bool {
@@ -200,6 +194,22 @@ private func runQuiet(_ argv: [String]) -> Bool {
     } catch {
         return false
     }
-    process.waitUntilExit()
-    return process.terminationStatus == 0
+    reap(process)
+    return !process.isRunning && process.terminationStatus == 0
+}
+
+/// Give the child a moment, then SIGKILL. `waitUntilExit` can sit forever.
+private func reap(_ process: Process) {
+    let grace = Date().addingTimeInterval(1)
+    while process.isRunning && Date() < grace {
+        usleep(50_000)
+    }
+    if !process.isRunning {
+        return
+    }
+    kill(process.processIdentifier, SIGKILL)
+    let deadline = Date().addingTimeInterval(1)
+    while process.isRunning && Date() < deadline {
+        usleep(50_000)
+    }
 }

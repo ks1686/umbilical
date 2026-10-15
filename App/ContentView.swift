@@ -25,6 +25,43 @@ struct ContentView: View {
         .sheet(isPresented: $showingAdd) {
             AddDownloadSheet(model: model)
         }
+        .sheet(item: stagedHandoff) { staged in
+            HandoffConfirmSheet(model: model, staged: staged)
+        }
+        .alert(
+            "Download rejected",
+            isPresented: handoffErrorPresented,
+            actions: {
+                Button("OK", role: .cancel) {
+                    model.clearHandoffError()
+                }
+            },
+            message: {
+                Text(model.handoffError ?? "")
+            }
+        )
+    }
+
+    private var stagedHandoff: Binding<StagedHandoff?> {
+        Binding(
+            get: { model.stagedHandoff },
+            set: { value in
+                if value == nil {
+                    model.declineStagedHandoff()
+                }
+            }
+        )
+    }
+
+    private var handoffErrorPresented: Binding<Bool> {
+        Binding(
+            get: { model.handoffError != nil && model.stagedHandoff == nil },
+            set: { isPresented in
+                if !isPresented {
+                    model.clearHandoffError()
+                }
+            }
+        )
     }
 
     private var subtitle: String {

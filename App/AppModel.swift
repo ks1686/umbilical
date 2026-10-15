@@ -4,14 +4,19 @@
 
 import Foundation
 import SwiftUI
+import UmbilicalEngine
 import UmbilicalUI
 
 @MainActor
 final class AppModel: ObservableObject {
     @Published private(set) var snapshot: SessionSnapshot
+    @Published private(set) var stagedHandoff: StagedHandoff?
+    @Published private(set) var handoffError: String?
 
     private let session: DownloadSessionModel
     private var loop: Task<Void, Never>?
+    private var lastExternalURL = ""
+    private var lastExternalAt = Date.distantPast
 
     init() {
         let located = AppHelpers.locate()
@@ -22,7 +27,7 @@ final class AppModel: ObservableObject {
         )
         self.session = session
         self.snapshot = session.snapshot
-        AppTermination.model = self
+        AppTermination.attach(self)
         loop = Task { @MainActor [weak self] in
             await self?.run()
         }
@@ -55,6 +60,55 @@ final class AppModel: ObservableObject {
     func add(urlText: String, outputName: String, folder: URL?) async throws {
         defer { publish() }
         try await session.add(urlText: urlText, outputName: outputName, folder: folder)
+    }
+
+    func receiveExternalURL(_ url: URL) {
+        guard url.scheme?.lowercased() == ExternalDownload.scheme else { return }
+        let key = url.absoluteString
+        let now = Date()
+        if key == lastExternalURL, now.timeIntervalSince(lastExternalAt) < 2 {
+            return
+        }
+        lastExternalURL = key
+        lastExternalAt = now
+        let root =
+            downloadDirectory
+            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        do {
+            let handoff = try ExternalDownload.stage(openURL: url, downloadRoot: root)
+            stagedHandoff = StagedHandoff(handoff: handoff)
+            handoffError = nil
+        } catch {
+            stagedHandoff = nil
+            handoffError = DownloadMessage.text(for: error)
+        }
+        MacActions.activate()
+    }
+
+    func confirmStagedHandoff() async {
+        guard let staged = stagedHandoff else { return }
+        guard let root = downloadDirectory else {
+            handoffError = DownloadMessage.text(for: SessionError.folderMissing)
+            return
+        }
+        do {
+            let confirmed = try ExternalDownload.confirm(staged.handoff, downloadRoot: root)
+            try await session.addExternal(confirmed)
+            stagedHandoff = nil
+            handoffError = nil
+        } catch {
+            handoffError = DownloadMessage.text(for: error)
+        }
+        publish()
+    }
+
+    func declineStagedHandoff() {
+        stagedHandoff = nil
+        handoffError = nil
+    }
+
+    func clearHandoffError() {
+        handoffError = nil
     }
 
     func pause(id: String) async {

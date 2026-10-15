@@ -37,6 +37,8 @@ public enum DownloadMessage {
             return "That folder cannot be used."
         case .outputNameRejected:
             return "The file name cannot include a path."
+        case .handoffRejected:
+            return "That download request was rejected."
         case .executableMissing(let path):
             return "Missing helper: \(path)"
         case .temporaryDirectoryFailed,

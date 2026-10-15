@@ -225,8 +225,11 @@ validate_toolchain_lines() {
 }
 
 detect_toolchain() {
-  local xcode_line clang_line
-  xcode_line="$(xcodebuild -version | awk 'NR==1 { print; exit }')"
+  local xcode_line clang_line xcode_output clang_output
+  # Read every line. Stopping after the first one closes the pipe, and
+  # xcodebuild then aborts with a broken-pipe exception.
+  xcode_output="$(xcodebuild -version)"
+  xcode_line="${xcode_output%%$'\n'*}"
   xcode_version="$(printf '%s\n' "$xcode_line" | awk '/^Xcode / { print $2; exit }')"
   if [[ -z "$xcode_version" ]]; then
     echo "could not read the Xcode version from: ${xcode_line}" >&2
@@ -240,7 +243,8 @@ detect_toolchain() {
   esac
   xcode_clang="$(xcrun --find clang)"
   xcode_clangxx="$(xcrun --find clang++)"
-  clang_line="$("$xcode_clang" --version | awk 'NR==1 { print; exit }')"
+  clang_output="$("$xcode_clang" --version)"
+  clang_line="${clang_output%%$'\n'*}"
   clang_id="$(printf '%s\n' "$clang_line" | sed -n 's/^Apple clang version \([0-9][0-9.]*\) (\([^)]*\)).*/\1 (\2)/p')"
   if [[ -z "$clang_id" ]]; then
     echo "could not read the Apple clang version from: ${clang_line}" >&2

@@ -374,10 +374,10 @@ private func listeningAddresses(root: Int32, port: UInt16) throws -> [String] {
         process.arguments = ["-nP", "-iTCP:\(port)", "-sTCP:LISTEN"]
         let output = Pipe()
         process.standardOutput = output
-        process.standardError = Pipe()
+        process.standardError = FileHandle(forWritingAtPath: "/dev/null")
         try process.run()
-        process.waitUntilExit()
         let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         guard let text = String(bytes: data, encoding: .utf8) else {
             throw EngineError.transport("lsof output was not utf-8")
         }

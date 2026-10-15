@@ -96,6 +96,27 @@ public final class DownloadSessionModel {
         rebuild()
     }
 
+    /// Adds a handoff the user already confirmed. Options are rebuilt from the URL and file name.
+    public func addExternal(_ download: ConfirmedExternalDownload) async throws {
+        guard let directory else {
+            throw SessionError.folderMissing
+        }
+        guard let client else {
+            throw SessionError.engineNotRunning
+        }
+        let staged = try ExternalDownload.stage(
+            urlText: download.uri,
+            filename: download.outputName,
+            downloadRoot: directory
+        )
+        let checked = try ExternalDownload.confirm(staged, downloadRoot: directory)
+        let prepared = PreparedDownload(url: checked.url, options: checked.options)
+        let gid = try await client.add(url: prepared.url, options: prepared.options)
+        tracked.insert(makeLiveItem(gid: gid, prepared: prepared), at: 0)
+        setMessage(nil)
+        rebuild()
+    }
+
     public func pause(id: String) async {
         await change(
             id: id,

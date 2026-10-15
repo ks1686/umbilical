@@ -96,6 +96,23 @@ jobs:
             -configuration Debug \
             test
 
+      - name: Build Release
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project umbilical.xcodeproj \
+            -scheme umbilical \
+            -destination 'platform=macOS' \
+            -configuration Release \
+            -derivedDataPath "${RUNNER_TEMP}/release" \
+            build
+
+      - name: Reject get-task-allow
+        run: |
+          set -euo pipefail
+          scripts/check-no-get-task-allow.sh \
+            "${RUNNER_TEMP}/release/Build/Products/Release/umbilical.app"
+
       - name: SwiftLint
         run: swiftlint lint --strict --config .swiftlint.yml
 
@@ -104,7 +121,7 @@ jobs:
           set -euo pipefail
           swift_format="$(xcrun --find swift-format)"
           "${swift_format}" lint --strict --recursive \
-            --configuration .swift-format App Tests
+            --configuration .swift-format App Extension Tests
 
   aria2:
     name: aria2c

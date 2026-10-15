@@ -1,0 +1,127 @@
+// umbilical downloads files. It never seeds.
+// Copyright (C) 2026 Karim Smires
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+import SwiftUI
+import UmbilicalEngine
+import UmbilicalUI
+
+struct StagedHandoff: Identifiable, Equatable {
+    let id: UUID
+    let handoff: ExtensionHandoff
+
+    init(handoff: ExtensionHandoff, id: UUID = UUID()) {
+        self.id = id
+        self.handoff = handoff
+    }
+}
+
+struct HandoffConfirmSheet: View {
+    @ObservedObject var model: AppModel
+    let staged: StagedHandoff
+    @State private var appearedAt = Date()
+    @State private var armed = false
+    @State private var submitting = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(hostLabel)
+                .font(.largeTitle)
+                .textSelection(.enabled)
+            Text("A download was requested. Nothing starts until you confirm.")
+                .fixedSize(horizontal: false, vertical: true)
+            link
+            if let name = staged.handoff.outputName {
+                Text("Save as \(name)")
+                    .font(.body.monospaced())
+                    .textSelection(.enabled)
+            }
+            Text("Only this URL is sent, plus the file name when one is shown.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            if let reason = blockedReason {
+                Text(reason)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            buttons
+        }
+        .padding(20)
+        .frame(width: 520)
+        .task(id: staged.id) {
+            await arm()
+        }
+    }
+
+    private var hostLabel: String {
+        HandoffConfirmationGate.prominentLabel(for: staged.handoff.url)
+    }
+
+    private var link: some View {
+        Text(staged.handoff.uri)
+            .font(.body.monospaced())
+            .textSelection(.enabled)
+            .lineLimit(6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var blockedReason: String? {
+        if let handoffError = model.handoffError, !handoffError.isEmpty {
+            return handoffError
+        }
+        if model.snapshot.canAdd {
+            return nil
+        }
+        if model.snapshot.phase == .needsFolder {
+            return "Choose a download folder first."
+        }
+        return model.snapshot.message
+    }
+
+    private var buttons: some View {
+        HStack {
+            Spacer()
+            Button("Cancel", role: .cancel) {
+                decline()
+            }
+            .keyboardShortcut(.defaultAction)
+            .disabled(!armed || submitting)
+            Button("Download") {
+                accept()
+            }
+            .disabled(!armed || !model.snapshot.canAdd || submitting)
+        }
+    }
+
+    private func arm() async {
+        appearedAt = Date()
+        armed = false
+        let nanos = UInt64(HandoffConfirmationGate.armDelay * 1_000_000_000)
+        do {
+            try await Task.sleep(nanoseconds: nanos)
+        } catch {
+            return
+        }
+        armed = true
+    }
+
+    private func accept() {
+        let decision = HandoffConfirmationGate(appearedAt: appearedAt).decide(.download, at: Date())
+        guard decision == .confirm, !submitting else {
+            return
+        }
+        submitting = true
+        Task {
+            await model.confirmStagedHandoff()
+            submitting = false
+        }
+    }
+
+    private func decline() {
+        let decision = HandoffConfirmationGate(appearedAt: appearedAt).decide(.cancel, at: Date())
+        guard decision == .decline else {
+            return
+        }
+        model.declineStagedHandoff()
+    }
+}

@@ -26,6 +26,13 @@ final class DownloadMessageTests: XCTestCase {
             "The file name cannot include a path."
         )
         XCTAssertEqual(
+            DownloadMessage.text(for: EngineError.handoffRejected("cookie")),
+            "That download request was rejected."
+        )
+        XCTAssertFalse(
+            DownloadMessage.text(for: EngineError.handoffRejected("cookie")).contains("cookie")
+        )
+        XCTAssertEqual(
             DownloadMessage.text(for: EngineError.directoryRejected("/tmp")),
             "That folder cannot be used."
         )
