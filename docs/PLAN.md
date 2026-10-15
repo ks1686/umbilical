@@ -80,6 +80,18 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 
 1. License provider and price.
 2. Minimum macOS (14 proposed).
-3. App Sandbox yes or no (M1 spike).
+3. App Sandbox: decided in M1. Off. See section 8.
 4. Trademark search for umbilical and umb before M5.
 5. CI: GitHub Actions macOS runners for now (consistent with other repos).
+
+## 8. M1 decisions
+
+### App Sandbox
+
+Off for the shipping app.
+
+The engine launches `aria2c` as a child and writes into a folder the user picks at runtime. Sandboxing that child blocks arbitrary download folders, and sandboxing only the SwiftUI process leaves the downloader unconstrained. Revisit this if the helper moves behind a restricted XPC service.
+
+### WebSocket
+
+`rpc-allow-origin-all=false` stops aria2 from sending `Access-Control-Allow-Origin: *`. It does not reject a browser WebSocket handshake. aria2 answers `101 Switching Protocols` when WebSocket support is compiled in. The bundled `aria2c` is built with `--disable-websocket`. The engine still talks JSON-RPC over HTTP on `127.0.0.1`. A browser page cannot complete a WebSocket handshake, and a missing or wrong per-launch secret is rejected for JSON-RPC calls.

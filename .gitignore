@@ -1,0 +1,8 @@
+.build/
+.swiftpm/
+.venv/
+DerivedData/
+*.xcodeproj
+xcuserdata/
+helpers/src/
+helpers/bin/
