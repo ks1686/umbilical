@@ -90,7 +90,9 @@ no recorded hash stops the script.
 `scripts/fetch-helpers.sh` downloads the pinned yt-dlp macOS binary. It
 checks the GPG signature on that release's `SHA2-256SUMS` with the published
 key in `helpers/yt-dlp.asc` before it trusts the SHA-256 in
-`helpers/yt-dlp.lock`. It does not run yt-dlp, and it does not pass `-U`.
+`helpers/yt-dlp.lock`. The check imports that key into a temporary keyring
+and removes the keyring on exit. It does not run yt-dlp, and it does not
+pass `-U`.
 The app launches that pinned binary. It does not update yt-dlp at runtime.
 ffmpeg is not fetched and is not shipped.
 

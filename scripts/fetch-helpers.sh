@@ -3,7 +3,10 @@
 #
 # The SHA-256 in helpers/yt-dlp.lock is trusted only after the GPG signature
 # on the release SHA2-256SUMS file verifies against the published key in
-# helpers/yt-dlp.asc. The script does not run yt-dlp and does not pass -U.
+# helpers/yt-dlp.asc. Every helper signature check in this script, including
+# yt-dlp, uses a temporary GNUPGHOME from mktemp -d (mode 700), removed on
+# exit. Nothing is imported into the caller's keyring. The pinned fingerprint
+# must appear in VALIDSIG. The script does not run yt-dlp and does not pass -U.
 # ffmpeg is phase 2 and is not fetched here.
 #
 # Usage:
@@ -112,8 +115,27 @@ if [[ ! -f "$key_path" ]]; then
   exit 1
 fi
 
+# Create the keyring before any gpg command. --show-keys still writes a
+# keybox, and that write must not land in the caller's GNUPGHOME.
+# helper_gnupg is the only directory cleanup deletes, never the caller's.
+tmp="$(mktemp -d)"
+helper_gnupg=""
+cleanup() {
+  if [[ -n "$helper_gnupg" ]]; then
+    if command -v gpgconf >/dev/null 2>&1; then
+      gpgconf --homedir "$helper_gnupg" --kill all >/dev/null 2>&1 || true
+    fi
+    rm -rf "$helper_gnupg"
+  fi
+  rm -rf "$tmp"
+}
+trap cleanup EXIT
+helper_gnupg="$(mktemp -d)"
+export GNUPGHOME="$helper_gnupg"
+chmod 700 "$GNUPGHOME"
+
 key_fpr="$(
-  gpg --batch --with-colons --show-keys "$key_path" \
+  gpg --batch --homedir "$GNUPGHOME" --with-colons --show-keys "$key_path" \
     | awk -F: '$1 == "fpr" { print $10; exit }'
 )"
 key_fpr="$(printf '%s' "$key_fpr" | tr '[:lower:]' '[:upper:]')"
@@ -124,12 +146,7 @@ if [[ "$key_fpr" != "$gpg_fingerprint" ]]; then
   exit 1
 fi
 
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
-export GNUPGHOME="${tmp}/gnupg"
-mkdir -p "$GNUPGHOME"
-chmod 700 "$GNUPGHOME"
-gpg --batch --import "$key_path" >/dev/null
+gpg --batch --homedir "$GNUPGHOME" --import "$key_path" >/dev/null
 
 verify_signed_sums() {
   local sums="$1"
@@ -139,8 +156,8 @@ verify_signed_sums() {
     echo "missing SHA2-256SUMS or signature" >&2
     return 1
   fi
-  if ! gpg --batch --trust-model always --status-file "$status_file" \
-    --verify "$signature" "$sums"; then
+  if ! gpg --batch --homedir "$GNUPGHOME" --trust-model always \
+    --status-file "$status_file" --verify "$signature" "$sums"; then
     echo "GPG rejected SHA2-256SUMS" >&2
     return 1
   fi
