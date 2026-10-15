@@ -1,0 +1,26 @@
+# aria2c 1.37.0 source pin.
+# Official GitHub release asset. The release notes do not include a checksum file.
+# tarball_sha256 is the SHA-256 of the bytes downloaded from tarball_url.
+# GitHub release API size for this asset is 1705256 bytes.
+# https://github.com/aria2/aria2/releases/tag/release-1.37.0
+version=1.37.0
+tarball_name=aria2-1.37.0.tar.xz
+tarball_url=https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0.tar.xz
+tarball_bytes=1705256
+tarball_sha256=60a420ad7085eb616cb6e2bdf0a7206d68ff3d37fb5a956dc44242eb2f79b66b
+# GitHub published_at for release-1.37.0 is 2023-11-15T12:07:32Z.
+# The build rewrites __DATE__/__TIME__ to build_date and build_time.
+source_date_epoch=1700050052
+build_date=Nov 15 2023
+build_time=12:07:32
+# touch -t stamp applied to object files before the final link.
+# It is intentionally later than macOS SDK headers so make does not rebuild.
+object_mtime=210001010000.00
+# One SHA-256 of helpers/bin/aria2c for each Xcode and Apple clang.
+# The script reads xcodebuild -version and the first line of clang --version.
+# toolchain_sha256=<xcode>|<clang version>|<64 hex sha256>
+# The tarball SHA-256 above is the trust anchor. A toolchain with no line
+# here is refused.
+# Recorded from GitHub Actions run 38661130966.
+toolchain_sha256=26.6|21.0.0 (clang-2100.1.1.101)|38224f95bae5c47918350e927fbe006521858c2d926bf0218cbfe59cbfb3555f
+toolchain_sha256=27.0|21.0.0 (clang-2100.3.34.2)|e4d48a7fea6a1f7234bcdc4c7f596f6af33badd65db3c872c403e3698503f0d9
