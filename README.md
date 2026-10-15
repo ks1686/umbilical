@@ -54,7 +54,8 @@ Active downloads stop when the app quits.
 
 Manual checks for a Mac are in `docs/M3-MANUAL.md`.
 
-Torrent and magnet links are rejected. Safari, video, licensing, and Sparkle
+The add sheet still rejects torrent and magnet links. The engine accepts a
+validated magnet and a `.torrent`. Safari, video, licensing, and Sparkle
 are later milestones. App Sandbox stays off. See `docs/PLAN.md` section 8.
 
 ## Helpers
