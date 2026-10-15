@@ -128,10 +128,12 @@ valid. The mark limits casual clock changes. It is not a secure clock.
 
 ## Build configuration
 
-`Config/Licensing.xcconfig` sets `POLAR_ORGANIZATION_ID`. It optionally
-includes `Config/Licensing.local.xcconfig`, which is gitignored. Copy
-`Config/Licensing.local.xcconfig.example` and set the id there. The id is the
-organization UUID from the Polar dashboard. It is not an access token.
+`Config/Licensing.xcconfig` optionally includes
+`Config/Licensing.local.xcconfig`, which is gitignored. Copy
+`Config/Licensing.local.xcconfig.example` and set `POLAR_ORGANIZATION_ID`
+there. When that file is absent, the id is unset and a Release build is
+unofficial. The id is the organization UUID from the Polar dashboard. It is
+not an access token.
 
 The app target writes that setting into `Info.plist` as
 `PolarOrganizationID`. Do not commit the local file. Do not put an access
