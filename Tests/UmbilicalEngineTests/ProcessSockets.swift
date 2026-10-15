@@ -215,15 +215,17 @@ enum ProcessSockets {
         process.arguments = ["-nP", "-a", "-p", "\(pid)", "-iTCP"]
         let output = Pipe()
         process.standardOutput = output
-        process.standardError = Pipe()
+        process.standardError = FileHandle(forWritingAtPath: "/dev/null")
         try process.run()
         process.waitUntilExit()
         let data = output.fileHandleForReading.readDataToEndOfFile()
         guard let text = String(bytes: data, encoding: .utf8) else {
             throw ProcessSocketError.unreadable("lsof output was not utf-8")
         }
-        if process.terminationStatus != 0 && text.isEmpty {
-            throw ProcessSocketError.unreadable("lsof exited \(process.terminationStatus)")
+        // lsof exits 1 when this pid has no TCP socket. The watch parent is
+        // in that state while aria2 holds the peer connections.
+        if text.isEmpty {
+            return []
         }
         var hosts: [String] = []
         for line in text.split(separator: "\n") {
