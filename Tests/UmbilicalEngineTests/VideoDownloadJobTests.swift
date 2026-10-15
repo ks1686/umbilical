@@ -150,8 +150,8 @@ private func makeJobRoot() throws -> URL {
         isDirectory: true
     )
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    // macOS temporaryDirectory is /var, which is a symlink to /private/var.
-    return url.resolvingSymlinksInPath()
+    let resolved = try DownloadPath.resolveInside(root: url, raw: url.path)
+    return URL(fileURLWithPath: resolved, isDirectory: true)
 }
 
 private func writeHelper(_ body: String, in directory: URL) throws -> URL {

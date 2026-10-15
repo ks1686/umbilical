@@ -117,8 +117,11 @@ final class VideoDownloadSessionTests: XCTestCase {
 
 @MainActor
 private func videoRoot() throws -> URL {
-    // macOS temporaryDirectory is /var, which is a symlink to /private/var.
-    try makeTempDirectory().resolvingSymlinksInPath()
+    let created = try makeTempDirectory()
+    // realpath. URL.resolvingSymlinksInPath left /var in place on macOS,
+    // and /var is a symlink to /private/var.
+    let resolved = try DownloadPath.resolveInside(root: created, raw: created.path)
+    return URL(fileURLWithPath: resolved, isDirectory: true)
 }
 
 @MainActor

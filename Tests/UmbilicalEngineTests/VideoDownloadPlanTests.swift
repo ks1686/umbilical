@@ -52,6 +52,19 @@ final class VideoDownloadPlanTests: XCTestCase {
         XCTAssertEqual(resolved, staging.path)
     }
 
+    func testCanonicalRootFollowsADirectorySymlink() throws {
+        let root = try makeVideoRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let parent = try makeVideoRoot()
+        defer { try? FileManager.default.removeItem(at: parent) }
+        let link = parent.appendingPathComponent("link")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: root)
+        let leaf = link.appendingPathComponent("leaf", isDirectory: true)
+        try FileManager.default.createDirectory(at: leaf, withIntermediateDirectories: true)
+        let canonical = try canonicalDirectory(leaf)
+        XCTAssertEqual(canonical.path, root.appendingPathComponent("leaf").path)
+    }
+
     func testRejectedURLs() throws {
         let root = try makeVideoRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -278,6 +291,12 @@ private func makeVideoRoot() throws -> URL {
         isDirectory: true
     )
     try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-    // macOS temporaryDirectory is /var, which is a symlink to /private/var.
-    return url.resolvingSymlinksInPath()
+    return try canonicalDirectory(url)
+}
+
+private func canonicalDirectory(_ url: URL) throws -> URL {
+    // realpath. URL.resolvingSymlinksInPath left /var in place on macOS,
+    // and /var is a symlink to /private/var.
+    let resolved = try DownloadPath.resolveInside(root: url, raw: url.path)
+    return URL(fileURLWithPath: resolved, isDirectory: true)
 }
