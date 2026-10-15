@@ -183,30 +183,11 @@ public final class RPCClient {
         }
         switch scheme {
         case "http", "https":
-            try validateHTTP(url)
+            try HTTPURLPolicy.validate(url)
             return url.absoluteString
         case "magnet":
             return try MagnetLink.canonical(url)
         default:
-            throw EngineError.schemeRejected(scheme)
-        }
-    }
-
-    private func validateHTTP(_ url: URL) throws {
-        guard let scheme = url.scheme?.lowercased() else {
-            throw EngineError.schemeRejected("")
-        }
-        guard scheme == "http" || scheme == "https" else {
-            throw EngineError.schemeRejected(scheme)
-        }
-        if url.user != nil || url.password != nil {
-            throw EngineError.schemeRejected("userinfo")
-        }
-        guard let host = url.host, !host.isEmpty else {
-            throw EngineError.schemeRejected(scheme)
-        }
-        let absolute = url.absoluteString
-        if absolute.contains("\n") || absolute.contains("\r") || absolute.contains("\0") {
             throw EngineError.schemeRejected(scheme)
         }
     }

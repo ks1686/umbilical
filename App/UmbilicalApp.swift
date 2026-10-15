@@ -6,12 +6,33 @@ import SwiftUI
 
 @main
 struct UmbilicalApp: App {
+    @StateObject private var model = AppModel()
+    @NSApplicationDelegateAdaptor(AppTermination.self) private var termination
+
     var body: some Scene {
-        WindowGroup {
-            ContentView()
+        WindowGroup(id: "main") {
+            ContentView(model: model)
         }
-        MenuBarExtra(UmbilicalMarker.shortName) {
-            Text(UmbilicalMarker.shortName)
+        .defaultSize(width: 760, height: 520)
+
+        MenuBarExtra {
+            MenuBarMenu(model: model)
+        } label: {
+            MenuBarTitle(model: model)
         }
+        .menuBarExtraStyle(.menu)
+
+        Settings {
+            SettingsView(model: model)
+        }
+    }
+}
+
+@MainActor
+final class AppTermination: NSObject, NSApplicationDelegate {
+    static weak var model: AppModel?
+
+    func applicationWillTerminate(_: Notification) {
+        AppTermination.model?.stop()
     }
 }

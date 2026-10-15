@@ -35,6 +35,29 @@ swiftlint lint --strict
 xcrun swift-format lint --strict --recursive --configuration .swift-format App Tests
 ```
 
+View model tests live in the Swift package. `swift test` runs them with the
+engine tests. The Xcode scheme test covers the app shell.
+
+## Use the app
+
+Build `aria2c` with `scripts/build-aria2.sh` before a real download. Generate
+the Xcode project, then build. The app target copies `helpers/bin/aria2c` into
+`Contents/Helpers` when that file is already built, after checking that its
+`Enabled Features` line does not contain `WebSocket`, and signs it ad hoc
+with the hardened runtime. `umb-watch` is built with the app and bundled in
+`Contents/Helpers`. Release builds use only those two paths. Debug builds
+also honor `ARIA2C` and `UMB_WATCH` when those paths are executable.
+It saves files only inside the folder chosen in Settings. Pause, resume, and
+remove act on the running download. The menu bar shows progress while a
+download is active. Finished and failed downloads can post a notification.
+Active downloads stop when the app quits.
+
+Manual checks for a Mac are in `docs/M3-MANUAL.md`.
+
+The add sheet still rejects torrent and magnet links. The engine accepts a
+validated magnet and a `.torrent`. Safari, video, licensing, and Sparkle
+are later milestones. App Sandbox stays off. See `docs/PLAN.md` section 8.
+
 ## Helpers
 
 `scripts/build-aria2.sh` downloads aria2 1.37.0 from the official GitHub
