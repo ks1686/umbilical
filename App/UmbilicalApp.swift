@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import SwiftUI
+import UmbilicalEngine
 
 @main
 struct UmbilicalApp: App {
@@ -12,6 +13,9 @@ struct UmbilicalApp: App {
     var body: some Scene {
         WindowGroup(id: "main") {
             ContentView(model: model)
+                .onOpenURL { url in
+                    model.receiveExternalURL(url)
+                }
         }
         .defaultSize(width: 760, height: 520)
 
@@ -31,8 +35,28 @@ struct UmbilicalApp: App {
 @MainActor
 final class AppTermination: NSObject, NSApplicationDelegate {
     static weak var model: AppModel?
+    private static var queued: [URL] = []
+
+    static func attach(_ model: AppModel) {
+        self.model = model
+        let pending = queued
+        queued.removeAll()
+        for url in pending {
+            model.receiveExternalURL(url)
+        }
+    }
 
     func applicationWillTerminate(_: Notification) {
         AppTermination.model?.stop()
+    }
+
+    func application(_: NSApplication, open urls: [URL]) {
+        for url in urls where url.scheme?.lowercased() == ExternalDownload.scheme {
+            if let model = AppTermination.model {
+                model.receiveExternalURL(url)
+            } else {
+                AppTermination.queued.append(url)
+            }
+        }
     }
 }

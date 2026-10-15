@@ -47,6 +47,7 @@ targets:
       - path: App
         excludes:
           - umbilical.entitlements
+          - Info.plist
           - Session
           - Session/**
     dependencies:
@@ -61,6 +62,10 @@ targets:
         copy:
           destination: wrapper
           subpath: Contents/Helpers
+      - target: umbilicalExtension
+        link: false
+        embed: true
+        codeSign: true
     # This script is last among the target phases. The Xcode 26.6 App log
     # signs umbilical.app after it, so aria2c is signed first.
     postBuildScripts:
@@ -77,6 +82,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: umbilical
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
         INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright (C) 2026 Karim Smires"
+        INFOPLIST_FILE: App/Info.plist
         MARKETING_VERSION: "0.0.1"
         CURRENT_PROJECT_VERSION: "1"
         # App Sandbox is off. See docs/PLAN.md section 8. Hardened runtime is on.
@@ -105,6 +111,36 @@ targets:
         GENERATE_INFOPLIST_FILE: "YES"
         CODE_SIGNING_ALLOWED: "NO"
         ENABLE_HARDENED_RUNTIME: "NO"
+  umbilicalExtension:
+    type: app-extension
+    platform: macOS
+    sources:
+      - path: Extension
+        excludes:
+          - "**/*.entitlements"
+          - Info.plist
+    dependencies:
+      - package: Umbilical
+        products:
+          - UmbilicalEngine
+    settings:
+      base:
+        PRODUCT_NAME: umbilicalExtension
+        PRODUCT_BUNDLE_IDENTIFIER: me.peapod.umbilical.extension
+        PRODUCT_MODULE_NAME: UmbilicalExtension
+        GENERATE_INFOPLIST_FILE: "NO"
+        INFOPLIST_FILE: Extension/Info.plist
+        MARKETING_VERSION: "0.0.1"
+        CURRENT_PROJECT_VERSION: "1"
+        ENABLE_HARDENED_RUNTIME: "YES"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "YES"
+        CODE_SIGN_ENTITLEMENTS: Extension/Extension.entitlements
+        SKIP_INSTALL: "YES"
+        APPLICATION_EXTENSION_API_ONLY: "YES"
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks @executable_path/../../../../Frameworks"
 schemes:
   umbilical:
     build:
@@ -112,6 +148,7 @@ schemes:
         umbilical: all
         umbilicalTests: [test]
         umb-watch: all
+        umbilicalExtension: all
     run:
       config: Debug
     test:

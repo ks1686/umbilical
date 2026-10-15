@@ -23,6 +23,7 @@ public enum EngineError: Error, Equatable, CustomStringConvertible {
     case torrentRejected(String)
     case magnetRejected(String)
     case notSupported(String)
+    case handoffRejected(String)
 
     public var description: String {
         switch self {
@@ -66,6 +67,8 @@ public enum EngineError: Error, Equatable, CustomStringConvertible {
             return "magnet rejected: \(detail)"
         case .notSupported(let feature):
             return "not supported: \(feature)"
+        case .handoffRejected(let reason):
+            return "handoff rejected: \(reason)"
         }
     }
 }

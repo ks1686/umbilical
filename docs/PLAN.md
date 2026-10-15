@@ -48,7 +48,7 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 1. RPC lockdown as above. `RPCClient` sends per-download options only from a fixed allowlist (for example `out`, `select-file`, `max-download-limit`, `split`). It rejects every `on-*` hook option and any `dir` outside the user-chosen folder, for `addUri`, `addTorrent`, `addMetalink`, `changeOption` and `changeGlobalOption` alike. Engine killed if the app exits (process group, `PR_SET_PDEATHSIG` equivalent via kqueue watch).
 2. Downloaded files get `com.apple.quarantine` set so Gatekeeper checks them.
 3. Output paths sanitized: reject `..`, absolute paths and symlink escapes from torrent metadata or server filenames.
-4. Safari handoff is narrow: URL, suggested filename, referrer only. No cookies or auth headers in MVP. Only `http`, `https` and `magnet` schemes are accepted; `file:`, `javascript:` and everything else is rejected. The app verifies the sender is our own bundled extension.
+4. Safari handoff is the URL and an optional file name. No cookies, headers, referrer, or aria2 options. Only `http`, `https`, and `magnet` are accepted; `file:`, `javascript:`, and every other scheme are rejected. The file name is checked with the output-name rules and is the only RPC option the handoff may set (`out`). The extension opens `umbilical://download`. The app treats that URL as untrusted: it runs `HTTPURLPolicy` or `MagnetLink.canonical`, then `RPCOptionPolicy`, and waits for the user to confirm before starting the download.
 5. No helper self-update (`yt-dlp -U` disabled). Helpers update only with an app release, pinned by version and SHA-256.
 6. Credentials (HTTP auth, license key) stored in the Keychain only.
 7. No third-party plugin system.
@@ -73,7 +73,7 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 | M1 Engine | EngineSupervisor + RPCClient, add/pause/resume/remove HTTP downloads | Unit tests against a real aria2c. Requests with no secret or a wrong secret are rejected, a browser page cannot open the WebSocket, and disallowed options are refused |
 | M2 Torrent | Magnet and .torrent, no-seed config, file selection | Packet capture shows seeding stops at completion and upload stays capped (blocking test) |
 | M3 UI | Main window list, menu bar progress, notifications | docs/M3-MANUAL.md passes, idle memory under 60 MB |
-| M4 Safari | Web extension handoff | Download link in Safari lands in umbilical |
+| M4 Safari | Web extension handoff | docs/M4-MANUAL.md passes |
 | M5 Ship | License, Sparkle, notarized dmg, landing page | Notarized build installs and updates on a clean Mac |
 | Phase 2 | yt-dlp video, ffmpeg remux, scheduling, speed limits per task | |
 
@@ -137,3 +137,31 @@ Linux captures on every interface (`tcpdump -i any`, Linux cooked v2). macOS cap
 If tcpdump cannot capture, the failure says what was not proved: piece payload stopping after completion, and the 1KiB upload cap on the wire. Other tests still check that the config contains `seed-time=0` and `max-upload-limit=1K` and does not contain `seed-ratio`. Those config checks are not a packet capture.
 
 The test tries tcpdump directly, then `sudo -n tcpdump` when the direct capture is refused.
+
+## 10. M4 decisions
+
+### Handoff
+
+The Safari Web Extension is an appex embedded in `umbilical.app`. Its context menu item is "Download with umbilical" on links. The background script calls `runtime.sendNativeMessage` with `url` and, when it has one, `filename`. The native handler refuses any other field. An accepted message opens `umbilical://download?url=...&filename=...`.
+
+The app validates that URL with `HTTPURLPolicy` for `http` and `https`, `MagnetLink.canonical` for magnets, `DownloadPath.validateOutputName` for the optional file name, and `RPCOptionPolicy` on the resulting options. The only option is `out`. The add sheet still rejects magnets. This path accepts them after confirmation.
+
+`umbilical://` can be opened by any local process, so the scheme is not proof that the bundled extension sent it. The confirmation sheet names the sender when macOS provides one. The download starts only after the user chooses Download. Cancel leaves the queue unchanged.
+
+### Extension sandbox and permissions
+
+App Sandbox stays off for the app (section 8). The extension entitlements enable App Sandbox, which Safari requires. The extension does not get the network, file, cookie, or Apple Events entitlements.
+
+Permissions in `Extension/Resources/manifest.json`:
+
+| Permission | Why |
+| --- | --- |
+| `contextMenus` | Adds "Download with umbilical" to the link menu. |
+| `nativeMessaging` | Delivers the URL and optional file name to the appex. |
+| `storage` | Remembers the optional download-capture toggle. Default is off. |
+
+`downloads` is not requested. Safari does not let an extension see browser downloads, and an unsupported permission can keep the extension from loading. The popup leaves that control off and disabled. The background script still accepts a download event only when `browser.downloads` exists, and it forwards only the URL and a file name.
+
+No host permission, `webRequest`, `cookies`, `tabs`, or `scripting`.
+
+`docs/M4-MANUAL.md` is the Mac pass. `swift test` covers the handoff parser. It does not load Safari.

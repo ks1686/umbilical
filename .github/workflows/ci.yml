@@ -104,7 +104,7 @@ jobs:
           set -euo pipefail
           swift_format="$(xcrun --find swift-format)"
           "${swift_format}" lint --strict --recursive \
-            --configuration .swift-format App Tests
+            --configuration .swift-format App Extension Tests
 
   aria2:
     name: aria2c
