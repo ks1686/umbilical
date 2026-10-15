@@ -53,7 +53,7 @@ struct DownloadRowView: View {
                     .font(.headline)
                 Spacer()
                 Text(row.stateText)
-                    .foregroundStyle(row.errorMessage == nil ? .secondary : .red)
+                    .foregroundStyle(row.errorMessage == nil ? Color.secondary : Color.red)
                     .monospacedDigit()
             }
             Text(row.detail)

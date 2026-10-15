@@ -37,7 +37,7 @@ enum MacActions {
 
     static func activate() {
         NSRunningApplication.current.activate(
-            from: nil,
+            from: NSRunningApplication.current,
             options: [.activateAllWindows]
         )
     }

@@ -29,7 +29,6 @@ public enum DownloadMessage {
     }
 
     // One arm per engine error so a new case has to be classified here.
-    // swiftlint:disable:next cyclomatic_complexity
     private static func describe(_ error: EngineError) -> String {
         switch error {
         case .schemeRejected(let scheme):
