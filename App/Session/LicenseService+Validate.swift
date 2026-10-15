@@ -25,7 +25,7 @@ extension LicenseService {
             await handleValidation(reply, credential: credential, deviceID: deviceID)
         } catch {
             lastNetworkFailed = true
-            apply(currentEvaluation(), error: nil)
+            refreshPreservingError()
         }
     }
 
@@ -55,7 +55,7 @@ extension LicenseService {
         switch outcome {
         case .unavailable:
             lastNetworkFailed = true
-            apply(currentEvaluation(), error: nil)
+            refreshPreservingError()
         case .notFound:
             storeBlock(.notFound, on: credential)
         case .blocked(let block):
@@ -94,7 +94,7 @@ extension LicenseService {
             await compensate(record)
             snapshot.status = .unlicensed(.keychainFailed)
             snapshot.canDeactivate = false
-            snapshot.actionError = nil
+            snapshot.actionError = LicenseCopy.keychainFailed
             return
         }
         lastNetworkFailed = false
@@ -110,7 +110,7 @@ extension LicenseService {
             return
         }
         lastNetworkFailed = false
-        apply(currentEvaluation(), error: nil)
+        refreshPreservingError()
     }
 
     func saveClock(_ record: LicenseValidationRecord?, releaseOnFailure: Bool) async {
@@ -119,7 +119,8 @@ extension LicenseService {
             await saveGrant(record, releaseOnFailure: releaseOnFailure)
             return
         }
-        apply(currentEvaluation(), error: nil)
+        refreshPreservingError()
+        guard snapshot.actionError == nil else { return }
         guard LicensePermissions.resolve(snapshot.status).allowsNewDownloads else { return }
         snapshot.status = .unlicensed(.clockRollback)
     }
@@ -132,7 +133,7 @@ extension LicenseService {
             store.clearCredential()
         }
         lastNetworkFailed = false
-        apply(currentEvaluation(), error: nil)
+        refreshPreservingError()
     }
 
     private func compensate(_ record: LicenseValidationRecord) async {

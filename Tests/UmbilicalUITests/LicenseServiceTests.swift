@@ -47,8 +47,10 @@ final class LicenseServiceTests: XCTestCase {
     func testActivationLimitSaysHowManyMacs() async throws {
         XCTAssertEqual(LicensePolicy.activationLimit, 1)
         let store = MemoryLicenseStore()
+        let denied = polarReply(status: 403, body: Data("{\"error\":\"NotPermitted\"}".utf8))
         let transport = StubLicenseTransport([
-            .success(polarReply(status: 403, body: Data("{\"error\":\"NotPermitted\"}".utf8)))
+            .success(denied),
+            .success(denied)
         ])
         let service = makeLicenseService(
             store: store, transport: transport, clock: ManualClock(now))
@@ -59,9 +61,46 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertTrue(message.contains("1 Mac."))
         XCTAssertFalse(message.contains("Macs"))
         XCTAssertTrue(message.contains("Polar customer portal"))
-        XCTAssertEqual(LicenseCopy.panel(for: service.snapshot).statusText, message)
+        let panel = LicenseCopy.panel(for: service.snapshot)
+        XCTAssertEqual(panel.statusText, message)
+        XCTAssertEqual(panel.errorText, message)
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).stopsActiveDownloads)
+        await service.tick()
+        XCTAssertEqual(service.snapshot.actionError, message)
+        XCTAssertEqual(licenseDenial(service.snapshot.status), .limitReached)
+        await service.activate(LicenseFixture.key)
+        XCTAssertEqual(service.snapshot.actionError, message)
+        service.clearActionError()
+        XCTAssertNil(service.snapshot.actionError)
+        XCTAssertEqual(licenseDenial(service.snapshot.status), .missing)
+    }
+
+    func testDeactivateFailureStaysUntilTheUserClearsIt() async throws {
+        let store = MemoryLicenseStore()
+        store.credential = LicenseFixture.credential()
+        store.validation = LicenseFixture.validation(validatedAt: now)
+        let transport = StubLicenseTransport([
+            .success(polarReply(status: 500)),
+            .success(
+                polarReply(status: 200, body: try LicenseFixture.validationData(status: "granted")))
+        ])
+        let clock = ManualClock(now)
+        let service = makeLicenseService(store: store, transport: transport, clock: clock)
+        await service.deactivate()
+        XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        clock.now = now.addingTimeInterval(LicensePolicy.recheckInterval)
+        await service.tick()
+        XCTAssertEqual(transport.calls.count, 2)
+        XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        guard case .licensed = service.snapshot.status else {
+            return XCTFail("expected the current license to stay")
+        }
+        service.clearActionError()
+        XCTAssertNil(service.snapshot.actionError)
+        guard case .licensed = service.snapshot.status else {
+            return XCTFail("expected the current license to stay")
+        }
     }
 
     func testValidateRefreshesTheSameActivation() async throws {

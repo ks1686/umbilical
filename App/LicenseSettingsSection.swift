@@ -12,18 +12,27 @@ struct LicenseSettingsSection: View {
 
     var body: some View {
         Section("License") {
-            Text(panel.statusText)
-                .fixedSize(horizontal: false, vertical: true)
-            if let errorText = panel.errorText, !errorText.isEmpty {
-                Text(errorText)
-                    .foregroundStyle(.red)
+            if showsStatusLine {
+                Text(panel.statusText)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            if let errorText = panel.errorText, !errorText.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(errorText)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Dismiss") { model.clearLicenseError() }
+                        .buttonStyle(.borderless)
+                }
             }
             if let label = panel.deviceLabel {
                 LabeledContent("This Mac", value: label)
             }
             if panel.showsKeyField {
                 TextField("License key", text: $key)
+                    .onChange(of: key) { _, _ in
+                        model.clearLicenseError()
+                    }
                 Button("Activate") { activate() }
                     .disabled(activateDisabled)
             }
@@ -50,6 +59,11 @@ struct LicenseSettingsSection: View {
 
     private var panel: LicensePanel {
         LicenseCopy.panel(for: model.license)
+    }
+
+    private var showsStatusLine: Bool {
+        guard let errorText = panel.errorText, !errorText.isEmpty else { return true }
+        return panel.statusText != errorText
     }
 
     private var activateDisabled: Bool {
