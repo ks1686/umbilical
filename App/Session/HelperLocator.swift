@@ -16,10 +16,9 @@ public enum HelperLocator {
                 return url
             }
         }
-        for candidate in candidates {
-            if FileManager.default.isExecutableFile(atPath: candidate.path) {
-                return candidate
-            }
+        for candidate in candidates
+        where FileManager.default.isExecutableFile(atPath: candidate.path) {
+            return candidate
         }
         return nil
     }
