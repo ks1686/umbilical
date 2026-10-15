@@ -171,13 +171,15 @@ final class ExternalDownloadTests: XCTestCase {
         let cookie = try XCTUnwrap(
             URL(string: "umbilical://download?url=https://example.com/a.bin&cookie=secret")
         )
-        XCTAssertThrowsError(try ExternalDownload.stage(openURL: cookie, downloadRoot: root)) {
-            error in
+        XCTAssertThrowsError(
+            try ExternalDownload.stage(openURL: cookie, downloadRoot: root)
+        ) { error in
             XCTAssertEqual(error as? EngineError, EngineError.handoffRejected("cookie"))
         }
         let file = try XCTUnwrap(URL(string: "umbilical://download?url=file:///tmp/x"))
-        XCTAssertThrowsError(try ExternalDownload.stage(openURL: file, downloadRoot: root)) {
-            error in
+        XCTAssertThrowsError(
+            try ExternalDownload.stage(openURL: file, downloadRoot: root)
+        ) { error in
             XCTAssertEqual(error as? EngineError, EngineError.schemeRejected("file"))
         }
     }
