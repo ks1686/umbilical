@@ -17,7 +17,7 @@ jobs:
   app:
     name: App
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,6 +76,19 @@ jobs:
       - name: Generate the Xcode project
         run: xcodegen generate
 
+      - name: Install GnuPG
+        run: |
+          set -euo pipefail
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_ANALYTICS=1
+          if ! command -v gpg >/dev/null 2>&1; then
+            brew install gnupg
+          fi
+          gpg --version
+
+      - name: Fetch pinned yt-dlp
+        run: scripts/fetch-helpers.sh
+
       - name: Build
         run: |
           set -euo pipefail
@@ -111,6 +124,12 @@ jobs:
         run: |
           set -euo pipefail
           scripts/check-no-get-task-allow.sh \
+            "${RUNNER_TEMP}/release/Build/Products/Release/umbilical.app"
+
+      - name: Run signed yt-dlp from the Release app
+        run: |
+          set -euo pipefail
+          scripts/ci/yt-dlp-version.sh \
             "${RUNNER_TEMP}/release/Build/Products/Release/umbilical.app"
 
       - name: SwiftLint

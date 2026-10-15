@@ -45,6 +45,17 @@ final class DownloadMessageTests: XCTestCase {
         )
     }
 
+    func testVideoHelperAndRejectionMessages() {
+        XCTAssertEqual(
+            DownloadMessage.text(for: EngineError.executableMissing("yt-dlp")),
+            "Missing yt-dlp. Release builds use Contents/Helpers only. "
+                + "Debug builds also honor YT_DLP."
+        )
+        let text = DownloadMessage.text(for: EngineError.videoRejected("bad token:abcdef"))
+        XCTAssertFalse(text.contains("abcdef"))
+        XCTAssertTrue(text.contains("token:[redacted]"))
+    }
+
     func testRPCTokenIsRedacted() {
         let error = EngineError.rpc(code: 1, message: "bad token:abcdef")
         let text = DownloadMessage.text(for: error)

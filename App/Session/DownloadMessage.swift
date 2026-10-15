@@ -40,7 +40,9 @@ public enum DownloadMessage {
         case .handoffRejected:
             return "That download request was rejected."
         case .executableMissing(let path):
-            return "Missing helper: \(path)"
+            return missingHelper(path)
+        case .videoRejected(let detail):
+            return detail
         case .temporaryDirectoryFailed,
             .settingsWriteFailed,
             .settingsPermissions,
@@ -59,6 +61,14 @@ public enum DownloadMessage {
             .notSupported:
             return error.description
         }
+    }
+
+    private static func missingHelper(_ path: String) -> String {
+        if path == "yt-dlp" {
+            return "Missing yt-dlp. Release builds use Contents/Helpers only. "
+                + "Debug builds also honor YT_DLP."
+        }
+        return "Missing helper: \(path)"
     }
 
     private static func schemeMessage(_ scheme: String) -> String {

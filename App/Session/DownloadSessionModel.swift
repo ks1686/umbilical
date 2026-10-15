@@ -15,6 +15,8 @@ public final class DownloadSessionModel {
     let engine: any EngineLaunching
     let store: any SettingsStoring
     let helpers: HelperStatus
+    let video: VideoHelpers
+    let quarantine: any QuarantineApplying
     let clock: () -> Date
     var settings: AppSettings
     var history: [FinishedDownload]
@@ -26,16 +28,21 @@ public final class DownloadSessionModel {
     var message: String?
     var refreshOwnsMessage = false
     var refreshing = false
+    var videoJobs: [String: VideoDownloadJob] = [:]
 
     public init(
         engine: any EngineLaunching,
         store: any SettingsStoring,
         helpers: HelperStatus,
+        video: VideoHelpers = VideoHelpers(ytDlp: nil, watch: nil),
+        quarantine: any QuarantineApplying = SystemQuarantine(),
         clock: @escaping () -> Date = { Date() }
     ) {
         self.engine = engine
         self.store = store
         self.helpers = helpers
+        self.video = video
+        self.quarantine = quarantine
         self.clock = clock
         self.settings = store.loadSettings()
         self.history = store.loadHistory()
@@ -146,6 +153,7 @@ public final class DownloadSessionModel {
     }
 
     public func remove(id: String) async {
+        videoJobs.removeValue(forKey: id)?.cancel()
         guard let index = index(of: id) else { return }
         if stopsInEngine(tracked[index]), let gid = tracked[index].engineGID, let client {
             do {
@@ -179,6 +187,7 @@ public final class DownloadSessionModel {
             rebuild()
             return
         }
+        stopVideoProcesses()
         abandonLiveDownloads()
         phase = .starting
         setMessage(nil)
@@ -196,6 +205,8 @@ public final class DownloadSessionModel {
     }
 
     public func stop() {
+        stopVideoProcesses()
+        markVideoStopped("Cancelled.")
         engine.stop()
         client = nil
         if phase == .running || phase == .starting {
@@ -227,6 +238,7 @@ public final class DownloadSessionModel {
                 refreshOwnsMessage = true
             }
         }
+        refreshVideos()
         if !failed, refreshOwnsMessage {
             setMessage(nil)
         }

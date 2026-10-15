@@ -74,11 +74,15 @@ targets:
         link: false
         embed: true
         codeSign: true
-    # This script is last among the target phases. The Xcode 26.6 App log
-    # signs umbilical.app after it, so aria2c is signed first.
+    # These scripts run before Xcode signs umbilical.app, so the helpers
+    # are signed first. The Xcode 26.6 App log signs the app after them.
     postBuildScripts:
       - path: scripts/copy-bundled-aria2.sh
         name: Copy bundled aria2c
+        basedOnDependencyAnalysis: false
+        showEnvVars: false
+      - path: scripts/copy-bundled-yt-dlp.sh
+        name: Copy bundled yt-dlp
         basedOnDependencyAnalysis: false
         showEnvVars: false
     settings:
@@ -99,11 +103,12 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/umbilical.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
         ENABLE_TESTABILITY: "YES"
-        # aria2c may be absent when this script runs. User script sandboxing
+        # Helpers may be absent when these scripts run. User script sandboxing
         # would skip or fail that optional copy.
         ENABLE_USER_SCRIPT_SANDBOXING: "NO"
-        # M5 sets this to the Developer ID. "-" is an ad hoc signature.
+        # M5 sets these to the Developer ID. "-" is an ad hoc signature.
         ARIA2_CODESIGN_IDENTITY: "-"
+        YT_DLP_CODESIGN_IDENTITY: "-"
       configs:
         Release:
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: "NO"

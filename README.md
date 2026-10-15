@@ -45,24 +45,28 @@ the Xcode project, then build. The app target copies `helpers/bin/aria2c` into
 `Contents/Helpers` when that file is already built, after checking that its
 `Enabled Features` line does not contain `WebSocket`, and signs it ad hoc
 with the hardened runtime. `umb-watch` is built with the app and bundled in
-`Contents/Helpers`. Release builds use only those two paths. Debug builds
-also honor `ARIA2C` and `UMB_WATCH` when those paths are executable.
+`Contents/Helpers`. `scripts/fetch-helpers.sh` installs the pinned yt-dlp,
+and the app copies it into `Contents/Helpers` and signs it with the hardened
+runtime. Release builds use only those helper paths. Debug builds also honor
+`ARIA2C`, `UMB_WATCH`, and `YT_DLP` when those paths are executable.
 It saves files only inside the folder chosen in Settings. Pause, resume, and
 remove act on the running download. The menu bar shows progress while a
 download is active. Finished and failed downloads can post a notification.
 Active downloads stop when the app quits.
 
 Manual checks for the app are in `docs/M3-MANUAL.md`. The Safari handoff
-is in `docs/M4-MANUAL.md`.
+is in `docs/M4-MANUAL.md`. Video downloads are in `docs/VIDEO-MANUAL.md`.
 
 The add sheet still rejects torrent and magnet links. The engine accepts a
 validated magnet and a `.torrent`. Safari can hand the app an `http`, `https`,
 or `magnet` link. The app validates it and waits for confirmation before
 starting the download. The sheet shows the host and does not name the
 program that opened the link. The extension sends the URL and an optional file name.
-It does not send cookies, headers, or aria2 options. Video, licensing, and
-Sparkle are later milestones. App Sandbox stays off for the app. The Safari
-extension is sandboxed. See `docs/PLAN.md`.
+It does not send cookies, headers, or aria2 options. Video uses the bundled
+yt-dlp for one combined file. It does not merge separate streams, and it
+does not ship ffmpeg or a JavaScript runtime. Licensing and Sparkle are
+later milestones. App Sandbox stays off for the app. The Safari extension
+is sandboxed. See `docs/PLAN.md`.
 
 ## Helpers
 
@@ -87,7 +91,8 @@ no recorded hash stops the script.
 checks the GPG signature on that release's `SHA2-256SUMS` with the published
 key in `helpers/yt-dlp.asc` before it trusts the SHA-256 in
 `helpers/yt-dlp.lock`. It does not run yt-dlp, and it does not pass `-U`.
-yt-dlp is phase 2. ffmpeg is phase 2 and is not fetched yet.
+The app launches that pinned binary. It does not update yt-dlp at runtime.
+ffmpeg is not fetched and is not shipped.
 
 Both scripts need `curl`. The yt-dlp script also needs `gpg`.
 

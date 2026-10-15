@@ -150,7 +150,8 @@ extension DownloadSessionModel {
             errorMessage: nil,
             filePath: nil,
             historyID: nil,
-            fixedTitle: nil
+            fixedTitle: nil,
+            pausable: true
         )
     }
 
@@ -168,7 +169,7 @@ extension DownloadSessionModel {
     }
 
     var hasActiveWork: Bool {
-        tracked.contains { $0.allowsPause || $0.allowsResume }
+        tracked.contains { $0.allowsPause || $0.allowsResume || $0.cancelsLiveVideo }
     }
 
     func liveGIDs() -> [String] {
@@ -223,7 +224,8 @@ extension DownloadSessionModel {
                 errorMessage: nil,
                 filePath: restoredFile(entry.filePath, root: root),
                 historyID: entry.id,
-                fixedTitle: entry.title
+                fixedTitle: entry.title,
+                pausable: true
             )
         }
     }

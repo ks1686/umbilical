@@ -16,9 +16,9 @@ Pinned version and checksums: helpers/aria2.lock
 
 yt-dlp
 ------
-Role: video helper. Phase 2. scripts/fetch-helpers.sh can fetch the pinned
-macOS binary. The app does not launch it in this skeleton, and the fetch
-script does not run self-update.
+Role: video helper. scripts/fetch-helpers.sh fetches the pinned macOS
+binary. The app launches that binary and does not run self-update. ffmpeg
+is still not shipped.
 License: Unlicense
 The pinned release is yt-dlp_macos, a PyInstaller build. That build also
 includes other third-party licenses. See THIRD_PARTY_LICENSES.txt in the
@@ -28,7 +28,8 @@ Pinned version and checksum: helpers/yt-dlp.lock
 
 ffmpeg
 ------
-Role: phase 2, remux only. Not fetched and not shipped in this skeleton.
+Role: remux only, not in v1. Not fetched and not shipped. Video downloads
+use a single-file format selector and do not merge streams.
 License: LGPL
 
 Sparkle

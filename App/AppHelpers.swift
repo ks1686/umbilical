@@ -10,10 +10,11 @@ enum AppHelpers {
         var status: HelperStatus
         var aria2: URL?
         var watch: URL?
+        var ytDlp: URL?
     }
 
     static func locate() -> Located {
-        // Release builds ignore ARIA2C and UMB_WATCH and only use Contents/Helpers.
+        // Release builds ignore ARIA2C, UMB_WATCH, and YT_DLP.
         #if DEBUG
             let environment = ProcessInfo.processInfo.environment
             let allowEnvironmentOverride = true
@@ -33,10 +34,21 @@ enum AppHelpers {
             candidates: [contentsHelpers("aria2c")],
             allowEnvironmentOverride: allowEnvironmentOverride
         )
+        let ytDlp = HelperLocator.firstExecutable(
+            environment: environment,
+            key: "YT_DLP",
+            candidates: [contentsHelpers("yt-dlp")],
+            allowEnvironmentOverride: allowEnvironmentOverride
+        )
         return Located(
-            status: HelperStatus(aria2Found: aria2 != nil, watchFound: watch != nil),
+            status: HelperStatus(
+                aria2Found: aria2 != nil,
+                watchFound: watch != nil,
+                ytDlpFound: ytDlp != nil
+            ),
             aria2: aria2,
-            watch: watch
+            watch: watch,
+            ytDlp: ytDlp
         )
     }
 

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
 import SwiftUI
+import UmbilicalEngine
 import UmbilicalUI
 
 struct AddDownloadSheet: View {
@@ -11,6 +12,8 @@ struct AddDownloadSheet: View {
     @State private var urlText = ""
     @State private var outputName = ""
     @State private var folder: URL?
+    @State private var video = false
+    @State private var userChoseVideo = false
     @State private var errorText: String?
     @FocusState private var urlFocused: Bool
 
@@ -18,26 +21,7 @@ struct AddDownloadSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Add Download")
                 .font(.title2)
-            HStack {
-                TextField("https://example.com/file", text: $urlText)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($urlFocused)
-                    .onSubmit(submit)
-                Button("Paste") { pasteURL() }
-            }
-            TextField("Save as (optional)", text: $outputName)
-                .textFieldStyle(.roundedBorder)
-            HStack {
-                Text(folderLabel)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button("Choose Folder…") { chooseFolder() }
-            }
-            Text("The folder must stay inside the download folder.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            fields
             if let errorText {
                 Text(errorText)
                     .foregroundStyle(.red)
@@ -53,6 +37,55 @@ struct AddDownloadSheet: View {
         .padding(20)
         .frame(width: 520)
         .onAppear { urlFocused = true }
+        .onChange(of: urlText) { _, newValue in
+            video = VideoToggleState.resolved(
+                urlText: newValue,
+                userDidChoose: userChoseVideo,
+                current: video
+            )
+        }
+    }
+
+    private var fields: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                TextField("https://example.com/file", text: $urlText)
+                    .textFieldStyle(.roundedBorder)
+                    .focused($urlFocused)
+                    .onSubmit(submit)
+                Button("Paste") { pasteURL() }
+            }
+            TextField("Save as (optional)", text: $outputName)
+                .textFieldStyle(.roundedBorder)
+            Toggle("Video", isOn: videoBinding)
+            Text(
+                "Known video sites turn this on. yt-dlp saves one combined file "
+                    + "and does not merge separate streams."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            HStack {
+                Text(folderLabel)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Choose Folder…") { chooseFolder() }
+            }
+            Text("The folder must stay inside the download folder.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private var videoBinding: Binding<Bool> {
+        Binding(
+            get: { video },
+            set: { newValue in
+                userChoseVideo = true
+                video = newValue
+            }
+        )
     }
 
     private var folderLabel: String {
@@ -92,7 +125,12 @@ struct AddDownloadSheet: View {
         let name = outputName
         Task {
             do {
-                try await model.add(urlText: url, outputName: name, folder: chosen)
+                try await model.add(
+                    urlText: url,
+                    outputName: name,
+                    folder: chosen,
+                    video: video
+                )
                 dismiss()
             } catch {
                 errorText = DownloadMessage.text(for: error)

@@ -100,8 +100,14 @@ struct DownloadRowView: View {
                 Task { await toggleRun() }
             }
             .disabled(!row.canPause && !row.canResume)
-            Button("Remove") { confirmingRemove = true }
-                .disabled(!row.canRemove)
+            Button(row.cancelsLiveVideo ? "Cancel" : "Remove") {
+                if row.cancelsLiveVideo {
+                    Task { await model.remove(id: row.id) }
+                } else {
+                    confirmingRemove = true
+                }
+            }
+            .disabled(!row.canRemove)
             if row.isComplete, let path = row.filePath, fileExists(path) {
                 Button("Show in Finder") {
                     MacActions.reveal(path)
