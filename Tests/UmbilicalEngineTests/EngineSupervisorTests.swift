@@ -11,6 +11,17 @@ import XCTest
 #endif
 
 final class EngineSupervisorTests: XCTestCase {
+    func testLossyProcessTextKeepsASCIIAndReplacesInvalidBytes() {
+        var bytes = Array("PATH=/bin\0name=".utf8)
+        bytes.append(0xFF)
+        bytes.append(contentsOf: "\0sleep".utf8)
+        let text = ProcessTree.lossyText(Data(bytes))
+        XCTAssertTrue(text.contains("PATH=/bin"))
+        XCTAssertTrue(text.contains("sleep"))
+        XCTAssertTrue(text.contains("?"))
+        XCTAssertFalse(text.contains("--rpc-secret"))
+    }
+
     func testSecretNeverAppearsInProcessArgumentsAndSettingsFileIsPrivate() async throws {
         let previous = umask(0)
         defer { _ = umask(previous) }

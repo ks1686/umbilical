@@ -147,7 +147,10 @@ final class RPCIntegrationTests: XCTestCase {
         let file = downloads.appendingPathComponent("payload.bin")
         let saved = try Data(contentsOf: file)
         XCTAssertEqual(saved, payload)
-        XCTAssertTrue(quarantine.paths.contains(file.path))
+        XCTAssertTrue(
+            quarantine.paths.contains { canonicalPath($0) == canonicalPath(file.path) },
+            "recorded \(quarantine.paths) expected \(file.path)"
+        )
 
         let removalServer = try LocalHTTPServer(body: payload, hold: true)
         removalServer.start()
@@ -250,6 +253,10 @@ private func waitStatus(
         try await Task.sleep(nanoseconds: 50_000_000)
     }
     throw EngineError.listenTimeout
+}
+
+private func canonicalPath(_ path: String) -> String {
+    URL(fileURLWithPath: path).resolvingSymlinksInPath().path
 }
 
 private func listeningAddresses(root: Int32, port: UInt16) throws -> [String] {
