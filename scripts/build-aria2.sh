@@ -16,6 +16,11 @@
 # headers, so make will not rebuild) and the binary is linked twice. The
 # slice hashes must match.
 #
+# Xcode 27's libc++ no longer includes <iterator> through other headers.
+# CXXFLAGS pass -include iterator so std::back_inserter still compiles.
+# helpers/aria2.lock stores one universal-binary SHA-256 per Xcode and
+# clang. The source tarball SHA-256 stays the trust anchor.
+#
 # Usage:
 #   scripts/build-aria2.sh
 #   scripts/build-aria2.sh --verify-tarball
@@ -166,12 +171,83 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   exit 1
 fi
 
-for tool in curl xcrun clang clang++ make lipo otool file pkg-config perl find touch date; do
+for tool in curl xcrun xcodebuild clang clang++ make lipo otool file pkg-config perl find touch date; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "missing required tool: ${tool}" >&2
     exit 1
   fi
 done
+
+validate_toolchain_lines() {
+  awk '
+    index($0, "toolchain_sha256=") == 1 {
+      rest = substr($0, length("toolchain_sha256=") + 1)
+      n = split(rest, parts, "|")
+      if (n != 3 || parts[1] == "" || parts[2] == "" || parts[3] !~ /^[0-9a-fA-F]{64}$/) {
+        print "malformed toolchain_sha256 line: " $0 > "/dev/stderr"
+        exit 1
+      }
+    }
+  ' "$lock_file"
+}
+
+detect_toolchain() {
+  local xcode_line clang_line
+  xcode_line="$(xcodebuild -version | awk 'NR==1 { print; exit }')"
+  xcode_version="$(printf '%s\n' "$xcode_line" | awk '/^Xcode / { print $2; exit }')"
+  if [[ -z "$xcode_version" ]]; then
+    echo "could not read the Xcode version from: ${xcode_line}" >&2
+    exit 1
+  fi
+  case "$xcode_version" in
+    *'|'*)
+      echo "Xcode version contains '|': ${xcode_version}" >&2
+      exit 1
+      ;;
+  esac
+  xcode_clang="$(xcrun --find clang)"
+  xcode_clangxx="$(xcrun --find clang++)"
+  clang_line="$("$xcode_clang" --version | awk 'NR==1 { print; exit }')"
+  clang_id="$(printf '%s\n' "$clang_line" | sed -n 's/^Apple clang version \([0-9][0-9.]*\) (\([^)]*\)).*/\1 (\2)/p')"
+  if [[ -z "$clang_id" ]]; then
+    echo "could not read the Apple clang version from: ${clang_line}" >&2
+    exit 1
+  fi
+  case "$clang_id" in
+    *'|'*)
+      echo "clang version contains '|': ${clang_id}" >&2
+      exit 1
+      ;;
+  esac
+  echo "toolchain: ${xcode_version}/${clang_id}"
+}
+
+lookup_toolchain_sha256() {
+  local xcode="$1"
+  local clang="$2"
+  awk -v xcode="$xcode" -v clang="$clang" '
+    index($0, "toolchain_sha256=") == 1 {
+      rest = substr($0, length("toolchain_sha256=") + 1)
+      n = split(rest, parts, "|")
+      if (n == 3 && parts[1] == xcode && parts[2] == clang) {
+        print tolower(parts[3])
+        count++
+      }
+    }
+    END {
+      if (count == 0) {
+        exit 1
+      }
+      if (count != 1) {
+        print "duplicate toolchain_sha256 entries for this Xcode and clang" > "/dev/stderr"
+        exit 2
+      }
+    }
+  ' "$lock_file"
+}
+
+validate_toolchain_lines
+detect_toolchain
 
 stamp_text="$(LC_ALL=C TZ=UTC date -r "$source_date_epoch" "+%b %d %Y %H:%M:%S")"
 if [[ "$stamp_text" != "${build_date} ${build_time}" ]]; then
@@ -226,6 +302,7 @@ build_arch() {
   local pcdir="${dest}/pkgconfig"
   local log="${dest}/configure.log"
   local flags="-arch ${arch} -isysroot ${sdk} -mmacosx-version-min=14.0"
+  local cxx_flags="${flags} -include iterator"
   local link_flags="${flags} -Wl,-reproducible"
 
   mkdir -p "$pcdir" "${dest}/tree"
@@ -246,10 +323,10 @@ EOF
   (
     set -euo pipefail
     cd "${dest}/tree"
-    export CC="clang"
-    export CXX="clang++"
+    export CC="$xcode_clang"
+    export CXX="$xcode_clangxx"
     export CFLAGS="$flags"
-    export CXXFLAGS="$flags"
+    export CXXFLAGS="$cxx_flags"
     export LDFLAGS="$link_flags"
     export PKG_CONFIG_PATH="$pcdir"
     unset PKG_CONFIG_SYSROOT_DIR || true
@@ -425,14 +502,22 @@ fi
 
 binary_sha256="$(sha256_file "$out" | tr '[:upper:]' '[:lower:]')"
 echo "aria2c sha256: ${binary_sha256}"
-expected_binary="$(lock_get binary_sha256 | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')"
-if [[ -z "$expected_binary" ]]; then
-  echo "binary_sha256 is empty in ${lock_file}" >&2
-  echo "Record the sha256 printed above, then rebuild." >&2
-  exit 1
-fi
+echo "toolchain: ${xcode_version}/${clang_id}"
+
+lookup_status=0
+expected_binary="$(lookup_toolchain_sha256 "$xcode_version" "$clang_id" | tr -d '[:space:]')" || lookup_status=$?
+case "$lookup_status" in
+  0) ;;
+  1)
+    echo "toolchain changed: ${xcode_version}/${clang_id} has no recorded hash" >&2
+    exit 1
+    ;;
+  *)
+    exit "$lookup_status"
+    ;;
+esac
 if [[ "$expected_binary" != "$binary_sha256" ]]; then
-  echo "binary SHA-256 mismatch" >&2
+  echo "binary SHA-256 mismatch for ${xcode_version}/${clang_id}" >&2
   echo "expected ${expected_binary}" >&2
   echo "actual   ${binary_sha256}" >&2
   exit 1

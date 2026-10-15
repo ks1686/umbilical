@@ -126,3 +126,32 @@ jobs:
 
       - name: Build universal aria2c
         run: scripts/build-aria2.sh
+
+  aria2-xcode-27:
+    name: aria2c Xcode 27
+    runs-on: xcode-27
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Select Xcode 27.0
+        run: |
+          set -euo pipefail
+          sudo xcode-select -s /Applications/Xcode_27.app/Contents/Developer
+          xcodebuild -version
+          xcrun --find clang
+          clang --version
+
+      - name: Install pkg-config
+        run: |
+          set -euo pipefail
+          export HOMEBREW_NO_AUTO_UPDATE=1
+          export HOMEBREW_NO_ANALYTICS=1
+          brew install pkg-config
+          command -v pkg-config
+
+      - name: Build universal aria2c
+        run: scripts/build-aria2.sh

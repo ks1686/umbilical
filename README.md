@@ -44,8 +44,11 @@ OpenSSL or GnuTLS. It compiles arm64 and x86_64, then combines them with
 
 The recipe freezes `__DATE__` and `__TIME__` to the 1.37.0 release instant
 (2023-11-15 12:07:32 UTC), pins object mtimes, and links with
-`-Wl,-reproducible`, so the universal binary hash in `helpers/aria2.lock`
-can stay stable.
+`-Wl,-reproducible`. `CXXFLAGS` include `-include iterator` because Xcode
+27's libc++ no longer includes that header through other headers.
+`helpers/aria2.lock` keeps one universal-binary SHA-256 per Xcode and
+clang. The source tarball SHA-256 is the trust anchor. A toolchain with
+no recorded hash stops the script.
 
 `scripts/fetch-helpers.sh` downloads the pinned yt-dlp macOS binary. It
 checks the GPG signature on that release's `SHA2-256SUMS` with the published
