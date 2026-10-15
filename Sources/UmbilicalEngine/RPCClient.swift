@@ -21,6 +21,11 @@ public struct DownloadStatus: Equatable {
     public let errorMessage: String?
 }
 
+private struct StatusRecord {
+    var status: DownloadStatus
+    var followedBy: String?
+}
+
 public final class RPCClient {
     let port: UInt16
     let secret: String
@@ -44,11 +49,11 @@ public final class RPCClient {
     }
 
     public func add(url: URL, options: [String: String] = [:]) async throws -> String {
-        try validateHTTP(url)
+        let uri = try acceptedURI(url)
         try RPCOptionPolicy.validate(options, downloadRoot: downloadDirectory)
         let result = try await transport.call(
             method: "aria2.addUri",
-            parameters: ["token:\(secret)", [url.absoluteString], options]
+            parameters: ["token:\(secret)", [uri], options]
         )
         guard let gid = result as? String, !gid.isEmpty else {
             throw EngineError.transport("addUri")
@@ -85,9 +90,23 @@ public final class RPCClient {
     }
 
     public func addTorrent(file: URL, options: [String: String] = [:]) async throws -> String {
-        _ = file
         try RPCOptionPolicy.validate(options, downloadRoot: downloadDirectory)
-        throw EngineError.notSupported("torrent")
+        let data = try TorrentMetadata.readFile(file)
+        let metadata = try TorrentMetadata.parse(data)
+        if let selection = options["select-file"] {
+            try metadata.checkSelection(selection)
+        }
+        try metadata.checkContained(in: downloadDirectory)
+        let encoded = data.base64EncodedString()
+        let uris: [String] = []
+        let result = try await transport.call(
+            method: "aria2.addTorrent",
+            parameters: ["token:\(secret)", encoded, uris, options]
+        )
+        guard let gid = result as? String, !gid.isEmpty else {
+            throw EngineError.transport("addTorrent")
+        }
+        return gid
     }
 
     public func addMetalink(file: URL, options: [String: String] = [:]) async throws -> String {
@@ -97,19 +116,39 @@ public final class RPCClient {
     }
 
     public func status(gid: String) async throws -> DownloadStatus {
+        try await status(gid: gid, depth: 0)
+    }
+
+    private func status(gid: String, depth: Int) async throws -> DownloadStatus {
+        let parsed = try await fetchStatus(gid)
+        if let next = parsed.followedBy, depth < 4 {
+            return try await status(gid: next, depth: depth + 1)
+        }
+        if parsed.status.state == .complete {
+            try quarantineFinishedFiles(parsed.status.files)
+        }
+        return parsed.status
+    }
+
+    private func fetchStatus(_ gid: String) async throws -> StatusRecord {
         let result = try await transport.call(
             method: "aria2.tellStatus",
             parameters: [
                 "token:\(secret)",
                 gid,
-                ["gid", "status", "totalLength", "completedLength", "downloadSpeed", "errorMessage", "files"],
+                [
+                    "gid",
+                    "status",
+                    "totalLength",
+                    "completedLength",
+                    "downloadSpeed",
+                    "errorMessage",
+                    "files",
+                    "followedBy"
+                ]
             ]
         )
-        let parsed = try Self.parseStatus(result)
-        if parsed.state == .complete {
-            try quarantineFinishedFiles(parsed.files)
-        }
-        return parsed
+        return try Self.parseStatus(result)
     }
 
     func version() async throws -> String {
@@ -117,7 +156,8 @@ public final class RPCClient {
             method: "aria2.getVersion",
             parameters: ["token:\(secret)"]
         )
-        guard let object = result as? [String: Any], let version = object["version"] as? String else {
+        guard let object = result as? [String: Any], let version = object["version"] as? String
+        else {
             throw EngineError.transport("version")
         }
         return version
@@ -129,10 +169,26 @@ public final class RPCClient {
             if path.isEmpty || marked.contains(path) {
                 continue
             }
-            _ = try DownloadPath.resolveInside(root: downloadDirectory, raw: path)
+            // Magnet metadata is an in-memory placeholder, not a file in dir.
             guard POSIX.isRegularFile(path) else { continue }
+            _ = try DownloadPath.resolveInside(root: downloadDirectory, raw: path)
             try quarantine.markDownloaded(file: file)
             marked.insert(path)
+        }
+    }
+
+    private func acceptedURI(_ url: URL) throws -> String {
+        guard let scheme = url.scheme?.lowercased() else {
+            throw EngineError.schemeRejected("")
+        }
+        switch scheme {
+        case "http", "https":
+            try validateHTTP(url)
+            return url.absoluteString
+        case "magnet":
+            return try MagnetLink.canonical(url)
+        default:
+            throw EngineError.schemeRejected(scheme)
         }
     }
 
@@ -155,7 +211,7 @@ public final class RPCClient {
         }
     }
 
-    private static func parseStatus(_ result: Any) throws -> DownloadStatus {
+    private static func parseStatus(_ result: Any) throws -> StatusRecord {
         guard let object = result as? [String: Any] else {
             throw EngineError.transport("status")
         }
@@ -173,7 +229,7 @@ public final class RPCClient {
             }
         }
         let message = object["errorMessage"] as? String
-        return DownloadStatus(
+        let record = DownloadStatus(
             gid: gid,
             state: state,
             totalLength: int64Value(object["totalLength"]),
@@ -182,6 +238,17 @@ public final class RPCClient {
             files: files,
             errorMessage: (message?.isEmpty == false) ? message : nil
         )
+        return StatusRecord(status: record, followedBy: followedGID(object["followedBy"]))
+    }
+
+    private static func followedGID(_ value: Any?) -> String? {
+        let list = value as? [Any] ?? []
+        for item in list.reversed() {
+            if let gid = item as? String, !gid.isEmpty {
+                return gid
+            }
+        }
+        return nil
     }
 
     private static func int64Value(_ value: Any?) -> Int64 {

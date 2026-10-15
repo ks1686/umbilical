@@ -1,7 +1,8 @@
 # umbilical
 
 umbilical is a native macOS download manager for macOS 14 and later, on
-Apple Silicon and Intel. It only downloads. It never seeds.
+Apple Silicon and Intel. It never seeds after a download completes. While
+a download is in progress, upload is capped at 1 KiB/s.
 
 The app is paid. It is also GPL-3.0-or-later, and anyone can build it from
 this source tree. Nothing here is meant to stop a source build.
@@ -60,6 +61,22 @@ key in `helpers/yt-dlp.asc` before it trusts the SHA-256 in
 yt-dlp is phase 2. ffmpeg is phase 2 and is not fetched yet.
 
 Both scripts need `curl`. The yt-dlp script also needs `gpg`.
+
+## Engine tests
+
+`just test` builds `aria2c`, then runs `swift test` with `UMB_REQUIRE_ARIA2=1`.
+On macOS the binary comes from `scripts/build-aria2.sh`. On Linux it comes from
+`scripts/build-aria2-linux.sh`. A local run cannot pass by skipping the real
+aria2 tests.
+
+Manual checks for the torrent and magnet engine are in `docs/M2-MANUAL.md`.
+
+If the checkout is under `~/Documents`, `swift test` can fail at codesign
+with `resource fork, Finder information, or similar detritus not allowed`.
+Use `swift test --scratch-path /tmp/umb-spm`.
+
+The seeding test records TCP with tcpdump. It needs permission to capture.
+The test tries tcpdump directly, then `sudo -n tcpdump` when that is refused.
 
 ## License
 

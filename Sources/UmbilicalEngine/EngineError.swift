@@ -9,7 +9,7 @@ public enum EngineError: Error, Equatable, CustomStringConvertible {
     case executableMissing(String)
     case launchFailed(String)
     case listenTimeout
-    case secretExposed
+    case secretExposed(String)
     case schemeRejected(String)
     case hookRejected(String)
     case optionRejected(String)
@@ -20,6 +20,8 @@ public enum EngineError: Error, Equatable, CustomStringConvertible {
     case rpc(code: Int, message: String)
     case transport(String)
     case unexpectedStatus(String)
+    case torrentRejected(String)
+    case magnetRejected(String)
     case notSupported(String)
 
     public var description: String {
@@ -36,8 +38,8 @@ public enum EngineError: Error, Equatable, CustomStringConvertible {
             return "launch failed: \(detail)"
         case .listenTimeout:
             return "aria2 did not start listening"
-        case .secretExposed:
-            return "RPC secret appeared in process arguments or the environment"
+        case .secretExposed(let location):
+            return "RPC secret appeared in process arguments or the environment (\(location))"
         case .schemeRejected(let scheme):
             return "scheme rejected: \(scheme)"
         case .hookRejected(let name):
@@ -58,6 +60,10 @@ public enum EngineError: Error, Equatable, CustomStringConvertible {
             return "transport error: \(detail)"
         case .unexpectedStatus(let status):
             return "unexpected download status: \(status)"
+        case .torrentRejected(let detail):
+            return "torrent rejected: \(detail)"
+        case .magnetRejected(let detail):
+            return "magnet rejected: \(detail)"
         case .notSupported(let feature):
             return "not supported: \(feature)"
         }

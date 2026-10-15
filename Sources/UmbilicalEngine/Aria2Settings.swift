@@ -10,7 +10,9 @@ enum Aria2Settings {
         guard secret.count == 64, secret.allSatisfy(\.isHexDigit) else {
             throw EngineError.settingsWriteFailed("secret format")
         }
-        guard !downloadDirectory.contains("\n"), !downloadDirectory.contains("\r"), !downloadDirectory.contains("\0") else {
+        guard !downloadDirectory.contains("\n"), !downloadDirectory.contains("\r"),
+            !downloadDirectory.contains("\0")
+        else {
             throw EngineError.directoryRejected(downloadDirectory)
         }
         let lines = [
@@ -24,14 +26,18 @@ enum Aria2Settings {
             "enable-dht=true",
             "enable-peer-exchange=true",
             "enable-rpc=true",
+            // An HTTP download of a .torrent or a metalink stays a file.
+            "follow-metalink=false",
+            "follow-torrent=false",
             "max-upload-limit=\(maxUploadLimit)",
             "rpc-allow-origin-all=false",
             "rpc-listen-all=false",
             "rpc-listen-port=\(port)",
             "rpc-secret=\(secret)",
-            "seed-ratio=0.0",
+            // aria2 treats seed-ratio=0.0 as "seed regardless of ratio".
+            // seed-time=0 is what stops seeding when the download completes.
             "seed-time=0",
-            "summary-interval=0",
+            "summary-interval=0"
         ]
         return lines.joined(separator: "\n") + "\n"
     }

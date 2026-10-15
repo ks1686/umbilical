@@ -24,14 +24,18 @@ enum ProcessTree {
     }
 
     static func containsSecret(root pid: Int32, secret: String) -> Bool {
-        guard !secret.isEmpty else { return false }
+        secretLocation(root: pid, secret: secret) != nil
+    }
+
+    static func secretLocation(root pid: Int32, secret: String) -> String? {
+        guard !secret.isEmpty else { return nil }
         let deadline = Date().addingTimeInterval(1)
         while true {
-            if snapshot(root: pid).contains(where: { $0.contains(secret) }) {
-                return true
+            if let found = locateSecret(root: pid, secret: secret) {
+                return found
             }
             if !children(of: pid).isEmpty || Date() >= deadline {
-                return snapshot(root: pid).contains(where: { $0.contains(secret) })
+                return locateSecret(root: pid, secret: secret)
             }
             usleep(20_000)
         }
@@ -78,6 +82,25 @@ enum ProcessTree {
         #else
             return darwinChildren(of: parent)
         #endif
+    }
+
+    private static func locateSecret(root pid: Int32, secret: String) -> String? {
+        var pending = [pid]
+        var seen = Set<Int32>()
+        while let current = pending.popLast() {
+            if !seen.insert(current).inserted {
+                continue
+            }
+            if let line = commandLine(pid: current), line.contains(secret) {
+                let redacted = line.replacingOccurrences(of: secret, with: "[redacted]")
+                return "arguments pid \(current): \(redacted.prefix(180))"
+            }
+            if let env = environment(pid: current), env.contains(secret) {
+                return "environment pid \(current)"
+            }
+            pending.append(contentsOf: children(of: current))
+        }
+        return nil
     }
 
     static func commandLine(pid: Int32) -> String? {
