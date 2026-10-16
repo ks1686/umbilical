@@ -258,6 +258,11 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertNotEqual(licenseDenial(service.snapshot.status), .graceExpired)
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
     }
+}
+
+@MainActor
+final class LicenseKeychainFailureTests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
     func testActivateRefusesWhenTheLicenseCannotBeStored() async throws {
         let store = MemoryLicenseStore()

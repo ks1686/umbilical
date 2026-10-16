@@ -220,10 +220,10 @@ import Foundation
                     accessGroup: accessGroup,
                     storing: false
                 )
-                if LicenseKeychainWriteGuard.targetsDataProtection(query),
-                    let dictionary = Self.dictionary(for: query)
-                {
-                    _ = client.delete(dictionary)
+                if LicenseKeychainWriteGuard.targetsDataProtection(query) {
+                    if let dictionary = Self.dictionary(for: query) {
+                        _ = client.delete(dictionary)
+                    }
                 }
             }
             _ = deleteLegacy(account: account)
