@@ -40,7 +40,7 @@ import Foundation
         private let client: any LicenseKeychainClient
         private let migratesOnSave: Bool
 
-        public init(service: String = "me.peapod.umbilical.license") {
+        public convenience init(service: String = "me.peapod.umbilical.license") {
             self.init(
                 service: service,
                 accessGroup: SignedLicenseAccessGroup.current(),
