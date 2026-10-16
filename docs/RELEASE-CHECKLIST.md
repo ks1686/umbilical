@@ -19,6 +19,7 @@ Last updated October 15, 2026.
 | Sparkle private key committed to the local genv config repo (backup model: Karim's self-hosted encrypted git remote and DAS Time Machine, returning with the new machine in about a month; Karim treats this as in place) | Machine Keeper | planned |
 | App Store Connect API key committed to the local genv config repo (same backup model) | Machine Keeper | planned (pending, not done) |
 | Developer ID signing and notarization of the release dmg (`scripts/release/publish.sh` on the signing Mac; not yet run) | Machine Keeper | planned |
+| Developer ID provisioning profile for `me.peapod.umbilical` with Keychain Sharing, saved at `~/.config/genv/signing/umbilical.provisionprofile` (not committed) | Machine Keeper | planned |
 | License provider: Polar public customer-portal license keys, no organization access token | Code Lead | done |
 | Price $9.99 one time, lifetime updates, 14-day offline grace, 1 Mac per key | Code Lead | done |
 | Trademark check for umbilical and umb | Code Lead | planned |

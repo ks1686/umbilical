@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -196,9 +197,17 @@ class ReleaseToolsTest(unittest.TestCase):
         release_ents = (ROOT / "App" / "umbilical.entitlements").read_text(encoding="utf-8")
         self.assertNotIn("get-task-allow", release_ents)
         self.assertNotIn("disable-library-validation", release_ents)
+        self.assertIn("keychain-access-groups", release_ents)
+        self.assertIn("$(AppIdentifierPrefix)me.peapod.umbilical", release_ents)
         debug_ents = (ROOT / "App" / "umbilical-debug.entitlements").read_text(encoding="utf-8")
         self.assertIn("com.apple.security.cs.disable-library-validation", debug_ents)
         self.assertNotIn("allow-jit", debug_ents)
+        self.assertNotIn("keychain-access-groups", debug_ents)
+        for relative in ("Extension/Extension.entitlements", "helpers/yt-dlp.entitlements"):
+            self.assertNotIn(
+                "keychain-access-groups",
+                (ROOT / relative).read_text(encoding="utf-8"),
+            )
 
     def test_built_app_checks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -472,10 +481,97 @@ class ReleaseToolsTest(unittest.TestCase):
         self.assertIn("--options runtime", sign)
         self.assertIn("--timestamp", sign)
         self.assertIn("helpers/yt-dlp.entitlements", sign)
+        self.assertIn("write-adhoc-app-entitlements", sign)
+        self.assertIn("write-developer-id-app-entitlements", sign)
+        self.assertIn("resolve-provisioning-profile", sign)
+        self.assertIn("keychain-access-groups", sign)
+        self.assertIn("resolve-provisioning-profile", publish)
         just = (ROOT / "justfile").read_text(encoding="utf-8")
         self.assertIn("scripts/release/publish.sh", just)
         for path in (ROOT / "scripts").rglob("*.sh"):
             self.assertNotIn("security import", path.read_text(encoding="utf-8"))
+
+    def test_keychain_profile_authorizes_only_this_app(self) -> None:
+        team = "AB12CD34EF"
+        now = datetime(2026, 10, 16, tzinfo=timezone.utc)
+        plist = {
+            "TeamIdentifier": [team],
+            "ExpirationDate": datetime(2030, 1, 1, tzinfo=timezone.utc),
+            "Platform": ["OSX"],
+            "Entitlements": {
+                "com.apple.application-identifier": f"{team}.me.peapod.umbilical",
+                "com.apple.developer.team-identifier": team,
+                "keychain-access-groups": [f"{team}.*"],
+            },
+        }
+        self.assertEqual(release_tools.validate_developer_id_profile(plist, now), team)
+        exact = dict(plist)
+        exact["Entitlements"] = dict(plist["Entitlements"])
+        exact["Entitlements"]["keychain-access-groups"] = [f"{team}.me.peapod.umbilical"]
+        self.assertEqual(release_tools.validate_developer_id_profile(exact, now), team)
+        development = dict(plist)
+        development["ProvisionedDevices"] = ["DEVICE"]
+        with self.assertRaises(SystemExit):
+            release_tools.validate_developer_id_profile(development, now)
+        expired = dict(plist)
+        expired["ExpirationDate"] = datetime(2020, 1, 1, tzinfo=timezone.utc)
+        with self.assertRaises(SystemExit):
+            release_tools.validate_developer_id_profile(expired, now)
+        other_app = dict(plist)
+        other_app["Entitlements"] = dict(plist["Entitlements"])
+        other_app["Entitlements"]["com.apple.application-identifier"] = f"{team}.other.app"
+        with self.assertRaises(SystemExit):
+            release_tools.validate_developer_id_profile(other_app, now)
+        with self.assertRaises(SystemExit):
+            release_tools.access_group_for_team("short")
+
+        template = release_tools.load_plist(ROOT / "App" / "umbilical.entitlements")
+        adhoc = release_tools.entitlements_for_adhoc(template)
+        self.assertNotIn("keychain-access-groups", adhoc)
+        signed = release_tools.entitlements_for_developer_id(template, team)
+        self.assertEqual(
+            signed["keychain-access-groups"],
+            ["AB12CD34EF.me.peapod.umbilical"],
+        )
+        extra = {
+            "keychain-access-groups": [
+                "$(AppIdentifierPrefix)me.peapod.umbilical",
+                "$(AppIdentifierPrefix)me.peapod.other",
+            ]
+        }
+        with self.assertRaises(SystemExit):
+            release_tools.entitlements_for_developer_id(extra, team)
+        release_tools.assert_signed_keychain_entitlement(adhoc, label="app", team_id=None)
+        release_tools.assert_signed_keychain_entitlement(signed, label="app", team_id=team)
+        with self.assertRaises(SystemExit):
+            release_tools.assert_signed_keychain_entitlement(
+                {"keychain-access-groups": [f"{team}.*"]},
+                label="app",
+                team_id=team,
+            )
+        with self.assertRaises(SystemExit):
+            release_tools.assert_signed_keychain_entitlement(signed, label="helper", team_id=None)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            missing = root / "missing.provisionprofile"
+            with self.assertRaises(SystemExit):
+                release_tools.provisioning_profile_path(None, missing)
+            present = root / "umbilical.provisionprofile"
+            present.write_bytes(b"\x30\x82" + b"profile-bytes!!")
+            self.assertEqual(release_tools.provisioning_profile_path(None, present), present)
+            with self.assertRaises(SystemExit):
+                release_tools.provisioning_profile_path("", present)
+            with self.assertRaises(SystemExit):
+                release_tools.provisioning_profile_path("line\nbreak", present)
+            xml_profile = root / "decoded.plist"
+            xml_profile.write_bytes(b"<?xml version='1.0'?><plist/>")
+            embed = root / "App" / "embedded.provisionprofile"
+            with self.assertRaises(SystemExit):
+                release_tools.embed_provisioning_profile(xml_profile, embed)
+            release_tools.embed_provisioning_profile(present, embed)
+            self.assertEqual(embed.read_bytes(), present.read_bytes())
+            self.assertEqual(embed.stat().st_mode & 0o777, 0o644)
 
 
 if __name__ == "__main__":

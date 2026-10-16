@@ -12,10 +12,12 @@ public enum LicenseKeychainAccessibility: String, Equatable {
 public struct LicenseKeychainPolicy: Equatable {
     public var accessible: LicenseKeychainAccessibility
     public var synchronizable: Bool
+    public var useDataProtectionKeychain: Bool
 
     public static let item = LicenseKeychainPolicy(
         accessible: .afterFirstUnlockThisDeviceOnly,
-        synchronizable: false
+        synchronizable: false,
+        useDataProtectionKeychain: true
     )
 }
 

@@ -103,6 +103,26 @@ then
 fi
 echo "yt-dlp entitlements stay on the helper"
 
+if ! grep -q 'keychain-access-groups' "${app_entitlements}"; then
+  echo "app entitlements missing keychain-access-groups" >&2
+  exit 1
+fi
+if ! grep -Fq '$(AppIdentifierPrefix)me.peapod.umbilical' "${app_entitlements}"; then
+  echo "app keychain access group is not the team prefix plus bundle id" >&2
+  exit 1
+fi
+for extra in \
+  "${root}/App/umbilical-debug.entitlements" \
+  "${root}/Extension/Extension.entitlements" \
+  "${root}/helpers/yt-dlp.entitlements"
+do
+  if grep -q 'keychain-access-groups' "${extra}"; then
+    echo "keychain-access-groups leaked into ${extra}" >&2
+    exit 1
+  fi
+done
+echo "keychain-access-groups stays on the app"
+
 echo "Release copy fails when aria2c is missing"
 aria_release_log=""
 if aria_release_log="$(

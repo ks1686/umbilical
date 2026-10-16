@@ -114,6 +114,8 @@ if [[ -z "${identity}" ]]; then
   exit 1
 fi
 echo "using Developer ID identity: ${identity}"
+python3 scripts/release/release_tools.py resolve-provisioning-profile >/dev/null
+echo "Developer ID provisioning profile is present"
 
 if [[ -n "${SPARKLE_ED_KEY_FILE+x}" ]]; then
   sparkle_key="${SPARKLE_ED_KEY_FILE}"

@@ -258,4 +258,22 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertNotEqual(licenseDenial(service.snapshot.status), .graceExpired)
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
     }
+
+    func testActivateRefusesWhenTheLicenseCannotBeStored() async throws {
+        let store = MemoryLicenseStore()
+        store.failCredentialSave = true
+        let transport = StubLicenseTransport([
+            .success(polarReply(status: 200, body: try LicenseFixture.activationData()))
+        ])
+        let service = makeLicenseService(
+            store: store, transport: transport, clock: ManualClock(now))
+        await service.activate(LicenseFixture.key)
+        XCTAssertEqual(licenseDenial(service.snapshot.status), .keychainFailed)
+        XCTAssertNil(store.credential)
+        XCTAssertNil(store.validation)
+        XCTAssertEqual(
+            transport.calls.map(\.path),
+            [PolarLicenseEndpoint.activate.rawValue, PolarLicenseEndpoint.deactivate.rawValue]
+        )
+    }
 }

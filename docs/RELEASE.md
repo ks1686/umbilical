@@ -16,6 +16,7 @@ Recorded October 15, 2026. Updated the same day: umbilical is signed on the sign
 | Material | Where it lives |
 | --- | --- |
 | Developer ID Application certificate | login Keychain. The script unlocks that keychain without putting a password on the command line, then requires exactly one valid Developer ID Application identity. It does not import a `.p12` and it does not create a temporary keychain. |
+| Developer ID provisioning profile | `~/.config/genv/signing/umbilical.provisionprofile`. A macOS Developer ID profile for App ID `me.peapod.umbilical` with Keychain Sharing. It is not a secret (the shipped app embeds it) and it is not committed. Override the path with `UMBILICAL_PROVISIONING_PROFILE`. |
 | App Store Connect API key | A `notarytool` keychain profile, or local files under `~/.config/genv/notarize/`. |
 | Sparkle private key | `~/.config/genv/sparkle/umbilical.key`, mode 600 or 400. |
 
@@ -48,11 +49,11 @@ just release v0.0.1
 
 1. Fail if `POLAR_ORGANIZATION_ID` is empty or not a UUID, or if the local Sparkle private key does not match `SUPublicEDKey`.
 2. Write `Config/Licensing.local.xcconfig` (gitignored) and stamp `CFBundleShortVersionString` and `CFBundleVersion` from the tag.
-3. Read the Developer ID Application identity from the login Keychain.
+3. Read the Developer ID Application identity from the login Keychain, and fail if the Developer ID provisioning profile is missing or not a file.
 4. Build a Release app. Xcode signs that build ad hoc. `scripts/copy-bundled-aria2.sh` and `scripts/copy-bundled-yt-dlp.sh` still refuse a Release build when `helpers/bin/aria2c` or `helpers/bin/yt-dlp` is missing. Those scripts receive the Developer ID and pass `--timestamp` when the identity is not `-`.
 5. `scripts/release/sign-bundle.sh` is the signature that ships. It signs aria2c and yt-dlp with the Developer ID identity, `--options runtime`, and `--timestamp`. yt-dlp gets `helpers/yt-dlp.entitlements` and no other entitlement file.
 6. The same pass signs Sparkle's `Downloader.xpc`, `Installer.xpc`, `Updater.app`, and `Autoupdate`, then `Sparkle.framework`, with the same identity, hardened runtime, and a timestamp. Existing entitlements are kept, and `com.apple.security.get-task-allow` is removed if it is present.
-7. It then signs the app with `App/umbilical.entitlements`, hardened runtime, and a timestamp.
+7. It then signs the app with hardened runtime and a timestamp. A Developer ID identity embeds `Contents/embedded.provisionprofile` and sets `keychain-access-groups` to that profile's team id plus `me.peapod.umbilical`, from `App/umbilical.entitlements`. Ad hoc identity `-` signs the app without that entitlement and without a profile. Helpers and the Safari extension never get `keychain-access-groups`.
 8. Run `scripts/check-no-get-task-allow.sh` and `scripts/ci/yt-dlp-version.sh`.
 9. Build a dmg with `hdiutil` (`umbilical.app` plus an `/Applications` symlink), sign the dmg with `--timestamp`, and do not pass `--options runtime` on the dmg.
 10. Notarize with `notarytool` using the keychain profile or the local API key, staple, then run `stapler validate` and `spctl --assess --type open --context context:primary-signature`.
@@ -67,7 +68,7 @@ The script does not print the API key or the Sparkle private key. `sign_update` 
 
 `workflow_dispatch` on `.github/workflows/release.yml` builds a Release app with the ad hoc identity `-`, runs the helper and `get-task-allow` checks, and uploads `umbilical-dry-run.dmg` plus its SHA-256 as a workflow artifact. Pushing a version tag does not start that workflow. The workflow has no GitHub environment and no signing secrets. Pull request CI stays on `.github/workflows/ci.yml` and is also unsigned.
 
-Ad hoc signatures cannot take `--timestamp`. Debug builds use `App/umbilical-debug.entitlements`, which sets `com.apple.security.cs.disable-library-validation` so an ad hoc Sparkle framework can load. Release entitlements do not set that key. Library validation stays on for the notarized app, and Sparkle is re-signed with the same Developer ID.
+Ad hoc signatures cannot take `--timestamp`. Debug builds use `App/umbilical-debug.entitlements`, which sets `com.apple.security.cs.disable-library-validation` so an ad hoc Sparkle framework can load. Release entitlements do not set that key. Library validation stays on for the notarized app, and Sparkle is re-signed with the same Developer ID. Debug entitlements do not include `keychain-access-groups`. An ad hoc build cannot store the license in the data protection keychain, and license checks stay off when the organization id is unset.
 
 ## Sparkle
 
@@ -97,6 +98,28 @@ The tool used to sign is `bin/sign_update` from `Sparkle-for-Swift-Package-Manag
 
 The Developer ID certificate and the App Store Connect API key are shared with the genv and PeaProxy releases. Those apps may still sign in GitHub Actions. umbilical must not. Changing, rotating, revoking, or moving either one can break signing for those apps too. Before any such change, check the genv and PeaProxy release steps and test a signed build of each. Do not add their Actions secrets to this repo.
 
+## Data protection keychain profile
+
+License items use the data protection keychain. macOS only allows that from an app whose `keychain-access-groups` entitlement is authorized by a provisioning profile. The group is the team id plus `me.peapod.umbilical`, and it is the only group the app claims. Helpers and the Safari extension do not get the entitlement.
+
+Create the profile once, on the signing Mac:
+
+1. In Certificates, Identifiers & Profiles, create an explicit macOS App ID `me.peapod.umbilical` if it does not exist.
+2. Enable Keychain Sharing on that App ID. If the portal asks for a group, enter `me.peapod.umbilical` only. Apple adds the team prefix.
+3. Create a **macOS Developer ID** provisioning profile for that App ID and the Developer ID Application certificate. Do not use a Development or Mac App Store profile.
+4. Download it and save it as `~/.config/genv/signing/umbilical.provisionprofile`. Do not commit it. `UMBILICAL_PROVISIONING_PROFILE` may point at another file path. It must not be the profile bytes.
+
+`just release` and `scripts/release/sign-bundle.sh` with a Developer ID identity refuse to sign when the file is missing or expired. They embed it at `Contents/embedded.provisionprofile` and sign the app with that one access group. Identity `-`, including GitHub Actions, skips the profile and does not claim the entitlement, so the ad hoc Release build still signs.
+
+Gatekeeper checks this profile every time the notarized app launches. When it expires, the app does not launch until an update ships a renewed profile. The expiration date is in the profile. Renew it in the developer portal and replace the file before that date.
+
+After `sign-bundle.sh` on a Developer ID Release build, Machine Keeper can confirm:
+
+- `codesign -d --entitlements :- dist/umbilical.app` shows one `keychain-access-groups` value: the team id, a dot, then `me.peapod.umbilical`.
+- aria2c, yt-dlp, umb-watch, and the appex do not show that key.
+- `Contents/embedded.provisionprofile` is present.
+- Activate, then read the items back from the data protection keychain. `credential`, `validation`, and `device-label` use AfterFirstUnlockThisDeviceOnly and are not synchronizable. `security find-generic-password -s me.peapod.umbilical.license` on the login keychain does not find them.
+
 ## yt-dlp helper entitlements
 
 The pinned yt-dlp macOS binary is a PyInstaller build. It unpacks a Python runtime at launch. Hardened runtime needs these three entitlements on that helper:
@@ -105,7 +128,7 @@ The pinned yt-dlp macOS binary is a PyInstaller build. It unpacks a Python runti
 - `com.apple.security.cs.allow-unsigned-executable-memory`, for libffi's writable executable mapping
 - `com.apple.security.cs.allow-jit`, for `MAP_JIT` on arm64
 
-These keys are limited to `helpers/yt-dlp.entitlements`. `scripts/copy-bundled-yt-dlp.sh` applies that file when it signs the helper. The post-build sign uses the same file. App entitlements are unchanged.
+These keys are limited to `helpers/yt-dlp.entitlements`. `scripts/copy-bundled-yt-dlp.sh` applies that file when it signs the helper. The post-build sign uses the same file. The app does not get these three keys.
 
 `com.apple.security.cs.allow-dyld-environment-variables` is not set, so DYLD injection stays blocked.
 
@@ -115,7 +138,7 @@ The residual risk is a same-user process swapping libraries PyInstaller extracts
 - The app calls Polar's public customer-portal license-key validate, activate, and deactivate routes. The body includes the organization id. There is no organization access token in the app, this repo, or CI.
 - The organization id is build configuration (`Config/Licensing.xcconfig` and a gitignored local file). It is not a secret, and it is not an access token. See `docs/LICENSING.md`.
 - Transport security is HTTPS to `api.polar.sh`. The app refuses redirects. Activation replies are not separately signed.
-- The Keychain cache is bound to this Mac and this key. A copied record does not grant offline use.
+- The Keychain cache is bound to this Mac and this key. A copied record does not grant offline use. License items are in the data protection keychain with `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and syncing off. See `docs/LICENSING.md`.
 
 ## Homebrew cask
 
@@ -126,19 +149,20 @@ The residual risk is a same-user process swapping libraries PyInstaller extracts
 1. The Polar product exists ($9.99, one time, activation limit 1, no expiry). Buyers deactivate instances in Polar.
 2. `POLAR_ORGANIZATION_ID` is that organization's UUID, in the environment or in `Config/Licensing.local.xcconfig`.
 3. The login Keychain has exactly one Developer ID Application identity.
-4. Notarization uses the keychain profile or the local files under `~/.config/genv/notarize/`.
-5. `~/.config/genv/sparkle/umbilical.key` is the `generate_keys -x` export for `SUPublicEDKey`, mode 600 or 400, and the genv config repo has the backup.
-6. `gh auth status` succeeds on the signing Mac.
-7. `main` is the commit you mean to ship. The tag is `vMAJOR.MINOR.PATCH` and it is already on origin. The working tree is clean.
-8. Repo Guard has reviewed signing, the appcast, the license check, the cask draft, App Sandbox, and the tag for secrets.
-9. If this repo's GitHub `release` environment still holds signing material from an earlier draft, delete those secrets in GitHub settings. The workflows do not read them.
+4. `~/.config/genv/signing/umbilical.provisionprofile` is a current macOS Developer ID profile for App ID `me.peapod.umbilical` with Keychain Sharing. It is not committed.
+5. Notarization uses the keychain profile or the local files under `~/.config/genv/notarize/`.
+6. `~/.config/genv/sparkle/umbilical.key` is the `generate_keys -x` export for `SUPublicEDKey`, mode 600 or 400, and the genv config repo has the backup.
+7. `gh auth status` succeeds on the signing Mac.
+8. `main` is the commit you mean to ship. The tag is `vMAJOR.MINOR.PATCH` and it is already on origin. The working tree is clean.
+9. Repo Guard has reviewed signing, the appcast, the license check, the cask draft, App Sandbox, and the tag for secrets.
+10. If this repo's GitHub `release` environment still holds signing material from an earlier draft, delete those secrets in GitHub settings. The workflows do not read them.
 
 ## Checklist after the script
 
 1. The Mac script finished, including `stapler validate` and `spctl`.
 2. The release has the dmg, the `.sha256` file, `appcast.xml`, and `umbilical.rb`.
 3. The downloaded dmg's SHA-256 matches the `.sha256` asset.
-4. `codesign` on the app shows Developer ID, hardened runtime, and a timestamp. Sparkle's XPC services and `Autoupdate` do too. yt-dlp still has only `helpers/yt-dlp.entitlements`.
+4. `codesign` on the app shows Developer ID, hardened runtime, and a timestamp. Sparkle's XPC services and `Autoupdate` do too. yt-dlp still has only `helpers/yt-dlp.entitlements`. The app entitlements contain one `keychain-access-groups` value, the team id plus `me.peapod.umbilical`. The helpers and the appex do not. `Contents/embedded.provisionprofile` is present.
 5. `spctl` and `stapler validate` pass on the downloaded dmg.
 6. A second Mac sees the update from Check for Updates, or from a launch after the last check time is cleared.
 7. Copy `umbilical.rb` into `ks1686/homebrew-tap` and run the cask checks on the Mac.
@@ -149,7 +173,7 @@ The residual risk is a same-user process swapping libraries PyInstaller extracts
 ## Second signing machine (planned)
 A Mac Studio is joining the setup in one to two months. Machine Keeper will add it to genv so development and key backup work there too. The Mac script remains the publisher. To get there:
 - Install the Developer ID certificate on it (export from the Keychain as a password-protected .p12, import, delete the .p12).
-- Restore `~/.config/genv`, including the Sparkle private key and the App Store Connect key, using the same no-plaintext-left-behind steps.
+- Restore `~/.config/genv`, including the Sparkle private key, the App Store Connect key, and `signing/umbilical.provisionprofile`, using the same no-plaintext-left-behind steps. Download a new profile if the saved one is expired.
 - Move the .p12 and the App Store Connect key only through the genv config repo on Karim's self-hosted machine or a direct encrypted transfer, never iCloud Drive, email, or chat, and delete every temporary copy afterward.
 - Do not put the certificate, the API key, or the Sparkle private key in this repo's GitHub Actions secrets. If the shared certificate or API key changes, update genv and PeaProxy, which may still sign in Actions, and notarize a test build of each before trusting the new material.
 - Confirm the restored Sparkle key's public half is still `SUPublicEDKey`.

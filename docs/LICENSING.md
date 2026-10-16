@@ -81,8 +81,24 @@ The Keychain service is `me.peapod.umbilical.license`. It has three items:
 - `validation`: the key, the Polar activation id, the device id, and the
   times used for the grace period.
 
-Each item uses `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly` and is not
-synchronizable.
+Each item is stored in the data protection keychain. The query sets
+`kSecUseDataProtectionKeychain` to true,
+`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, and
+`kSecAttrSynchronizable` to false. The access group is the app's team id
+plus `me.peapod.umbilical`. The login keychain does not keep the
+ThisDeviceOnly or sync attributes, so these items are not written there.
+
+On launch, and again when an item is saved, a leftover login-keychain copy
+is copied into the data protection keychain when that keychain does not
+already have the item. The login copy is deleted after that write succeeds.
+If the data protection write fails, the app does not write the login
+keychain, does not read the leftover login item, and refuses activation. A
+later successful write deletes the leftover.
+
+The `keychain-access-groups` entitlement is on the app only. It is not on
+the Safari extension, aria2c, yt-dlp, or umb-watch. A Developer ID build
+embeds a provisioning profile that authorizes this group. See
+`docs/RELEASE.md`.
 
 The device id is the SHA-256 of `IOPlatformUUID`. The raw platform UUID is
 not stored and is not sent to Polar.
