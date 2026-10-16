@@ -551,6 +551,185 @@ def resolve_notary_auth(config_dir: Path) -> list[str]:
     return ["--key", str(key_path), "--key-id", key_id, "--issuer", issuer]
 
 
+APP_BUNDLE_ID = "me.peapod.umbilical"
+APP_TEAM_ID = "7R2VPW8GH4"
+APP_ACCESS_GROUP = f"{APP_TEAM_ID}.{APP_BUNDLE_ID}"
+TEAM_ID_RE = re.compile(r"^[A-Z0-9]{10}$")
+ACCESS_GROUP_RE = re.compile(rf"^([A-Z0-9]{{10}})\.{re.escape(APP_BUNDLE_ID)}$")
+
+
+def access_group_for_team(team_id: str) -> str:
+    if TEAM_ID_RE.fullmatch(team_id) is None:
+        fail("team id must be 10 letters or digits")
+    return f"{team_id}.{APP_BUNDLE_ID}"
+
+
+def require_exact_app_access_group(template: dict) -> str:
+    if set(template) != {"keychain-access-groups"}:
+        fail("Developer ID entitlements must contain only keychain-access-groups")
+    groups = template.get("keychain-access-groups")
+    if not isinstance(groups, list) or len(groups) != 1 or not isinstance(groups[0], str):
+        fail("Developer ID entitlements must set one keychain access group")
+    match = ACCESS_GROUP_RE.fullmatch(groups[0])
+    if match is None:
+        fail(
+            "Developer ID keychain access group must be the team id plus "
+            "me.peapod.umbilical"
+        )
+    return match.group(1)
+
+
+def require_build_entitlements_omit_keychain(template: dict) -> None:
+    if "keychain-access-groups" in template:
+        fail("Xcode Release entitlements must not include keychain-access-groups")
+
+
+def check_keychain_entitlement_files(build: dict, developer: dict) -> str:
+    require_build_entitlements_omit_keychain(build)
+    team_id = require_exact_app_access_group(developer)
+    if team_id != APP_TEAM_ID or developer["keychain-access-groups"] != [APP_ACCESS_GROUP]:
+        fail(
+            "Developer ID entitlements must set keychain-access-groups to "
+            f"{APP_ACCESS_GROUP} only"
+        )
+    return team_id
+
+
+def entitlements_for_adhoc(template: dict) -> dict:
+    cleaned = copy.deepcopy(template)
+    cleaned.pop("keychain-access-groups", None)
+    return cleaned
+
+
+def entitlements_for_developer_id(template: dict, team_id: str) -> dict:
+    file_team = require_exact_app_access_group(template)
+    if team_id != file_team:
+        fail("provisioning profile team id does not match the app keychain access group")
+    cleaned = copy.deepcopy(template)
+    cleaned["keychain-access-groups"] = [access_group_for_team(team_id)]
+    return cleaned
+
+
+def provisioning_profile_path(env_value: str | None, default: Path) -> Path:
+    if env_value is None:
+        path = default
+    else:
+        if (
+            env_value == ""
+            or env_value == "-"
+            or "\n" in env_value
+            or "\x00" in env_value
+            or len(env_value) > 1024
+        ):
+            fail("UMBILICAL_PROVISIONING_PROFILE is not a file path")
+        path = Path(env_value).expanduser()
+    if path.is_symlink() or not path.is_file():
+        fail(
+            "Developer ID provisioning profile is missing. Save a macOS "
+            "Developer ID profile for me.peapod.umbilical with Keychain Sharing at "
+            "~/.config/genv/signing/umbilical.provisionprofile"
+        )
+    return path
+
+
+def default_provisioning_profile() -> Path:
+    default = Path.home() / ".config" / "genv" / "signing" / "umbilical.provisionprofile"
+    return provisioning_profile_path(os.environ.get("UMBILICAL_PROVISIONING_PROFILE"), default)
+
+
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def validate_developer_id_profile(plist: dict, now: datetime) -> str:
+    teams = plist.get("TeamIdentifier")
+    if not isinstance(teams, list) or len(teams) != 1 or not isinstance(teams[0], str):
+        fail("provisioning profile must name one team id")
+    team_id = teams[0]
+    wanted = access_group_for_team(team_id)
+    if "ProvisionedDevices" in plist:
+        fail("provisioning profile is a development profile; use a Developer ID profile")
+    entitlements = plist.get("Entitlements")
+    if not isinstance(entitlements, dict):
+        fail("provisioning profile has no entitlements")
+    if entitlements.get("com.apple.application-identifier") != wanted:
+        fail("provisioning profile must be for me.peapod.umbilical")
+    if entitlements.get("com.apple.developer.team-identifier") != team_id:
+        fail("provisioning profile team id does not match the application identifier")
+    groups = entitlements.get("keychain-access-groups")
+    allowed = {wanted, f"{team_id}.*"}
+    if not isinstance(groups, list) or not any(
+        isinstance(item, str) and item in allowed for item in groups
+    ):
+        fail("provisioning profile does not authorize the app keychain access group")
+    expiry = plist.get("ExpirationDate")
+    if not isinstance(expiry, datetime):
+        fail("provisioning profile has no expiration date")
+    if _as_utc(expiry) <= _as_utc(now):
+        fail("provisioning profile is expired")
+    platform = plist.get("Platform")
+    if platform is not None:
+        if not isinstance(platform, list) or not any(
+            isinstance(item, str) and item in ("OSX", "macOS") for item in platform
+        ):
+            fail("provisioning profile is not a macOS profile")
+    return team_id
+
+
+def assert_signed_profile_bytes(data: bytes) -> None:
+    if len(data) < 16:
+        fail("provisioning profile is too small")
+    if data.startswith((b"<?xml", b"-----", b"{", b"bplist")):
+        fail("provisioning profile must be the signed file, not a decoded plist")
+    if b"PRIVATE KEY" in data or b"BEGIN CERTIFICATE" in data:
+        fail("provisioning profile is not a signed profile")
+
+
+def embed_provisioning_profile(source: Path, dest: Path) -> None:
+    if source.is_symlink() or not source.is_file():
+        fail("provisioning profile is missing")
+    data = source.read_bytes()
+    assert_signed_profile_bytes(data)
+    if dest.is_symlink():
+        fail("embedded provisioning profile path is a symlink")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    dest.chmod(0o644)
+
+
+def write_xml_plist(path: Path, value: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as handle:
+        plistlib.dump(value, handle, fmt=plistlib.FMT_XML)
+
+
+def load_entitlements_file(path: Path) -> dict:
+    data = path.read_bytes()
+    if data.strip() == b"":
+        return {}
+    try:
+        loaded = plistlib.loads(data)
+    except plistlib.InvalidFileException:
+        fail("signed entitlements are not a plist")
+    if not isinstance(loaded, dict):
+        fail("signed entitlements are not a plist")
+    return loaded
+
+
+def assert_signed_keychain_entitlement(
+    entitlements: dict, *, label: str, team_id: str | None
+) -> None:
+    if team_id is None:
+        if "keychain-access-groups" in entitlements:
+            fail(f"{label} must not include keychain-access-groups")
+        return
+    wanted = access_group_for_team(team_id)
+    if entitlements.get("keychain-access-groups") != [wanted]:
+        fail(f"{label} keychain-access-groups must be only the app team id and bundle id")
+
+
 def _cmd_write_licensing(args: argparse.Namespace) -> None:
     sys.stdout.write(prepare_licensing(Path(args.dest)) + "\n")
 
@@ -614,6 +793,38 @@ def _cmd_check_built_app(args: argparse.Namespace) -> None:
     check_built_app(Path(args.app), args.version, signed=args.signed)
 
 
+def _cmd_resolve_provisioning_profile(_args: argparse.Namespace) -> None:
+    sys.stdout.write(str(default_provisioning_profile()) + "\n")
+
+
+def _cmd_check_keychain_entitlement_files(args: argparse.Namespace) -> None:
+    build = load_plist(Path(args.build))
+    developer = load_plist(Path(args.developer_id))
+    check_keychain_entitlement_files(build, developer)
+
+
+def _cmd_write_adhoc_app_entitlements(args: argparse.Namespace) -> None:
+    template = load_plist(Path(args.template))
+    write_xml_plist(Path(args.output), entitlements_for_adhoc(template))
+
+
+def _cmd_write_developer_id_app_entitlements(args: argparse.Namespace) -> None:
+    template = load_plist(Path(args.template))
+    decoded = load_plist(Path(args.profile_plist))
+    team = validate_developer_id_profile(decoded, datetime.now(timezone.utc))
+    write_xml_plist(Path(args.output), entitlements_for_developer_id(template, team))
+    embed_provisioning_profile(Path(args.profile), Path(args.embed))
+    Path(args.team_output).write_text(team + "\n", encoding="utf-8")
+
+
+def _cmd_check_signed_keychain_entitlement(args: argparse.Namespace) -> None:
+    entitlements = load_entitlements_file(Path(args.plist))
+    team = None if args.absent else args.team
+    if team == "":
+        fail("team id is empty")
+    assert_signed_keychain_entitlement(entitlements, label=args.label, team_id=team)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="umbilical release helpers")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -666,6 +877,35 @@ def build_parser() -> argparse.ArgumentParser:
     built.add_argument("--version", default="")
     built.add_argument("--signed", action="store_true")
     built.set_defaults(func=_cmd_check_built_app)
+
+    profile = sub.add_parser("resolve-provisioning-profile")
+    profile.set_defaults(func=_cmd_resolve_provisioning_profile)
+
+    entitlement_files = sub.add_parser("check-keychain-entitlement-files")
+    entitlement_files.add_argument("--build", required=True)
+    entitlement_files.add_argument("--developer-id", required=True)
+    entitlement_files.set_defaults(func=_cmd_check_keychain_entitlement_files)
+
+    adhoc = sub.add_parser("write-adhoc-app-entitlements")
+    adhoc.add_argument("--template", required=True)
+    adhoc.add_argument("--output", required=True)
+    adhoc.set_defaults(func=_cmd_write_adhoc_app_entitlements)
+
+    developer = sub.add_parser("write-developer-id-app-entitlements")
+    developer.add_argument("--template", required=True)
+    developer.add_argument("--profile-plist", required=True)
+    developer.add_argument("--profile", required=True)
+    developer.add_argument("--output", required=True)
+    developer.add_argument("--embed", required=True)
+    developer.add_argument("--team-output", required=True)
+    developer.set_defaults(func=_cmd_write_developer_id_app_entitlements)
+
+    signed_ents = sub.add_parser("check-signed-keychain-entitlement")
+    signed_ents.add_argument("--plist", required=True)
+    signed_ents.add_argument("--label", required=True)
+    signed_ents.add_argument("--team")
+    signed_ents.add_argument("--absent", action="store_true")
+    signed_ents.set_defaults(func=_cmd_check_signed_keychain_entitlement)
     return parser
 
 

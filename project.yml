@@ -59,6 +59,7 @@ targets:
         excludes:
           - umbilical.entitlements
           - umbilical-debug.entitlements
+          - umbilical-developer-id.entitlements
           - Info.plist
           - Session
           - Session/**
