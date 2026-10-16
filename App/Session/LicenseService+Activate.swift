@@ -123,11 +123,10 @@ extension LicenseService {
     private func keep(_ previous: LicenseStatus, denial: LicenseDenial, error: String) {
         if LicensePermissions.resolve(previous).allowsNewDownloads {
             snapshot.status = previous
-            snapshot.actionError = error
-            return
+        } else {
+            snapshot.status = .unlicensed(denial)
         }
-        snapshot.status = .unlicensed(denial)
-        snapshot.actionError = nil
+        snapshot.actionError = error
     }
 
     private func activationInput(

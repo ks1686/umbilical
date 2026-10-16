@@ -20,7 +20,7 @@ Last updated October 15, 2026.
 | App Store Connect API key committed to the local genv config repo (same backup model) | Machine Keeper | planned (pending, not done) |
 | Developer ID signing and notarization of the release dmg (`scripts/release/publish.sh` on the signing Mac; not yet run) | Machine Keeper | planned |
 | License provider: Polar public customer-portal license keys, no organization access token | Code Lead | done |
-| Price $9.99 one time, lifetime updates, 14-day offline grace, 3 Macs per key | Code Lead | done |
+| Price $9.99 one time, lifetime updates, 14-day offline grace, 1 Mac per key | Code Lead | done |
 | Trademark check for umbilical and umb | Code Lead | planned |
 | License integration: public validate, activate, and deactivate only; organization id from xcconfig; device-bound Keychain cache; TLS to api.polar.sh. Replies are not separately signed. The Polar dashboard product and the local organization id are still required (release blocker) | Code Lead | in progress |
 | Homebrew cask draft in docs/homebrew/umbilical.rb (not pushed to ks1686/homebrew-tap) | Code Lead | in progress |

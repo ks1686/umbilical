@@ -176,6 +176,8 @@ final class AppModel: ObservableObject {
     }
 
     func activateLicense(_ rawKey: String) async -> Bool {
+        licensing.clearActionError()
+        publish()
         await licensing.activate(rawKey)
         publish()
         guard license.actionError == nil else { return false }
@@ -183,7 +185,15 @@ final class AppModel: ObservableObject {
     }
 
     func deactivateLicense() async {
+        licensing.clearActionError()
+        publish()
         await licensing.deactivate()
+        publish()
+    }
+
+    func clearLicenseError() {
+        guard license.actionError != nil else { return }
+        licensing.clearActionError()
         publish()
     }
 

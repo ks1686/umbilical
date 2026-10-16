@@ -68,9 +68,16 @@ public final class LicenseService {
         await reload(forceNetwork: false, clearError: false)
     }
 
+    /// Drops the Activate or Deactivate message and shows the stored license again.
+    public func clearActionError() {
+        guard snapshot.actionError != nil else { return }
+        apply(currentEvaluation(), error: nil)
+    }
+
     public func activate(_ rawKey: String) async {
         guard !busy else { return }
         guard configuration.enforcement == .on, configuration.organizationID != nil else { return }
+        clearActionError()
         guard let key = LicenseKeyNormalize.normalize(rawKey) else {
             snapshot.actionError = LicenseCopy.enterKey
             return
@@ -95,6 +102,7 @@ public final class LicenseService {
 
     public func deactivate() async {
         guard !busy, configuration.enforcement == .on else { return }
+        clearActionError()
         guard let deviceID = device.currentDeviceID(), let credential = store.loadCredential()
         else {
             apply(currentEvaluation(), error: nil)
@@ -157,6 +165,10 @@ public final class LicenseService {
                 networkFailed: lastNetworkFailed
             )
         )
+    }
+
+    func refreshPreservingError() {
+        apply(currentEvaluation(), error: snapshot.actionError)
     }
 
     func apply(_ evaluation: LicenseEvaluation, error: String?) {

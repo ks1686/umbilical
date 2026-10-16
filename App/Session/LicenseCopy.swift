@@ -45,7 +45,9 @@ public enum LicenseCopy {
         "Deactivate this Mac before activating a different key."
 
     public static var limitReached: String {
-        "This key is already active on \(LicensePolicy.activationLimit) Macs. "
+        let count = LicensePolicy.activationLimit
+        let noun = count == 1 ? "Mac" : "Macs"
+        return "This key is already active on \(count) \(noun). "
             + "Deactivate it on another Mac, or in the Polar customer portal, then try again."
     }
 

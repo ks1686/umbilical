@@ -4,7 +4,8 @@ umbilical is a native macOS download manager for macOS 14 and later, on
 Apple Silicon and Intel. It never seeds after a download completes. While
 a download is in progress, upload is capped at 1 KiB/s.
 
-The app is paid. It is also GPL-3.0-or-later, and anyone can build it from
+The app is paid. One key can be active on 1 Mac at a time, and Polar
+enforces that limit. It is also GPL-3.0-or-later, and anyone can build it from
 this source tree. Nothing here is meant to stop a source build.
 
 The app does not link aria2. The engine launches the bundled `aria2c` as a

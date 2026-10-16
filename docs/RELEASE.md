@@ -123,7 +123,7 @@ The residual risk is a same-user process swapping libraries PyInstaller extracts
 
 ## Checklist before a tag
 
-1. The Polar product exists ($9.99, one time, 3 activations, no expiry).
+1. The Polar product exists ($9.99, one time, activation limit 1, no expiry). Buyers deactivate instances in Polar.
 2. `POLAR_ORGANIZATION_ID` is that organization's UUID, in the environment or in `Config/Licensing.local.xcconfig`.
 3. The login Keychain has exactly one Developer ID Application identity.
 4. Notarization uses the keychain profile or the local files under `~/.config/genv/notarize/`.

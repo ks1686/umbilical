@@ -45,9 +45,12 @@ final class LicenseServiceTests: XCTestCase {
     }
 
     func testActivationLimitSaysHowManyMacs() async throws {
+        XCTAssertEqual(LicensePolicy.activationLimit, 1)
         let store = MemoryLicenseStore()
+        let denied = polarReply(status: 403, body: Data("{\"error\":\"NotPermitted\"}".utf8))
         let transport = StubLicenseTransport([
-            .success(polarReply(status: 403, body: Data("{\"error\":\"NotPermitted\"}".utf8)))
+            .success(denied),
+            .success(denied)
         ])
         let service = makeLicenseService(
             store: store, transport: transport, clock: ManualClock(now))
@@ -55,9 +58,101 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertEqual(licenseDenial(service.snapshot.status), .limitReached)
         XCTAssertNil(store.credential)
         let message = LicenseCopy.denialText(.limitReached)
-        XCTAssertTrue(message.contains(String(LicensePolicy.activationLimit)))
-        XCTAssertTrue(message.contains("Macs"))
-        XCTAssertEqual(LicenseCopy.panel(for: service.snapshot).statusText, message)
+        XCTAssertTrue(message.contains("1 Mac."))
+        XCTAssertFalse(message.contains("Macs"))
+        XCTAssertTrue(message.contains("Polar customer portal"))
+        let panel = LicenseCopy.panel(for: service.snapshot)
+        XCTAssertEqual(panel.statusText, message)
+        XCTAssertEqual(panel.errorText, message)
+        XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
+        XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).stopsActiveDownloads)
+        await service.tick()
+        XCTAssertEqual(service.snapshot.actionError, message)
+        XCTAssertEqual(licenseDenial(service.snapshot.status), .missing)
+        XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
+        await service.activate(LicenseFixture.key)
+        XCTAssertEqual(service.snapshot.actionError, message)
+        service.clearActionError()
+        XCTAssertNil(service.snapshot.actionError)
+        XCTAssertEqual(licenseDenial(service.snapshot.status), .missing)
+    }
+
+    func testDeactivateFailureStaysUntilTheUserClearsIt() async throws {
+        let store = MemoryLicenseStore()
+        store.credential = LicenseFixture.credential()
+        store.validation = LicenseFixture.validation(validatedAt: now)
+        let transport = StubLicenseTransport([
+            .success(polarReply(status: 500)),
+            .success(
+                polarReply(status: 200, body: try LicenseFixture.validationData(status: "granted")))
+        ])
+        let clock = ManualClock(now)
+        let service = makeLicenseService(store: store, transport: transport, clock: clock)
+        await service.deactivate()
+        XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        clock.now = now.addingTimeInterval(LicensePolicy.recheckInterval)
+        await service.tick()
+        XCTAssertEqual(transport.calls.count, 2)
+        XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        guard case .licensed = service.snapshot.status else {
+            return XCTFail("expected the current license to stay")
+        }
+        service.clearActionError()
+        XCTAssertNil(service.snapshot.actionError)
+        guard case .licensed = service.snapshot.status else {
+            return XCTFail("expected the current license to stay")
+        }
+    }
+
+    func testStickyDeactivateErrorDoesNotExtendGrace() async {
+        let store = MemoryLicenseStore()
+        store.credential = LicenseFixture.credential()
+        store.validation = LicenseFixture.validation(validatedAt: now)
+        let transport = StubLicenseTransport([
+            .success(polarReply(status: 500)),
+            .failure(StubLicenseError())
+        ])
+        let clock = ManualClock(now)
+        let service = makeLicenseService(store: store, transport: transport, clock: clock)
+        await service.deactivate()
+        XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        XCTAssertTrue(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
+
+        clock.now = now.addingTimeInterval(LicensePolicy.offlineGrace + 1)
+        await service.tick()
+
+        XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        XCTAssertEqual(licenseDenial(service.snapshot.status), .graceExpired)
+        let permissions = LicensePermissions.resolve(service.snapshot.status)
+        XCTAssertFalse(permissions.allowsNewDownloads)
+        XCTAssertFalse(permissions.allowsResume)
+        XCTAssertFalse(permissions.stopsActiveDownloads)
+        XCTAssertEqual(store.validation?.validatedAt, now)
+    }
+
+    func testStickyDeactivateErrorDoesNotIgnoreClockRollback() async {
+        let store = MemoryLicenseStore()
+        let observed = now
+        store.credential = LicenseFixture.credential()
+        store.validation = LicenseFixture.validation(
+            validatedAt: now.addingTimeInterval(-3_600),
+            observedAt: observed
+        )
+        let transport = StubLicenseTransport([
+            .success(polarReply(status: 500)),
+            .failure(StubLicenseError())
+        ])
+        let clock = ManualClock(now)
+        let service = makeLicenseService(store: store, transport: transport, clock: clock)
+        await service.deactivate()
+        XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        XCTAssertTrue(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
+
+        clock.now = observed.addingTimeInterval(-(LicensePolicy.clockSkew + 60))
+        await service.tick()
+
+        XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        XCTAssertEqual(licenseDenial(service.snapshot.status), .clockRollback)
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).stopsActiveDownloads)
     }
