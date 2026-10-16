@@ -95,10 +95,11 @@ If the data protection write fails, the app does not write the login
 keychain, does not read the leftover login item, and refuses activation. A
 later successful write deletes the leftover.
 
-The `keychain-access-groups` entitlement is on the app only. It is not on
-the Safari extension, aria2c, yt-dlp, or umb-watch. A Developer ID build
-embeds a provisioning profile that authorizes this group. See
-`docs/RELEASE.md`.
+The `keychain-access-groups` entitlement is on the Developer ID app only,
+as `7R2VPW8GH4.me.peapod.umbilical`. It is not on the Xcode Release
+entitlements, the Safari extension, aria2c, yt-dlp, or umb-watch. A
+Developer ID build embeds a provisioning profile that authorizes this
+group. See `docs/RELEASE.md`.
 
 The device id is the SHA-256 of `IOPlatformUUID`. The raw platform UUID is
 not stored and is not sent to Polar.

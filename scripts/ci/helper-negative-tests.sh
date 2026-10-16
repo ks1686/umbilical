@@ -103,16 +103,29 @@ then
 fi
 echo "yt-dlp entitlements stay on the helper"
 
-if ! grep -q 'keychain-access-groups' "${app_entitlements}"; then
-  echo "app entitlements missing keychain-access-groups" >&2
+if grep -q 'keychain-access-groups' "${app_entitlements}"; then
+  echo "Xcode Release entitlements must not include keychain-access-groups" >&2
   exit 1
 fi
-# shellcheck disable=SC2016 # literal $(AppIdentifierPrefix) in the entitlements file
-if ! grep -Fq '$(AppIdentifierPrefix)me.peapod.umbilical' "${app_entitlements}"; then
-  echo "app keychain access group is not the team prefix plus bundle id" >&2
+developer_entitlements="${root}/App/umbilical-developer-id.entitlements"
+if ! grep -Fq '7R2VPW8GH4.me.peapod.umbilical' "${developer_entitlements}"; then
+  echo "Developer ID entitlements must name 7R2VPW8GH4.me.peapod.umbilical" >&2
+  exit 1
+fi
+if grep -Fq 'AppIdentifierPrefix' "${developer_entitlements}" \
+  || grep -Fq '*' "${developer_entitlements}"
+then
+  echo "Developer ID keychain access group must be the exact team id and bundle id" >&2
+  exit 1
+fi
+if grep -q 'CODE_SIGN_ENTITLEMENTS: App/umbilical-developer-id.entitlements' \
+  "${root}/project.yml"
+then
+  echo "Xcode must not sign with the Developer ID keychain entitlements" >&2
   exit 1
 fi
 for extra in \
+  "${app_entitlements}" \
   "${root}/App/umbilical-debug.entitlements" \
   "${root}/Extension/Extension.entitlements" \
   "${root}/helpers/yt-dlp.entitlements"
@@ -122,7 +135,7 @@ do
     exit 1
   fi
 done
-echo "keychain-access-groups stays on the app"
+echo "keychain-access-groups stays off the Xcode Release entitlements"
 
 echo "Release copy fails when aria2c is missing"
 aria_release_log=""

@@ -50,10 +50,10 @@ just release v0.0.1
 1. Fail if `POLAR_ORGANIZATION_ID` is empty or not a UUID, or if the local Sparkle private key does not match `SUPublicEDKey`.
 2. Write `Config/Licensing.local.xcconfig` (gitignored) and stamp `CFBundleShortVersionString` and `CFBundleVersion` from the tag.
 3. Read the Developer ID Application identity from the login Keychain, and fail if the Developer ID provisioning profile is missing or not a file.
-4. Build a Release app. Xcode signs that build ad hoc. `scripts/copy-bundled-aria2.sh` and `scripts/copy-bundled-yt-dlp.sh` still refuse a Release build when `helpers/bin/aria2c` or `helpers/bin/yt-dlp` is missing. Those scripts receive the Developer ID and pass `--timestamp` when the identity is not `-`.
+4. Build a Release app. Xcode signs that build ad hoc with `App/umbilical.entitlements`. That file has no `keychain-access-groups` entitlement, so the ad hoc build does not need a provisioning profile. `scripts/copy-bundled-aria2.sh` and `scripts/copy-bundled-yt-dlp.sh` still refuse a Release build when `helpers/bin/aria2c` or `helpers/bin/yt-dlp` is missing. Those scripts receive the Developer ID and pass `--timestamp` when the identity is not `-`.
 5. `scripts/release/sign-bundle.sh` is the signature that ships. It signs aria2c and yt-dlp with the Developer ID identity, `--options runtime`, and `--timestamp`. yt-dlp gets `helpers/yt-dlp.entitlements` and no other entitlement file.
 6. The same pass signs Sparkle's `Downloader.xpc`, `Installer.xpc`, `Updater.app`, and `Autoupdate`, then `Sparkle.framework`, with the same identity, hardened runtime, and a timestamp. Existing entitlements are kept, and `com.apple.security.get-task-allow` is removed if it is present.
-7. It then signs the app with hardened runtime and a timestamp. A Developer ID identity embeds `Contents/embedded.provisionprofile` and sets `keychain-access-groups` to that profile's team id plus `me.peapod.umbilical`, from `App/umbilical.entitlements`. Ad hoc identity `-` signs the app without that entitlement and without a profile. Helpers and the Safari extension never get `keychain-access-groups`.
+7. It then signs the app with hardened runtime and a timestamp. A Developer ID identity embeds `Contents/embedded.provisionprofile` and signs with `App/umbilical-developer-id.entitlements`. That file's only access group is `7R2VPW8GH4.me.peapod.umbilical`. The profile's team id must be `7R2VPW8GH4`. Ad hoc identity `-` signs the app without that entitlement and without a profile, using `App/umbilical.entitlements`. Helpers and the Safari extension never get `keychain-access-groups`.
 8. Run `scripts/check-no-get-task-allow.sh` and `scripts/ci/yt-dlp-version.sh`.
 9. Build a dmg with `hdiutil` (`umbilical.app` plus an `/Applications` symlink), sign the dmg with `--timestamp`, and do not pass `--options runtime` on the dmg.
 10. Notarize with `notarytool` using the keychain profile or the local API key, staple, then run `stapler validate` and `spctl --assess --type open --context context:primary-signature`.
@@ -68,7 +68,7 @@ The script does not print the API key or the Sparkle private key. `sign_update` 
 
 `workflow_dispatch` on `.github/workflows/release.yml` builds a Release app with the ad hoc identity `-`, runs the helper and `get-task-allow` checks, and uploads `umbilical-dry-run.dmg` plus its SHA-256 as a workflow artifact. Pushing a version tag does not start that workflow. The workflow has no GitHub environment and no signing secrets. Pull request CI stays on `.github/workflows/ci.yml` and is also unsigned.
 
-Ad hoc signatures cannot take `--timestamp`. Debug builds use `App/umbilical-debug.entitlements`, which sets `com.apple.security.cs.disable-library-validation` so an ad hoc Sparkle framework can load. Release entitlements do not set that key. Library validation stays on for the notarized app, and Sparkle is re-signed with the same Developer ID. Debug entitlements do not include `keychain-access-groups`. An ad hoc build cannot store the license in the data protection keychain, and license checks stay off when the organization id is unset.
+Ad hoc signatures cannot take `--timestamp`. Debug builds use `App/umbilical-debug.entitlements`, which sets `com.apple.security.cs.disable-library-validation` so an ad hoc Sparkle framework can load. Release entitlements do not set that key. Library validation stays on for the notarized app, and Sparkle is re-signed with the same Developer ID. Neither the Debug entitlements nor the Xcode Release entitlements include `keychain-access-groups`. An ad hoc build cannot store the license in the data protection keychain, and license checks stay off when the organization id is unset.
 
 ## Sparkle
 
@@ -100,7 +100,9 @@ The Developer ID certificate and the App Store Connect API key are shared with t
 
 ## Data protection keychain profile
 
-License items use the data protection keychain. macOS only allows that from an app whose `keychain-access-groups` entitlement is authorized by a provisioning profile. The group is the team id plus `me.peapod.umbilical`, and it is the only group the app claims. Helpers and the Safari extension do not get the entitlement.
+License items use the data protection keychain. macOS only allows that from an app whose `keychain-access-groups` entitlement is authorized by a provisioning profile. The signed group is exactly `7R2VPW8GH4.me.peapod.umbilical`. Helpers and the Safari extension do not get the entitlement.
+
+Xcode's Release build signs with `App/umbilical.entitlements`, which does not contain `keychain-access-groups`. A restricted entitlement in that file makes Xcode require a provisioning profile, and the ad hoc Release build has none. `scripts/release/sign-bundle.sh` applies `App/umbilical-developer-id.entitlements` only when the identity is Developer ID, after the profile check. Identity `-` omits the group.
 
 Create the profile once, on the signing Mac:
 
@@ -109,7 +111,7 @@ Create the profile once, on the signing Mac:
 3. Create a **macOS Developer ID** provisioning profile for that App ID and the Developer ID Application certificate. Do not use a Development or Mac App Store profile.
 4. Download it and save it as `~/.config/genv/signing/umbilical.provisionprofile`. Do not commit it. `UMBILICAL_PROVISIONING_PROFILE` may point at another file path. It must not be the profile bytes.
 
-`just release` and `scripts/release/sign-bundle.sh` with a Developer ID identity refuse to sign when the file is missing or expired. They embed it at `Contents/embedded.provisionprofile` and sign the app with that one access group. Identity `-`, including GitHub Actions, skips the profile and does not claim the entitlement, so the ad hoc Release build still signs.
+The signing Mac's profile is a macOS Developer ID profile for team `7R2VPW8GH4`. Its keychain access groups include `7R2VPW8GH4.*`, which authorizes the app's exact group. `just release` and `scripts/release/sign-bundle.sh` with a Developer ID identity refuse to sign when the file is missing, expired, a development profile, or for another app or team. They embed it at `Contents/embedded.provisionprofile` and sign the app with `7R2VPW8GH4.me.peapod.umbilical` only. Identity `-`, including GitHub Actions and `scripts/release/build-release-app.sh`, skips the profile and does not claim the entitlement.
 
 Gatekeeper checks this profile every time the notarized app launches. When it expires, the app does not launch until an update ships a renewed profile. The expiration date is in the profile. Renew it in the developer portal and replace the file before that date.
 

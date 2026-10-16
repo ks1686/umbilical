@@ -197,8 +197,19 @@ class ReleaseToolsTest(unittest.TestCase):
         release_ents = (ROOT / "App" / "umbilical.entitlements").read_text(encoding="utf-8")
         self.assertNotIn("get-task-allow", release_ents)
         self.assertNotIn("disable-library-validation", release_ents)
-        self.assertIn("keychain-access-groups", release_ents)
-        self.assertIn("$(AppIdentifierPrefix)me.peapod.umbilical", release_ents)
+        self.assertNotIn("keychain-access-groups", release_ents)
+        developer_ents = (ROOT / "App" / "umbilical-developer-id.entitlements").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("keychain-access-groups", developer_ents)
+        self.assertIn(release_tools.APP_ACCESS_GROUP, developer_ents)
+        self.assertNotIn("$(AppIdentifierPrefix)", developer_ents)
+        self.assertNotIn("*", developer_ents)
+        self.assertIn("CODE_SIGN_ENTITLEMENTS: App/umbilical.entitlements", project)
+        self.assertNotIn(
+            "CODE_SIGN_ENTITLEMENTS: App/umbilical-developer-id.entitlements",
+            project,
+        )
         debug_ents = (ROOT / "App" / "umbilical-debug.entitlements").read_text(encoding="utf-8")
         self.assertIn("com.apple.security.cs.disable-library-validation", debug_ents)
         self.assertNotIn("allow-jit", debug_ents)
@@ -483,6 +494,8 @@ class ReleaseToolsTest(unittest.TestCase):
         self.assertIn("helpers/yt-dlp.entitlements", sign)
         self.assertIn("write-adhoc-app-entitlements", sign)
         self.assertIn("write-developer-id-app-entitlements", sign)
+        self.assertIn("check-keychain-entitlement-files", sign)
+        self.assertIn("App/umbilical-developer-id.entitlements", sign)
         self.assertIn("resolve-provisioning-profile", sign)
         self.assertIn("keychain-access-groups", sign)
         self.assertIn("resolve-provisioning-profile", publish)
@@ -509,6 +522,20 @@ class ReleaseToolsTest(unittest.TestCase):
         exact["Entitlements"] = dict(plist["Entitlements"])
         exact["Entitlements"]["keychain-access-groups"] = [f"{team}.me.peapod.umbilical"]
         self.assertEqual(release_tools.validate_developer_id_profile(exact, now), team)
+        mac_profile = {
+            "TeamIdentifier": [release_tools.APP_TEAM_ID],
+            "ExpirationDate": datetime(2030, 1, 1, tzinfo=timezone.utc),
+            "Platform": ["OSX"],
+            "Entitlements": {
+                "com.apple.application-identifier": release_tools.APP_ACCESS_GROUP,
+                "com.apple.developer.team-identifier": release_tools.APP_TEAM_ID,
+                "keychain-access-groups": [f"{release_tools.APP_TEAM_ID}.*"],
+            },
+        }
+        self.assertEqual(
+            release_tools.validate_developer_id_profile(mac_profile, now),
+            release_tools.APP_TEAM_ID,
+        )
         development = dict(plist)
         development["ProvisionedDevices"] = ["DEVICE"]
         with self.assertRaises(SystemExit):
@@ -525,13 +552,26 @@ class ReleaseToolsTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             release_tools.access_group_for_team("short")
 
-        template = release_tools.load_plist(ROOT / "App" / "umbilical.entitlements")
-        adhoc = release_tools.entitlements_for_adhoc(template)
+        build = release_tools.load_plist(ROOT / "App" / "umbilical.entitlements")
+        release_tools.require_build_entitlements_omit_keychain(build)
+        adhoc = release_tools.entitlements_for_adhoc(
+            {"keychain-access-groups": [f"{team}.me.peapod.umbilical"], "other": True}
+        )
         self.assertNotIn("keychain-access-groups", adhoc)
-        signed = release_tools.entitlements_for_developer_id(template, team)
+        self.assertEqual(adhoc["other"], True)
+        developer = release_tools.load_plist(ROOT / "App" / "umbilical-developer-id.entitlements")
         self.assertEqual(
-            signed["keychain-access-groups"],
-            ["AB12CD34EF.me.peapod.umbilical"],
+            release_tools.check_keychain_entitlement_files(build, developer),
+            release_tools.APP_TEAM_ID,
+        )
+        signed = release_tools.entitlements_for_developer_id(developer, release_tools.APP_TEAM_ID)
+        self.assertEqual(signed["keychain-access-groups"], [release_tools.APP_ACCESS_GROUP])
+        with self.assertRaises(SystemExit):
+            release_tools.entitlements_for_developer_id(developer, team)
+        other_team = {"keychain-access-groups": [f"{team}.me.peapod.umbilical"]}
+        self.assertEqual(
+            release_tools.entitlements_for_developer_id(other_team, team)["keychain-access-groups"],
+            [f"{team}.me.peapod.umbilical"],
         )
         extra = {
             "keychain-access-groups": [
@@ -541,8 +581,20 @@ class ReleaseToolsTest(unittest.TestCase):
         }
         with self.assertRaises(SystemExit):
             release_tools.entitlements_for_developer_id(extra, team)
+        with self.assertRaises(SystemExit):
+            release_tools.entitlements_for_developer_id(
+                {"keychain-access-groups": [f"{team}.*"]},
+                team,
+            )
+        with self.assertRaises(SystemExit):
+            release_tools.check_keychain_entitlement_files(
+                {"keychain-access-groups": [release_tools.APP_ACCESS_GROUP]},
+                developer,
+            )
         release_tools.assert_signed_keychain_entitlement(adhoc, label="app", team_id=None)
-        release_tools.assert_signed_keychain_entitlement(signed, label="app", team_id=team)
+        release_tools.assert_signed_keychain_entitlement(
+            signed, label="app", team_id=release_tools.APP_TEAM_ID
+        )
         with self.assertRaises(SystemExit):
             release_tools.assert_signed_keychain_entitlement(
                 {"keychain-access-groups": [f"{team}.*"]},

@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Build the Release app into dist/umbilical.app.
-# Xcode itself always signs ad hoc. Nested Sparkle XPC services break an
-# outside-in Developer ID sign during the embed phase.
+# Xcode itself always signs ad hoc. App/umbilical.entitlements has no
+# keychain-access-groups, so this build does not need a provisioning profile.
+# Nested Sparkle XPC services break an outside-in Developer ID sign during
+# the embed phase.
 # SIGNING_IDENTITY is still forwarded to the helper copy scripts.
 # scripts/release/sign-bundle.sh applies Developer ID after this build.
 # Set RELEASE_VERSION to stamp the tag onto both bundle versions.

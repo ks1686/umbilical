@@ -552,8 +552,10 @@ def resolve_notary_auth(config_dir: Path) -> list[str]:
 
 
 APP_BUNDLE_ID = "me.peapod.umbilical"
-ACCESS_GROUP_PLACEHOLDER = "$(AppIdentifierPrefix)me.peapod.umbilical"
+APP_TEAM_ID = "7R2VPW8GH4"
+APP_ACCESS_GROUP = f"{APP_TEAM_ID}.{APP_BUNDLE_ID}"
 TEAM_ID_RE = re.compile(r"^[A-Z0-9]{10}$")
+ACCESS_GROUP_RE = re.compile(rf"^([A-Z0-9]{{10}})\.{re.escape(APP_BUNDLE_ID)}$")
 
 
 def access_group_for_team(team_id: str) -> str:
@@ -562,24 +564,47 @@ def access_group_for_team(team_id: str) -> str:
     return f"{team_id}.{APP_BUNDLE_ID}"
 
 
-def require_access_group_placeholder(template: dict) -> None:
+def require_exact_app_access_group(template: dict) -> str:
+    if set(template) != {"keychain-access-groups"}:
+        fail("Developer ID entitlements must contain only keychain-access-groups")
     groups = template.get("keychain-access-groups")
-    if groups != [ACCESS_GROUP_PLACEHOLDER]:
+    if not isinstance(groups, list) or len(groups) != 1 or not isinstance(groups[0], str):
+        fail("Developer ID entitlements must set one keychain access group")
+    match = ACCESS_GROUP_RE.fullmatch(groups[0])
+    if match is None:
         fail(
-            "App/umbilical.entitlements must set keychain-access-groups to "
-            "$(AppIdentifierPrefix)me.peapod.umbilical only"
+            "Developer ID keychain access group must be the team id plus "
+            "me.peapod.umbilical"
         )
+    return match.group(1)
+
+
+def require_build_entitlements_omit_keychain(template: dict) -> None:
+    if "keychain-access-groups" in template:
+        fail("Xcode Release entitlements must not include keychain-access-groups")
+
+
+def check_keychain_entitlement_files(build: dict, developer: dict) -> str:
+    require_build_entitlements_omit_keychain(build)
+    team_id = require_exact_app_access_group(developer)
+    if team_id != APP_TEAM_ID or developer["keychain-access-groups"] != [APP_ACCESS_GROUP]:
+        fail(
+            "Developer ID entitlements must set keychain-access-groups to "
+            f"{APP_ACCESS_GROUP} only"
+        )
+    return team_id
 
 
 def entitlements_for_adhoc(template: dict) -> dict:
-    require_access_group_placeholder(template)
     cleaned = copy.deepcopy(template)
-    del cleaned["keychain-access-groups"]
+    cleaned.pop("keychain-access-groups", None)
     return cleaned
 
 
 def entitlements_for_developer_id(template: dict, team_id: str) -> dict:
-    require_access_group_placeholder(template)
+    file_team = require_exact_app_access_group(template)
+    if team_id != file_team:
+        fail("provisioning profile team id does not match the app keychain access group")
     cleaned = copy.deepcopy(template)
     cleaned["keychain-access-groups"] = [access_group_for_team(team_id)]
     return cleaned
@@ -772,6 +797,12 @@ def _cmd_resolve_provisioning_profile(_args: argparse.Namespace) -> None:
     sys.stdout.write(str(default_provisioning_profile()) + "\n")
 
 
+def _cmd_check_keychain_entitlement_files(args: argparse.Namespace) -> None:
+    build = load_plist(Path(args.build))
+    developer = load_plist(Path(args.developer_id))
+    check_keychain_entitlement_files(build, developer)
+
+
 def _cmd_write_adhoc_app_entitlements(args: argparse.Namespace) -> None:
     template = load_plist(Path(args.template))
     write_xml_plist(Path(args.output), entitlements_for_adhoc(template))
@@ -849,6 +880,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     profile = sub.add_parser("resolve-provisioning-profile")
     profile.set_defaults(func=_cmd_resolve_provisioning_profile)
+
+    entitlement_files = sub.add_parser("check-keychain-entitlement-files")
+    entitlement_files.add_argument("--build", required=True)
+    entitlement_files.add_argument("--developer-id", required=True)
+    entitlement_files.set_defaults(func=_cmd_check_keychain_entitlement_files)
 
     adhoc = sub.add_parser("write-adhoc-app-entitlements")
     adhoc.add_argument("--template", required=True)

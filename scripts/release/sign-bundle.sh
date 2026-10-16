@@ -3,8 +3,10 @@
 # Identity "-" is ad hoc and is not timestamped.
 # Any other identity is Developer ID and gets a secure timestamp.
 # yt-dlp is signed with helpers/yt-dlp.entitlements and no other entitlement file.
-# keychain-access-groups is applied only to the app, and only for Developer ID,
-# where a provisioning profile authorizes TEAMID.me.peapod.umbilical.
+# keychain-access-groups is not in the entitlements Xcode signs.
+# sign-bundle applies App/umbilical-developer-id.entitlements only for Developer ID,
+# where a provisioning profile authorizes that exact team id plus me.peapod.umbilical.
+# Ad hoc identity "-" omits the group and does not embed a profile.
 set -euo pipefail
 
 app="${1:-}"
@@ -20,30 +22,36 @@ if [[ ! -d "${app}" ]]; then
 fi
 
 release_ents="${root}/App/umbilical.entitlements"
+developer_ents="${root}/App/umbilical-developer-id.entitlements"
 ytdlp_ents="${root}/helpers/yt-dlp.entitlements"
 extension_ents="${root}/Extension/Extension.entitlements"
 debug_ents="${root}/App/umbilical-debug.entitlements"
 tools="${root}/scripts/release/release_tools.py"
 
-for file in "${release_ents}" "${ytdlp_ents}" "${extension_ents}" "${debug_ents}"; do
+for file in "${release_ents}" "${developer_ents}" "${ytdlp_ents}" "${extension_ents}" "${debug_ents}"; do
   if [[ ! -f "${file}" ]]; then
     echo "missing entitlements file: ${file}" >&2
     exit 1
   fi
 done
 
-if grep -q 'com.apple.security.get-task-allow' "${release_ents}"; then
+if grep -q 'com.apple.security.get-task-allow' "${release_ents}" "${developer_ents}"; then
   echo "release entitlements include get-task-allow" >&2
   exit 1
 fi
-if grep -q 'disable-library-validation' "${release_ents}"; then
+if grep -q 'disable-library-validation' "${release_ents}" "${developer_ents}"; then
   echo "release entitlements disable library validation" >&2
   exit 1
 fi
-if grep -q 'keychain-access-groups' "${ytdlp_ents}" "${extension_ents}" "${debug_ents}"; then
-  echo "keychain-access-groups is only on the app release entitlements" >&2
+if grep -q 'keychain-access-groups' \
+  "${release_ents}" "${ytdlp_ents}" "${extension_ents}" "${debug_ents}"
+then
+  echo "keychain-access-groups is only on App/umbilical-developer-id.entitlements" >&2
   exit 1
 fi
+python3 "${tools}" check-keychain-entitlement-files \
+  --build "${release_ents}" \
+  --developer-id "${developer_ents}"
 
 sign() {
   local target="$1"
@@ -121,7 +129,7 @@ else
   profile="$(python3 "${tools}" resolve-provisioning-profile)"
   security cms -D -i "${profile}" >"${profile_plist}"
   python3 "${tools}" write-developer-id-app-entitlements \
-    --template "${release_ents}" \
+    --template "${developer_ents}" \
     --profile-plist "${profile_plist}" \
     --profile "${profile}" \
     --output "${app_ents}" \

@@ -131,12 +131,15 @@ final class LicenseRuleTests: XCTestCase {
     }
 
     func testKeychainAccessGroupStaysOnTheAppEntitlements() throws {
-        let app = try entitlementsPlist("App/umbilical.entitlements")
+        let release = try entitlementsPlist("App/umbilical.entitlements")
+        XCTAssertNil(release["keychain-access-groups"])
+        let developer = try entitlementsPlist("App/umbilical-developer-id.entitlements")
         XCTAssertEqual(
-            app["keychain-access-groups"] as? [String],
-            ["$(AppIdentifierPrefix)me.peapod.umbilical"]
+            developer["keychain-access-groups"] as? [String],
+            ["7R2VPW8GH4.me.peapod.umbilical"]
         )
         for relative in [
+            "App/umbilical.entitlements",
             "App/umbilical-debug.entitlements",
             "Extension/Extension.entitlements",
             "helpers/yt-dlp.entitlements"
