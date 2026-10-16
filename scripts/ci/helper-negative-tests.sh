@@ -107,6 +107,7 @@ if ! grep -q 'keychain-access-groups' "${app_entitlements}"; then
   echo "app entitlements missing keychain-access-groups" >&2
   exit 1
 fi
+# shellcheck disable=SC2016 # literal $(AppIdentifierPrefix) in the entitlements file
 if ! grep -Fq '$(AppIdentifierPrefix)me.peapod.umbilical' "${app_entitlements}"; then
   echo "app keychain access group is not the team prefix plus bundle id" >&2
   exit 1
