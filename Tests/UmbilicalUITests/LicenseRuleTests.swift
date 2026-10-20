@@ -6,10 +6,6 @@ import XCTest
 
 @testable import UmbilicalUI
 
-#if os(macOS)
-    import Security
-#endif
-
 final class LicenseRuleTests: XCTestCase {
     func testBindingRejectsAnotherDeviceOrAnotherKey() {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
@@ -77,6 +73,80 @@ final class LicenseRuleTests: XCTestCase {
             .afterFirstUnlockThisDeviceOnly
         )
         XCTAssertFalse(LicenseKeychainPolicy.item.synchronizable)
+        XCTAssertTrue(LicenseKeychainPolicy.item.useDataProtectionKeychain)
+    }
+
+    func testAccessGroupIsOnlyTheAppTeamAndBundleID() {
+        let group = "AB12CD34EF.me.peapod.umbilical"
+        XCTAssertEqual(LicenseKeychainAccessGroup.onlyAppGroup(in: [group]), group)
+        XCTAssertNil(LicenseKeychainAccessGroup.onlyAppGroup(in: []))
+        XCTAssertNil(
+            LicenseKeychainAccessGroup.onlyAppGroup(in: [group, "AB12CD34EF.me.peapod.other"])
+        )
+        XCTAssertNil(LicenseKeychainAccessGroup.onlyAppGroup(in: ["me.peapod.umbilical"]))
+        XCTAssertNil(
+            LicenseKeychainAccessGroup.onlyAppGroup(
+                in: ["$(AppIdentifierPrefix)me.peapod.umbilical"]
+            )
+        )
+        XCTAssertNil(LicenseKeychainAccessGroup.onlyAppGroup(in: ["AB12CD34EF.*"]))
+        XCTAssertNil(
+            LicenseKeychainAccessGroup.onlyAppGroup(in: ["AB12CD34EF.me.peapod.umbilical.extra"])
+        )
+        XCTAssertNil(
+            LicenseKeychainAccessGroup.onlyAppGroup(in: ["ab12cd34ef.me.peapod.umbilical"])
+        )
+    }
+
+    func testDataProtectionQueriesDoNotTargetTheLoginKeychain() {
+        let group = "AB12CD34EF.me.peapod.umbilical"
+        for account in LicenseKeychainAccount.all {
+            let stored = LicenseKeychainQueries.dataProtection(
+                service: "me.peapod.umbilical.license",
+                account: account,
+                accessGroup: group,
+                storing: true
+            )
+            XCTAssertTrue(LicenseKeychainWriteGuard.canStore(stored), account)
+            XCTAssertTrue(stored.useDataProtectionKeychain, account)
+            XCTAssertEqual(stored.synchronizable, Optional(false), account)
+            XCTAssertEqual(stored.accessible, .afterFirstUnlockThisDeviceOnly, account)
+            XCTAssertEqual(stored.accessGroup, group, account)
+            var loginWrite = stored
+            loginWrite.useDataProtectionKeychain = false
+            XCTAssertFalse(LicenseKeychainWriteGuard.canStore(loginWrite), account)
+            var synced = stored
+            synced.synchronizable = true
+            XCTAssertFalse(LicenseKeychainWriteGuard.canStore(synced), account)
+            let legacy = LicenseKeychainQueries.legacyLoginDelete(
+                service: "me.peapod.umbilical.license",
+                account: account
+            )
+            XCTAssertFalse(LicenseKeychainWriteGuard.canStore(legacy), account)
+            XCTAssertTrue(LicenseKeychainWriteGuard.targetsLegacyLogin(legacy), account)
+            XCTAssertFalse(legacy.useDataProtectionKeychain, account)
+            XCTAssertNil(legacy.accessible, account)
+            XCTAssertNil(legacy.accessGroup, account)
+        }
+    }
+
+    func testKeychainAccessGroupStaysOnTheAppEntitlements() throws {
+        let release = try entitlementsPlist("App/umbilical.entitlements")
+        XCTAssertNil(release["keychain-access-groups"])
+        let developer = try entitlementsPlist("App/umbilical-developer-id.entitlements")
+        XCTAssertEqual(
+            developer["keychain-access-groups"] as? [String],
+            ["7R2VPW8GH4.me.peapod.umbilical"]
+        )
+        for relative in [
+            "App/umbilical.entitlements",
+            "App/umbilical-debug.entitlements",
+            "Extension/Extension.entitlements",
+            "helpers/yt-dlp.entitlements"
+        ] {
+            let other = try entitlementsPlist(relative)
+            XCTAssertNil(other["keychain-access-groups"], relative)
+        }
     }
 
     func testSHA256MatchesKnownVectors() {
@@ -177,26 +247,12 @@ final class LicenseRuleTests: XCTestCase {
     }
 }
 
-#if os(macOS)
-    final class LicenseKeychainAttributeTests: XCTestCase {
-        func testItemsAreAfterFirstUnlockThisDeviceOnly() {
-            let data = Data("validation".utf8)
-            let add = KeychainLicenseStore.addAttributes(
-                service: "me.peapod.umbilical.license",
-                account: "validation",
-                data: data
-            )
-            XCTAssertEqual(
-                add[kSecAttrAccessible as String] as? String,
-                kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
-            )
-            XCTAssertEqual(add[kSecAttrSynchronizable as String] as? Bool, false)
-            let lookup = KeychainLicenseStore.lookupAttributes(
-                service: "me.peapod.umbilical.license",
-                account: "validation"
-            )
-            XCTAssertEqual(lookup[kSecAttrSynchronizable as String] as? Bool, false)
-            XCTAssertNil(lookup[kSecAttrAccessible as String])
-        }
-    }
-#endif
+private func entitlementsPlist(_ relative: String) throws -> [String: Any] {
+    let root = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+    let data = try Data(contentsOf: root.appendingPathComponent(relative))
+    let object = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+    return try XCTUnwrap(object as? [String: Any])
+}

@@ -91,10 +91,11 @@ extension LicenseService {
         if !saved {
             store.clearCredential()
             store.clearValidation()
-            await compensate(record)
+            let released = await compensate(record)
             snapshot.status = .unlicensed(.keychainFailed)
             snapshot.canDeactivate = false
-            snapshot.actionError = LicenseCopy.keychainFailed
+            snapshot.actionError =
+                released ? LicenseCopy.keychainFailed : LicenseCopy.keychainFailedUnconfirmed
             return
         }
         lastNetworkFailed = false
@@ -135,13 +136,37 @@ extension LicenseService {
         refreshPreservingError()
     }
 
-    private func compensate(_ record: LicenseValidationRecord) async {
-        guard let organizationID = configuration.organizationID else { return }
+    private func compensate(_ record: LicenseValidationRecord) async -> Bool {
+        guard let organizationID = configuration.organizationID else {
+            hooks.log("license compensation failed. organization id is missing")
+            return false
+        }
         let call = PolarLicenseRequest.deactivate(
             key: record.key,
             organizationID: organizationID,
             activationID: record.activationID
         )
-        _ = try? await transport.send(call)
+        do {
+            let reply = try await transport.send(call)
+            if compensationSucceeded(reply.statusCode) {
+                hooks.log("license compensation succeeded. status \(reply.statusCode)")
+                return true
+            }
+            hooks.log("license compensation failed. status \(reply.statusCode)")
+            return false
+        } catch {
+            let name = LicenseLog.errorName(error)
+            hooks.log("license compensation failed. error \(name)")
+            return false
+        }
+    }
+
+    private func compensationSucceeded(_ statusCode: Int) -> Bool {
+        switch PolarStatus.kind(statusCode) {
+        case .success, .notFound:
+            return true
+        case .forbidden, .unavailable:
+            return false
+        }
     }
 }

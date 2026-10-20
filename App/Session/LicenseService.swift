@@ -26,13 +26,23 @@ public struct LicenseRuntime {
 public struct LicenseHooks {
     public var clock: @MainActor () -> Date
     public var makeLabel: @MainActor () -> String
+    var log: @MainActor (String) -> Void
 
     public init(
         clock: @escaping @MainActor () -> Date = { Date() },
         makeLabel: @escaping @MainActor () -> String = { LicenseDeviceLabel.make() }
     ) {
+        self.init(clock: clock, makeLabel: makeLabel, log: { LicenseLog.write($0) })
+    }
+
+    init(
+        clock: @escaping @MainActor () -> Date,
+        makeLabel: @escaping @MainActor () -> String,
+        log: @escaping @MainActor (String) -> Void
+    ) {
         self.clock = clock
         self.makeLabel = makeLabel
+        self.log = log
     }
 }
 

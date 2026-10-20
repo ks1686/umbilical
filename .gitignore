@@ -15,6 +15,9 @@ __pycache__/
 # Machine-local Polar organization id. Not an access token, and not committed.
 Config/Licensing.local.xcconfig
 
+# Developer ID profiles are machine-local and expire. The release script embeds one.
+*.provisionprofile
+
 # Helper build products. Lock files and the yt-dlp public key stay tracked.
 helpers/bin/
 helpers/src/

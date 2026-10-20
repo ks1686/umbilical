@@ -259,3 +259,26 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
     }
 }
+
+@MainActor
+final class LicenseKeychainFailureTests: XCTestCase {
+    private let now = Date(timeIntervalSince1970: 1_800_000_000)
+
+    func testActivateRefusesWhenTheLicenseCannotBeStored() async throws {
+        let store = MemoryLicenseStore()
+        store.failCredentialSave = true
+        let transport = StubLicenseTransport([
+            .success(polarReply(status: 200, body: try LicenseFixture.activationData()))
+        ])
+        let service = makeLicenseService(
+            store: store, transport: transport, clock: ManualClock(now))
+        await service.activate(LicenseFixture.key)
+        XCTAssertEqual(licenseDenial(service.snapshot.status), .keychainFailed)
+        XCTAssertNil(store.credential)
+        XCTAssertNil(store.validation)
+        XCTAssertEqual(
+            transport.calls.map(\.path),
+            [PolarLicenseEndpoint.activate.rawValue, PolarLicenseEndpoint.deactivate.rawValue]
+        )
+    }
+}
