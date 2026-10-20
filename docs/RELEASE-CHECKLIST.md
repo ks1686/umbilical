@@ -1,15 +1,15 @@
 # v1 release checklist
 
 Each item has an owner and a state. An item is marked done only after it has been verified.
-Last updated October 15, 2026.
+Last updated October 20, 2026.
 
 | Item | Owner | State |
 | --- | --- | --- |
 | M0 skeleton (PR #1, merged `d55d279`) | Code Lead | done |
 | M1 engine (PR #2, merged `1e02b8a`) | Code Lead | done |
 | Release decisions doc (PR #3, merged `ec0c5ad`) | Code Lead | done |
-| M2 torrent and magnet, no seeding, packet-capture test (release blocker) | Code Lead | in progress |
-| M2 follow-ups: zizmor online audits, remove `seed-ratio=0.0`, `just test` recipe | Code Lead | in progress |
+| M2 torrent and magnet, no seeding, packet-capture test (PR #6, merged `24713a5`; `SeedCaptureTests` passes with tcpdump in the Engine CI job on main) | Code Lead | done |
+| M2 follow-ups: zizmor online audits, remove `seed-ratio=0.0`, `just test` recipe (all three are in main) | Code Lead | done |
 | M3 UI (Mac checklist in docs/M3-MANUAL.md, not yet run) | Code Lead | in progress |
 | M4 Safari extension (Mac checklist in docs/M4-MANUAL.md, not yet run) | Code Lead | in progress |
 | Video downloads with yt-dlp (ffmpeg and a JS runtime are not bundled; Mac checklist in docs/VIDEO-MANUAL.md, not yet run) | Code Lead | in progress |
@@ -23,7 +23,7 @@ Last updated October 15, 2026.
 | License provider: Polar public customer-portal license keys, no organization access token | Code Lead | done |
 | Price $9.99 one time, lifetime updates, 14-day offline grace, 1 Mac per key | Code Lead | done |
 | Trademark check for umbilical and umb | Code Lead | planned |
-| License integration: public validate, activate, and deactivate only; organization id from xcconfig; device-bound Keychain cache; TLS to api.polar.sh. Replies are not separately signed. The Polar dashboard product and the local organization id are still required (release blocker) | Code Lead | in progress |
+| License integration: public validate, activate, and deactivate only; organization id from xcconfig; device-bound Keychain cache; TLS to api.polar.sh. Replies are not separately signed. Data protection Keychain fix in PR #15 (`9788487`). Verified on the Mac with a real key: activate, relaunch, deactivate. The organization id passed release preflight. Karim still confirms the 1 Mac limit on the Polar storefront | Code Lead | done |
 | Homebrew cask draft in docs/homebrew/umbilical.rb (not pushed to ks1686/homebrew-tap) | Code Lead | in progress |
 | Cask checks on the Mac: `brew audit --cask`, `brew style`, install from tap, brew still sees app current after a Sparkle update | Machine Keeper | planned |
 | Final security review (signing, update feed, license check against the license rules above, Homebrew cask, App Sandbox, release tag scan) | Repo Guard | planned |

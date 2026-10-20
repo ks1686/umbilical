@@ -25,3 +25,4 @@ object_mtime=210001010000.00
 # Recorded from GitHub Actions run 38671621890 after --disable-websocket.
 toolchain_sha256=26.6|21.0.0 (clang-2100.1.1.101)|7cf4417ceed5b43e2484d4e1738ddbf0680904c230a64799bbb16e0dfa075774
 toolchain_sha256=27.0|21.0.0 (clang-2100.3.34.2)|fccf3c476f71cc93895c55caa22d3fd7553ff1d2aec27c23d1c507a0aa948664
+toolchain_sha256=27.1|21.0.0 (clang-2100.3.34.2)|fccf3c476f71cc93895c55caa22d3fd7553ff1d2aec27c23d1c507a0aa948664
