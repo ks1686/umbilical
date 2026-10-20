@@ -90,13 +90,15 @@ public struct LicenseSnapshot: Equatable {
     public var deviceLabel: String?
     public var isBusy: Bool
     public var actionError: String?
+    public var actionNotice: String?
 
     public static let empty = LicenseSnapshot(
         status: .unlicensed(.missing),
         canDeactivate: false,
         deviceLabel: nil,
         isBusy: false,
-        actionError: nil
+        actionError: nil,
+        actionNotice: nil
     )
 }
 

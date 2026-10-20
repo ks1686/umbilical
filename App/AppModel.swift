@@ -192,7 +192,7 @@ final class AppModel: ObservableObject {
     }
 
     func clearLicenseError() {
-        guard license.actionError != nil else { return }
+        guard license.actionError != nil || license.actionNotice != nil else { return }
         licensing.clearActionError()
         publish()
     }

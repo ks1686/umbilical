@@ -96,6 +96,7 @@ extension LicenseService {
             snapshot.canDeactivate = false
             snapshot.actionError =
                 released ? LicenseCopy.keychainFailed : LicenseCopy.keychainFailedUnconfirmed
+            snapshot.actionNotice = nil
             return
         }
         lastNetworkFailed = false
@@ -108,6 +109,7 @@ extension LicenseService {
     ) {
         guard store.saveValidation(record), store.saveCredential(credential) else {
             snapshot.actionError = LicenseCopy.keychainFailed
+            snapshot.actionNotice = nil
             return
         }
         lastNetworkFailed = false
