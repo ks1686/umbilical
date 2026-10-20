@@ -133,7 +133,8 @@ func makeLicenseService(
     store: MemoryLicenseStore = MemoryLicenseStore(),
     transport: StubLicenseTransport = StubLicenseTransport(),
     clock: ManualClock,
-    options: LicenseHarnessOptions = LicenseHarnessOptions()
+    options: LicenseHarnessOptions = LicenseHarnessOptions(),
+    log: @escaping @MainActor (String) -> Void = { _ in }
 ) -> LicenseService {
     let configuration = LicenseConfiguration(
         organizationID: options.enforcement == .on ? LicenseFixture.organizationID : nil,
@@ -149,7 +150,8 @@ func makeLicenseService(
         ),
         hooks: LicenseHooks(
             clock: { clock.now },
-            makeLabel: { LicenseFixture.label }
+            makeLabel: { LicenseFixture.label },
+            log: log
         )
     )
 }

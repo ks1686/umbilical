@@ -34,6 +34,10 @@ public enum LicenseCopy {
     public static let keychainFailed =
         "The Keychain did not save the license. "
         + "If this Mac was activated, deactivate it in the Polar customer portal and try again."
+    public static let keychainFailedUnconfirmed =
+        "The Keychain did not save the license. "
+        + "Polar did not confirm that this Mac was deactivated. "
+        + "Deactivate it in the Polar customer portal and try again."
     public static let deactivateFailed =
         "Polar did not deactivate this Mac. The license on this Mac is unchanged."
     public static let missing = "Enter a license key to use umbilical on this Mac."
