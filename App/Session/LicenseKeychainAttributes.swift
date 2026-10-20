@@ -36,6 +36,53 @@ enum LicenseKeychainAccessGroup {
     }
 }
 
+/// Reads the access group from a `SecCodeCopySigningInformation` dictionary.
+enum SignedLicenseAccessGroup {
+    /// `kSecCodeInfoEntitlements`. The value is the raw entitlements blob.
+    static let entitlementsBlobKey = "entitlements"
+    /// `kSecCodeInfoEntitlementsDict`. The value is the entitlements dictionary.
+    static let entitlementsDictionaryKey = "entitlements-dict"
+    static let releaseGroup = "7R2VPW8GH4." + LicenseKeychainAccessGroup.bundleID
+
+    static func accessGroup(from signingInformation: [String: Any]) -> String? {
+        guard let entitlements = dictionary(signingInformation[entitlementsDictionaryKey]) else {
+            return nil
+        }
+        guard let listed = stringList(entitlements["keychain-access-groups"]) else { return nil }
+        guard let group = LicenseKeychainAccessGroup.onlyAppGroup(in: listed) else { return nil }
+        guard group == releaseGroup else { return nil }
+        return group
+    }
+
+    private static func dictionary(_ raw: Any?) -> [String: Any]? {
+        if let values = raw as? [String: Any] { return values }
+        guard let values = raw as? NSDictionary else { return nil }
+        var listed: [String: Any] = [:]
+        for case (let key as String, let value) in values {
+            listed[key] = value
+        }
+        guard listed.count == values.count else { return nil }
+        return listed
+    }
+
+    private static func stringList(_ raw: Any?) -> [String]? {
+        if let groups = raw as? [String] { return groups }
+        if let groups = raw as? [Any] { return completeStrings(groups) }
+        guard let groups = raw as? NSArray else { return nil }
+        var listed: [Any] = []
+        for item in groups {
+            listed.append(item)
+        }
+        return completeStrings(listed)
+    }
+
+    private static func completeStrings(_ groups: [Any]) -> [String]? {
+        let listed = groups.compactMap { $0 as? String }
+        guard listed.count == groups.count else { return nil }
+        return listed
+    }
+}
+
 struct LicenseKeychainQuery: Equatable {
     var service: String
     var account: String

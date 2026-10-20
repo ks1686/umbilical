@@ -283,7 +283,7 @@ import Foundation
         }
     }
 
-    enum SignedLicenseAccessGroup {
+    extension SignedLicenseAccessGroup {
         static func current() -> String? {
             var code: SecCode?
             guard SecCodeCopySelf([], &code) == errSecSuccess, let code else { return nil }
@@ -294,22 +294,23 @@ import Foundation
             let flags = SecCSFlags(rawValue: kSecCSSigningInformation)
             guard
                 SecCodeCopySigningInformation(staticCode, flags, &information) == errSecSuccess,
-                let information
+                let information,
+                let values = information as? NSDictionary
             else { return nil }
-            let values = information as NSDictionary
-            let rawEntitlements = values[kSecCodeInfoEntitlements as String]
-            guard let entitlements = rawEntitlements as? NSDictionary else { return nil }
-            let rawGroups = entitlements["keychain-access-groups"]
-            guard let listed = stringList(rawGroups) else { return nil }
-            return LicenseKeychainAccessGroup.onlyAppGroup(in: listed)
+            return accessGroup(from: signingInformation(values))
         }
 
-        private static func stringList(_ raw: Any?) -> [String]? {
-            if let groups = raw as? [String] { return groups }
-            guard let groups = raw as? NSArray else { return nil }
-            let listed = groups.compactMap { $0 as? String }
-            guard listed.count == groups.count else { return nil }
-            return listed
+        private static func signingInformation(_ values: NSDictionary) -> [String: Any] {
+            var signing: [String: Any] = [:]
+            let blobKey = kSecCodeInfoEntitlements as String
+            let dictionaryKey = kSecCodeInfoEntitlementsDict as String
+            if let blob = values[blobKey] {
+                signing[entitlementsBlobKey] = blob
+            }
+            if let entitlements = values[dictionaryKey] {
+                signing[entitlementsDictionaryKey] = entitlements
+            }
+            return signing
         }
     }
 #endif
