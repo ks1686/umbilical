@@ -91,8 +91,12 @@ final class LicenseCompensationTests: XCTestCase {
     private func assertVisibleCopyDoesNotClaimTheSeatWasFreed(_ service: LicenseService) {
         let panel = LicenseCopy.panel(for: service.snapshot)
         XCTAssertFalse(panel.showsDeactivate)
+        XCTAssertNil(service.snapshot.actionNotice)
+        XCTAssertNil(panel.confirmationText)
         XCTAssertFalse(claimsSeatFreed(panel.statusText))
         XCTAssertFalse(claimsSeatFreed(panel.errorText ?? ""))
+        XCTAssertFalse(claimsSeatFreed(panel.confirmationText ?? ""))
+        XCTAssertNotEqual(panel.confirmationText, LicenseCopy.deactivated)
     }
 
     private func assertLogOmitsLicenseSecrets(_ lines: [String]) {

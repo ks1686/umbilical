@@ -80,7 +80,7 @@ public final class LicenseService {
 
     /// Drops the Activate or Deactivate message and shows the stored license again.
     public func clearActionError() {
-        guard snapshot.actionError != nil else { return }
+        guard snapshot.actionError != nil || snapshot.actionNotice != nil else { return }
         apply(currentEvaluation(), error: nil)
     }
 
@@ -135,7 +135,8 @@ public final class LicenseService {
         advanceObservation()
         let evaluation = currentEvaluation()
         let error = clearError ? nil : snapshot.actionError
-        apply(evaluation, error: error)
+        let notice = clearError ? nil : snapshot.actionNotice
+        apply(evaluation, error: error, notice: notice)
         guard evaluation.allowNetworkValidate else { return }
         guard forceNetwork || networkDue() else { return }
         await validateOnline()
@@ -178,10 +179,14 @@ public final class LicenseService {
     }
 
     func refreshPreservingError() {
-        apply(currentEvaluation(), error: snapshot.actionError)
+        apply(
+            currentEvaluation(),
+            error: snapshot.actionError,
+            notice: snapshot.actionNotice
+        )
     }
 
-    func apply(_ evaluation: LicenseEvaluation, error: String?) {
+    func apply(_ evaluation: LicenseEvaluation, error: String?, notice: String? = nil) {
         if evaluation.clearCredential {
             store.clearCredential()
         }
@@ -193,11 +198,12 @@ public final class LicenseService {
             canDeactivate: canDeactivateNow(),
             deviceLabel: displayLabel(),
             isBusy: busy,
-            actionError: error
+            actionError: error,
+            actionNotice: notice
         )
     }
 
-    private func makeSnapshot(error: String?) -> LicenseSnapshot {
+    private func makeSnapshot(error: String?, notice: String? = nil) -> LicenseSnapshot {
         switch configuration.enforcement {
         case .off:
             return LicenseSnapshot(
@@ -205,7 +211,8 @@ public final class LicenseService {
                 canDeactivate: false,
                 deviceLabel: nil,
                 isBusy: busy,
-                actionError: error
+                actionError: error,
+                actionNotice: notice
             )
         case .invalidOrganizationID:
             return LicenseSnapshot(
@@ -213,7 +220,8 @@ public final class LicenseService {
                 canDeactivate: false,
                 deviceLabel: nil,
                 isBusy: busy,
-                actionError: error
+                actionError: error,
+                actionNotice: notice
             )
         case .on:
             let evaluation = currentEvaluation()
@@ -222,7 +230,8 @@ public final class LicenseService {
                 canDeactivate: canDeactivateNow(),
                 deviceLabel: displayLabel(),
                 isBusy: busy,
-                actionError: error
+                actionError: error,
+                actionNotice: notice
             )
         }
     }

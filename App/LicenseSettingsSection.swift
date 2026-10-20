@@ -16,6 +16,10 @@ struct LicenseSettingsSection: View {
                 Text(panel.statusText)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            if let confirmationText = panel.confirmationText, !confirmationText.isEmpty {
+                Text(confirmationText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if let errorText = panel.errorText, !errorText.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(errorText)
@@ -34,10 +38,14 @@ struct LicenseSettingsSection: View {
                         model.clearLicenseError()
                     }
                 Button("Activate") { activate() }
+                    .accessibilityLabel(LicenseCopy.activateAccessibilityLabel)
+                    .accessibilityHint(LicenseCopy.activateAccessibilityHint)
                     .disabled(activateDisabled)
             }
             if panel.showsDeactivate {
                 Button("Deactivate This Mac") { confirmingDeactivate = true }
+                    .accessibilityLabel(LicenseCopy.deactivateAccessibilityLabel)
+                    .accessibilityHint(LicenseCopy.deactivateAccessibilityHint)
                     .disabled(model.license.isBusy)
             }
         }
@@ -49,6 +57,8 @@ struct LicenseSettingsSection: View {
                 Button("Deactivate", role: .destructive) {
                     Task { await model.deactivateLicense() }
                 }
+                .accessibilityLabel(LicenseCopy.deactivateAccessibilityLabel)
+                .accessibilityHint(LicenseCopy.deactivateAccessibilityHint)
                 Button("Cancel", role: .cancel) {}
             },
             message: {

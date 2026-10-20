@@ -11,6 +11,7 @@ public struct LicensePanel: Equatable {
     public var deviceLabel: String?
     public var showsKeyField: Bool
     public var showsDeactivate: Bool
+    public var confirmationText: String?
 }
 
 public enum LicenseCopy {
@@ -81,6 +82,22 @@ public enum LicenseCopy {
     public static let deactivateConfirm =
         "This frees one activation for this key. Downloads already running keep going."
 
+    public static let deactivated =
+        "This license was deactivated. This Mac's seat is free."
+
+    public static let activateAccessibilityLabel = "Activate this license key on this Mac"
+
+    public static var activateAccessibilityHint: String {
+        "Checks this key with Polar. A key can be active on \(macLimitPhrase) at a time."
+    }
+
+    public static let deactivateAccessibilityLabel =
+        "Deactivate this Mac and free this license seat"
+
+    public static var deactivateAccessibilityHint: String {
+        "This Mac's seat becomes free. A key can be active on \(macLimitPhrase) at a time."
+    }
+
     public static func banner(for status: LicenseStatus) -> String? {
         guard case .unlicensed(let denial) = status else { return nil }
         return denialText(denial)
@@ -94,7 +111,8 @@ public enum LicenseCopy {
             isError: isError(snapshot.status),
             deviceLabel: snapshot.deviceLabel,
             showsKeyField: showsKeyField(snapshot.status),
-            showsDeactivate: snapshot.canDeactivate
+            showsDeactivate: snapshot.canDeactivate,
+            confirmationText: snapshot.actionNotice
         )
     }
 
@@ -177,6 +195,12 @@ public enum LicenseCopy {
         case .missing, .unvalidated, .limitReached, .notFound, .revoked, .disabled:
             return missing
         }
+    }
+
+    private static var macLimitPhrase: String {
+        let count = LicensePolicy.activationLimit
+        let noun = count == 1 ? "Mac" : "Macs"
+        return "\(count) \(noun)"
     }
 
     private static func checked(_ date: Date) -> String {

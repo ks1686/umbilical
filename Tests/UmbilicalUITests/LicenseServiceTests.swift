@@ -90,6 +90,7 @@ final class LicenseServiceTests: XCTestCase {
         let service = makeLicenseService(store: store, transport: transport, clock: clock)
         await service.deactivate()
         XCTAssertEqual(service.snapshot.actionError, LicenseCopy.deactivateFailed)
+        XCTAssertNil(service.snapshot.actionNotice)
         clock.now = now.addingTimeInterval(LicensePolicy.recheckInterval)
         await service.tick()
         XCTAssertEqual(transport.calls.count, 2)
@@ -99,6 +100,7 @@ final class LicenseServiceTests: XCTestCase {
         }
         service.clearActionError()
         XCTAssertNil(service.snapshot.actionError)
+        XCTAssertNil(service.snapshot.actionNotice)
         guard case .licensed = service.snapshot.status else {
             return XCTFail("expected the current license to stay")
         }
@@ -202,6 +204,8 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertEqual(licenseDenial(service.snapshot.status), .limitReached)
         XCTAssertNil(store.credential)
         XCTAssertNil(store.validation)
+        XCTAssertNil(service.snapshot.actionNotice)
+        XCTAssertNil(LicenseCopy.panel(for: service.snapshot).confirmationText)
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
     }
 

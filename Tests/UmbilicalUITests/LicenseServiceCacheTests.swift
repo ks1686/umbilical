@@ -191,6 +191,11 @@ final class LicenseServiceCacheTests: XCTestCase {
         XCTAssertNil(store.validation)
         XCTAssertEqual(store.label, LicenseFixture.label)
         XCTAssertEqual(licenseDenial(service.snapshot.status), .missing)
+        XCTAssertEqual(service.snapshot.actionNotice, LicenseCopy.deactivated)
+        XCTAssertNil(service.snapshot.actionError)
+        let panel = LicenseCopy.panel(for: service.snapshot)
+        XCTAssertEqual(panel.confirmationText, LicenseCopy.deactivated)
+        XCTAssertNil(panel.errorText)
     }
 
     func testUnofficialBuildDoesNotCallPolar() async {

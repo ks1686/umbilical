@@ -19,6 +19,7 @@ extension LicenseService {
         let removed = await requestDeactivate(existing)
         if !removed {
             snapshot.actionError = LicenseCopy.replaceNeedsDeactivate
+            snapshot.actionNotice = nil
             return true
         }
         apply(currentEvaluation(), error: nil)
@@ -87,11 +88,12 @@ extension LicenseService {
         busy = false
         if removed {
             lastNetworkFailed = false
-            apply(currentEvaluation(), error: nil)
+            apply(currentEvaluation(), error: nil, notice: LicenseCopy.deactivated)
             return
         }
         snapshot.isBusy = false
         snapshot.actionError = LicenseCopy.deactivateFailed
+        snapshot.actionNotice = nil
     }
 
     private func requestDeactivate(_ credential: LicenseCredential) async -> Bool {
@@ -127,6 +129,7 @@ extension LicenseService {
             snapshot.status = .unlicensed(denial)
         }
         snapshot.actionError = error
+        snapshot.actionNotice = nil
     }
 
     private func activationInput(
