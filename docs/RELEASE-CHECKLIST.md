@@ -23,7 +23,7 @@ Last updated October 20, 2026.
 | License provider: Polar public customer-portal license keys, no organization access token | Code Lead | done |
 | Price $9.99 one time, lifetime updates, 14-day offline grace, 1 Mac per key | Code Lead | done |
 | Trademark check for umbilical and umb | Code Lead | planned |
-| License integration: public validate, activate, and deactivate only; organization id from xcconfig; device-bound Keychain cache; TLS to api.polar.sh. Replies are not separately signed. Data protection Keychain fix in PR #15 (`9788487`). Verified on the Mac with a real key: activate, relaunch, deactivate. The organization id passed release preflight. Karim still confirms the 1 Mac limit on the Polar storefront | Code Lead | done |
+| License integration: public validate, activate, and deactivate only; organization id from xcconfig; device-bound Keychain cache; TLS to api.polar.sh. Replies are not separately signed. Data protection Keychain fix in PR #15 (`9788487`). Verified on the Mac with a real key: activate, relaunch, deactivate. The organization id passed release preflight. The 1 Mac limit was checked live on Oct 15 (a second activation got a 403 from Polar) | Code Lead | done |
 | Homebrew cask draft in docs/homebrew/umbilical.rb (not pushed to ks1686/homebrew-tap) | Code Lead | in progress |
 | Cask checks on the Mac: `brew audit --cask`, `brew style`, install from tap, brew still sees app current after a Sparkle update | Machine Keeper | planned |
 | Final security review (signing, update feed, license check against the license rules above, Homebrew cask, App Sandbox, release tag scan) | Repo Guard | planned |
