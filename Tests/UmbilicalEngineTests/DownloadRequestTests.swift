@@ -51,6 +51,22 @@ final class DownloadRequestTests: XCTestCase {
         )
         XCTAssertThrowsError(
             try DownloadRequests.prepare(
+                urlText: "--header=Bearer",
+                outputName: "",
+                directory: nil,
+                root: accepted
+            )
+        )
+        XCTAssertThrowsError(
+            try DownloadRequests.prepare(
+                urlText: "ftp://example.com/a.bin",
+                outputName: "",
+                directory: nil,
+                root: accepted
+            )
+        )
+        XCTAssertThrowsError(
+            try DownloadRequests.prepare(
                 urlText: "https://user:pw@example.com/a",
                 outputName: "",
                 directory: nil,

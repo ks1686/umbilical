@@ -13,6 +13,7 @@ struct SettingsView: View {
         Form {
             LicenseSettingsSection(model: model)
             downloadsSection
+            safariSection
             notificationsSection
             helpersSection
         }
@@ -41,6 +42,27 @@ struct SettingsView: View {
                 Text(folderError)
                     .foregroundStyle(.red)
             }
+        }
+    }
+
+    private var safariSection: some View {
+        Section("Safari") {
+            Text(
+                "Right-click a link for Download with umbilical. That menu needs the activeTab "
+                    + "permission so it can appear without standing website access."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            Text(
+                "Intercepting clicks is off until you turn it on in the extension popup. "
+                    + "Safari will then ask for access to all websites. The extension still "
+                    + "sends only the clicked link's URL and file name. It does not read the "
+                    + "page, forms, or cookies, and it does not send your login session. "
+                    + "Option-click a link to skip interception. Session-bound downloads can fail; "
+                    + "use Safari's own download in that case."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
         }
     }
 

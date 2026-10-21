@@ -73,7 +73,10 @@ final class VideoDownloadPlanTests: XCTestCase {
             "javascript:alert(1)",
             "https://user:secret@example.com/a",
             "",
-            "https://example.com/a b"
+            "https://example.com/a b",
+            "-https://example.com/a",
+            "--newline",
+            "ftp://example.com/a.mp4"
         ]
         for text in rejected {
             XCTAssertThrowsError(

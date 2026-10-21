@@ -57,6 +57,19 @@ final class MagnetLinkTests: XCTestCase {
         let web = try testURL("magnet:?xt=urn:btih:\(hash)&ws=file:///tmp/x")
         XCTAssertThrowsError(try MagnetLink.canonical(web))
     }
+
+    func testBTMHOnlyAndMagnetPrefix() throws {
+        let digest = String(repeating: "cd", count: 32)
+        let raw = try testURL("magnet:?xt=urn:btmh:1220\(digest)")
+        let canonical = try MagnetLink.canonical(raw)
+        XCTAssertTrue(canonical.hasPrefix("magnet:?"))
+        XCTAssertTrue(canonical.contains("btmh"))
+        XCTAssertFalse(canonical.contains("btih"))
+        let missingQuery = try testURL("magnet:xt=urn:btih:" + String(repeating: "ab", count: 20))
+        XCTAssertThrowsError(try MagnetLink.canonical(missingQuery))
+        let withHost = try testURL("magnet://host?xt=urn:btih:" + String(repeating: "ab", count: 20))
+        XCTAssertThrowsError(try MagnetLink.canonical(withHost))
+    }
 }
 
 private func sampleTorrent(

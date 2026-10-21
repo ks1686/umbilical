@@ -7,7 +7,8 @@ import SafariServices
 import UmbilicalEngine
 
 /// Receives a native message from the extension page and opens the app.
-/// The message may contain only a URL and an optional file name. The app confirms it.
+/// The message may contain a URL, an optional file name, and an optional video flag.
+/// The app confirms it. No cookies or page content are accepted.
 public class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
     public func beginRequest(with context: NSExtensionContext) {
         guard let openURL = handoffURL(in: context) else {

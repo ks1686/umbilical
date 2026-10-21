@@ -80,8 +80,10 @@ public enum DownloadMessage {
             return "Enter an http or https URL."
         case "userinfo":
             return "URLs that include a username or password are rejected."
+        case "option":
+            return "That URL cannot be used as a command option."
         default:
-            return "Only http and https URLs can be added (\(scheme))."
+            return "That URL scheme is not allowed (\(scheme))."
         }
     }
 }

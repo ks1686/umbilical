@@ -199,6 +199,9 @@ enum VideoDownloadPlan {
         guard let url = URL(string: trimmed), url.scheme != nil else {
             throw EngineError.schemeRejected("unparseable")
         }
+        if trimmed.hasPrefix("-") {
+            throw EngineError.videoRejected("The video download was rejected.")
+        }
         try HTTPURLPolicy.validate(url)
         guard let canonical = URL(string: url.absoluteString) else {
             throw EngineError.schemeRejected("unparseable")

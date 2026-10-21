@@ -48,7 +48,7 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 1. RPC lockdown as above. `RPCClient` sends per-download options only from a fixed allowlist (for example `out`, `select-file`, `max-download-limit`, `split`). It rejects every `on-*` hook option and any `dir` outside the user-chosen folder, for `addUri`, `addTorrent`, `addMetalink`, `changeOption` and `changeGlobalOption` alike. Engine killed if the app exits (process group, `PR_SET_PDEATHSIG` equivalent via kqueue watch).
 2. Downloaded files get `com.apple.quarantine` set so Gatekeeper checks them.
 3. Output paths sanitized: reject `..`, absolute paths and symlink escapes from torrent metadata or server filenames.
-4. Safari handoff is the URL and an optional file name. No cookies, headers, referrer, or aria2 options. Only `http`, `https`, and `magnet` are accepted; `file:`, `javascript:`, and every other scheme are rejected. The file name is checked with the output-name rules and is the only RPC option the handoff may set (`out`). The extension opens `umbilical://download`. The app treats that URL as untrusted: it runs `HTTPURLPolicy` or `MagnetLink.canonical`, then `RPCOptionPolicy`, and waits for the user to confirm before starting the download.
+4. Safari handoff is the URL and an optional file name. No cookies, headers, referrer, or aria2 options. A video menu item may also set a boolean `video` routing flag, which is not page content. Accepted schemes are `http`, `https`, `ftp`, `sftp`, and `magnet`. `file:`, `data:`, `javascript:`, and every other scheme are rejected. A URL or file name that starts with `-` is rejected so it cannot become an aria2 or yt-dlp option. The file name is checked with the output-name rules and is the only RPC option the handoff may set (`out`). The extension opens `umbilical://download` or `umbilical://video`. The app treats that URL as untrusted: it runs `HTTPURLPolicy` or `MagnetLink.canonical`, then `RPCOptionPolicy`, and waits for the user to confirm before starting the download. Finder may also open a `.torrent`, `.metalink`, `.meta4`, or `magnet:` URL through the same confirm sheet.
 5. No helper self-update (`yt-dlp -U` disabled). Helpers update only with an app release, pinned by version and SHA-256.
 6. Credentials (HTTP auth, license key) stored in the Keychain only. The license validation record is bound to this Mac: the key, the Polar activation id, and a SHA-256 of IOPlatformUUID. Items are in the data protection keychain (`kSecUseDataProtectionKeychain`), use `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`, and are not synchronizable. The access group is the team id plus `me.peapod.umbilical`.
 7. No third-party plugin system.
@@ -112,11 +112,11 @@ Per-download RPC options still cannot set `seed-ratio`, `seed-time`, or `max-upl
 
 ### Magnets and torrents
 
-`RPCClient.add` accepts `http`, `https`, and `magnet`. A magnet must carry a BitTorrent v1 info hash (`urn:btih`, 40 hex characters or 32 base32 characters). Display names, trackers, and web seeds are checked before the URI is sent. `file`, `javascript`, and every other scheme are rejected.
+`RPCClient.add` accepts `http`, `https`, `ftp`, `sftp`, and `magnet`. The add sheet still accepts only `http` and `https`. A magnet must start with `magnet:?` and carry `xt=urn:btih:` (40 hex characters or 32 base32 characters) or `xt=urn:btmh:` (BitTorrent v2, `1220` plus 64 hex characters). Display names, trackers, and web seeds are checked before the URI is sent. `file`, `javascript`, and every other scheme are rejected.
 
 `RPCClient.addTorrent` reads a `.torrent`, rejects path components that escape the download folder (`..`, absolute paths, empty names, and a name that is a symlink out of the folder), and rejects non-http(s) web seeds. Tracker URLs must be `http`, `https`, or `udp`. `select-file` is 1-based and must name a file in the torrent. The RPC call is `aria2.addTorrent` with the file base64-encoded and no extra web-seed URIs.
 
-Metalink stays unsupported as an RPC method. `follow-metalink=false` is separate: an HTTP URL that returns a metalink is saved as a file, and aria2 does not start the files named in it. The same rule applies to an HTTP `.torrent` via `follow-torrent=false`. A magnet is still `aria2.addUri`.
+Metalink stays unsupported as an RPC method. `follow-metalink=false` is separate: an HTTP URL that returns a metalink is saved as a file, and aria2 does not start the files named in it. A Safari or Finder `.torrent` is fetched or copied without cookies, then added with `aria2.addTorrent` so the never-seed config applies. A Finder metalink is copied into the download folder and is not followed. A magnet is still `aria2.addUri`.
 
 ### Running the engine tests
 
@@ -143,9 +143,9 @@ The test tries tcpdump directly, then `sudo -n tcpdump` when the direct capture 
 
 ### Handoff
 
-The Safari Web Extension is an appex embedded in `umbilical.app`. Its context menu item is "Download with umbilical" on links. The background script calls `runtime.sendNativeMessage` with `url` and, when it has one, `filename`. The native handler refuses any other field. An accepted message opens `umbilical://download?url=...&filename=...`.
+The Safari Web Extension is an appex embedded in `umbilical.app`. Context menu items are "Download with umbilical" on links and "Download video with umbilical" on the page and on links. The background script calls `runtime.sendNativeMessage` with `url` and, when it has one, `filename`. The video item also sets `video: true`. The native handler refuses cookies, headers, and any other field. An accepted message opens `umbilical://download?url=...&filename=...` or `umbilical://video?url=...&filename=...`.
 
-The app validates that URL with `HTTPURLPolicy` for `http` and `https`, `MagnetLink.canonical` for magnets, `DownloadPath.validateOutputName` for the optional file name, and `RPCOptionPolicy` on the resulting options. The only option is `out`. The add sheet still rejects magnets. This path accepts them after confirmation.
+The app validates that URL with `HTTPURLPolicy` for `http` and `https` (and `ftp`/`sftp` on the transfer path), `MagnetLink.canonical` for magnets, `DownloadPath.validateOutputName` for the optional file name, and `RPCOptionPolicy` on the resulting options. The only option is `out`. The add sheet still rejects magnets. This path accepts them after confirmation. Video handoffs go to yt-dlp, not aria2.
 
 `umbilical://` can be opened by any local process, so the scheme is not proof that the bundled extension sent it. The sheet says a download was requested and shows the link's host. It does not name a sender. Download is not the default button. For the first second the sheet ignores clicks and Return. The download starts only after the user chooses Download. Cancel, including Return after that second, leaves the queue unchanged.
 
@@ -157,15 +157,18 @@ Permissions in `Extension/Resources/manifest.json`:
 
 | Permission | Why |
 | --- | --- |
-| `activeTab` | Safari's WebKit context-menu path (`WebExtensionContext::addItemsToContextMenu`) hides extension items unless the extension already has website access for that page, or has `activeTab` so choosing the item can grant it. umbilical has no host permission, so this is the grant that makes "Download with umbilical" appear. It does not inject a content script. |
-| `contextMenus` | Adds "Download with umbilical" to the link menu. |
+| `activeTab` | Safari's WebKit context-menu path (`WebExtensionContext::addItemsToContextMenu`) hides extension items unless the extension already has website access for that page, or has `activeTab` so choosing the item can grant it. The toolbar popup also uses it to read the current tab URL for "Download this page with umbilical". |
+| `contextMenus` | Adds the link and video items. |
 | `nativeMessaging` | Delivers the URL and optional file name to the appex. |
+| `storage` | Remembers the capture toggle, default off. |
 
-`downloads` is not requested. Safari does not implement `browser.downloads` (Apple Developer Forums thread 660046, 2020, still absent from the Safari compatibility table). The 1.0.0 capture toggle was dead code and was removed. `storage` went with it.
+`downloads` is not requested. Safari does not implement `browser.downloads` (Apple Developer Forums thread 660046, 2020, still absent from the Safari compatibility table). Click interception is the replacement.
 
-No host permission, `webRequest`, `cookies`, `tabs`, `scripting`, or content scripts. The click handler reads `info.linkUrl` from the menu event and a file name from that URL's path. It does not read page text, form fields, cookies, or headers. If a download needs the user's site session, it can fail in umbilical; Safari's own download still works because this path does not intercept clicks.
+`optional_host_permissions` is `*://*/*`. It is not granted at install. Turning on "Intercept download links in Safari" explains the all-websites prompt first, then calls `permissions.request`. Safari has no `browser.downloads` API, so a content script is the only way to see a click before navigation. That script runs only after the grant, and only on `http` and `https` pages. It reads the clicked link's `href`, `download`, and `type`. It does not read page text, form fields, cookies, or headers. Option-click, Command-click, Control-click, and Shift-click skip interception. If the native handoff is not accepted, the original click proceeds.
 
-`docs/M4-MANUAL.md` is the Mac pass. `swift test` covers the handoff parser. It does not load Safari.
+No required host permission, `webRequest`, `cookies`, `tabs`, or `scripting`. If a download needs the user's site session, it can fail in umbilical because cookies are not forwarded; Safari's own download still works, and Option-click bypasses capture.
+
+`docs/M4-MANUAL.md` is the Mac pass. `swift test` covers the handoff parser, capture heuristics, and Finder openers. It does not load Safari.
 
 ## 11. Video downloads
 

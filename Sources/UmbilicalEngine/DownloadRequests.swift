@@ -23,6 +23,9 @@ public enum DownloadRequests {
         if trimmed.isEmpty || trimmed.contains(where: \.isWhitespace) {
             throw EngineError.schemeRejected(trimmed.isEmpty ? "empty" : "whitespace")
         }
+        if trimmed.hasPrefix("-") {
+            throw EngineError.schemeRejected("option")
+        }
         guard let url = URL(string: trimmed) else {
             throw EngineError.schemeRejected("unparseable")
         }

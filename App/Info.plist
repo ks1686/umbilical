@@ -16,6 +16,45 @@
 	<true/>
 	<key>SURequireSignedFeed</key>
 	<true/>
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<false/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>BitTorrent File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.bittorrent.torrent</string>
+			</array>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>torrent</string>
+			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Metalink File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.metalinker.metalink</string>
+				<string>org.metalinker.metalink4</string>
+			</array>
+			<key>CFBundleTypeExtensions</key>
+			<array>
+				<string>metalink</string>
+				<string>meta4</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleURLTypes</key>
 	<array>
 		<dict>
@@ -27,6 +66,83 @@
 			<array>
 				<string>umbilical</string>
 			</array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>me.peapod.umbilical.magnet</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>magnet</string>
+			</array>
+		</dict>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.bittorrent.torrent</string>
+			<key>UTTypeDescription</key>
+			<string>BitTorrent File</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>torrent</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/x-bittorrent</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.metalinker.metalink</string>
+			<key>UTTypeDescription</key>
+			<string>Metalink File</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>metalink</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/metalink+xml</string>
+					<string>application/x-metalink+xml</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.metalinker.metalink4</string>
+			<key>UTTypeDescription</key>
+			<string>Metalink 4 File</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>meta4</string>
+				</array>
+				<key>public.mime-type</key>
+				<array>
+					<string>application/metalink4+xml</string>
+				</array>
+			</dict>
 		</dict>
 	</array>
 </dict>

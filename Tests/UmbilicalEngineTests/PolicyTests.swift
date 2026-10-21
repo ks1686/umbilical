@@ -122,9 +122,21 @@ final class PolicyTests: XCTestCase {
             transport: transport,
             quarantine: RecordingQuarantine()
         )
+        _ = try await client.add(url: try testURL("ftp://example.com/a.bin"))
+        _ = try await client.add(url: try testURL("sftp://files.example.com/a.bin"))
+        XCTAssertEqual(transport.methods, ["aria2.addUri", "aria2.addUri"])
         do {
             _ = try await client.add(url: try testURL("file:///tmp/x"))
             XCTFail("expected file URL to be rejected")
+        } catch let error as EngineError {
+            guard case .schemeRejected = error else {
+                XCTFail("unexpected error \(error)")
+                return
+            }
+        }
+        do {
+            _ = try await client.add(url: try testURL("-o"))
+            XCTFail("expected a dash-prefixed URL to be rejected")
         } catch let error as EngineError {
             guard case .schemeRejected = error else {
                 XCTFail("unexpected error \(error)")
@@ -153,7 +165,7 @@ final class PolicyTests: XCTestCase {
                 return
             }
         }
-        XCTAssertTrue(transport.methods.isEmpty)
+        XCTAssertEqual(transport.methods, ["aria2.addUri", "aria2.addUri"])
     }
 
     func testAllowedOptionsReachTheTransport() async throws {

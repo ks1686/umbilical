@@ -7,8 +7,19 @@
 </head>
 <body>
   <h1>umbilical</h1>
-  <p>Right-click a link and choose Download with umbilical. Safari shows that item after this extension is enabled.</p>
+  <p>Right-click a link and choose Download with umbilical. Safari shows that item after this extension is enabled. Right-click a page or link for Download video with umbilical.</p>
   <p>The extension sends the clicked link's URL and, when the path has one, a file name. It does not read the page, form fields, cookies, or other headers.</p>
   <p>If a download needs the site's login session, it can fail in umbilical. Use Safari's own download in that case.</p>
+  <button type="button" id="download-page">Download this page with umbilical</button>
+  <p id="page-status" class="status" hidden></p>
+  <h2>Intercept download links</h2>
+  <p>Off by default. Safari has no downloads API, so interception watches clicks instead. Turning this on asks Safari for access to all websites so the script can see a click on whatever page you are on.</p>
+  <p>After you allow that, the script still reads only the clicked link's address, download name, and type. It does not read the rest of the page. Option-click a link to skip interception and use Safari as usual. You can turn this off at any time, which also drops website access.</p>
+  <label>
+    <input type="checkbox" id="capture">
+    Intercept download links in Safari
+  </label>
+  <p id="capture-status" class="status" hidden></p>
+  <script src="popup.js"></script>
 </body>
 </html>

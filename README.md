@@ -61,12 +61,16 @@ is in `docs/M4-MANUAL.md`. Video downloads are in `docs/VIDEO-MANUAL.md`.
 
 The add sheet still rejects torrent and magnet links. The engine accepts a
 validated magnet and a `.torrent`. Safari can hand the app an `http`, `https`,
-or `magnet` link. The app validates it and waits for confirmation before
+`ftp`, `sftp`, or `magnet` link. The app validates it and waits for confirmation before
 starting the download. The sheet shows the host and does not name the
 program that opened the link. The extension sends the URL and an optional file name.
 It does not send cookies, headers, or aria2 options, and it does not
-read page content. Safari needs the `activeTab` permission so the link
-menu can appear without standing website access. Video uses the bundled
+read page content beyond the clicked link's address, download name, and type.
+Safari needs the `activeTab` permission so the link menu
+can appear without standing website access. Click interception is off by
+default. Turning it on asks Safari for access to all websites because Safari
+has no downloads API; Option-click skips it. Finder can open `.torrent`,
+`.metalink`, `.meta4`, and `magnet:` through the same confirm sheet. Video uses the bundled
 yt-dlp for one combined file. It does not merge separate streams, and it
 does not ship ffmpeg or a JavaScript runtime. License checks are described
 in `docs/LICENSING.md`. Sparkle checks the GitHub Releases appcast. See

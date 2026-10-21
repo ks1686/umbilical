@@ -108,20 +108,33 @@ public final class DownloadSessionModel {
         guard let directory else {
             throw SessionError.folderMissing
         }
-        guard let client else {
-            throw SessionError.engineNotRunning
-        }
-        let staged = try ExternalDownload.stage(
-            urlText: download.uri,
-            filename: download.outputName,
+        let checked = try ExternalDownload.confirm(
+            ExtensionHandoff(
+                uri: download.uri,
+                outputName: download.outputName,
+                url: download.url,
+                kind: download.kind
+            ),
             downloadRoot: directory
         )
-        let checked = try ExternalDownload.confirm(staged, downloadRoot: directory)
-        let prepared = PreparedDownload(url: checked.url, options: checked.options)
-        let gid = try await client.add(url: prepared.url, options: prepared.options)
-        tracked.insert(makeLiveItem(gid: gid, prepared: prepared), at: 0)
-        setMessage(nil)
-        rebuild()
+        switch checked.kind {
+        case .video:
+            try await addVideo(
+                urlText: checked.uri,
+                outputName: checked.outputName ?? "",
+                folder: nil
+            )
+        case .torrentFile:
+            try await addLocalTorrent(checked, directory: directory)
+        case .metalinkFile:
+            try await importLocalMetalink(checked, directory: directory)
+        case .download:
+            if DownloadCaptureHint.isTorrent(url: checked.url, filename: checked.outputName) {
+                try await addRemoteTorrent(checked, directory: directory)
+            } else {
+                try await addRemoteURI(checked, directory: directory)
+            }
+        }
     }
 
     public func pause(id: String) async {

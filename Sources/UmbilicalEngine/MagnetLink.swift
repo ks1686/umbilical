@@ -11,6 +11,12 @@ enum MagnetLink {
             throw EngineError.magnetRejected("scheme")
         }
         let raw = url.absoluteString
+        if raw.hasPrefix("-") {
+            throw EngineError.magnetRejected("scheme")
+        }
+        if !raw.lowercased().hasPrefix("magnet:?") {
+            throw EngineError.magnetRejected("scheme")
+        }
         if raw.count > 4096 || raw.contains("\n") || raw.contains("\r") || raw.contains("\0") {
             throw EngineError.magnetRejected("length")
         }
@@ -78,7 +84,7 @@ enum MagnetLink {
                 throw EngineError.magnetRejected("parameter")
             }
         }
-        guard let btih else {
+        if btih == nil && btmh.isEmpty {
             throw EngineError.magnetRejected("xt")
         }
         return try assemble(
@@ -224,7 +230,7 @@ enum MagnetLink {
     }
 
     private static func assemble(
-        btih: String,
+        btih: String?,
         btmh: [String],
         display: String?,
         trackers: [String],
@@ -234,9 +240,15 @@ enum MagnetLink {
         peers: [String],
         keyword: String?
     ) throws -> String {
-        var parts = ["xt=urn:btih:\(btih)"]
+        var parts: [String] = []
+        if let btih {
+            parts.append("xt=urn:btih:\(btih)")
+        }
         for hash in btmh {
             parts.append("xt=\(try queryEncode(hash))")
+        }
+        if parts.isEmpty {
+            throw EngineError.magnetRejected("xt")
         }
         if let display {
             parts.append("dn=\(try queryEncode(display))")
