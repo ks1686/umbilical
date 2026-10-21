@@ -3,11 +3,11 @@
 import Foundation
 import XCTest
 
+@testable import UmbilicalEngine
+
 #if canImport(FoundationNetworking)
     import FoundationNetworking
 #endif
-
-@testable import UmbilicalEngine
 
 final class CookieFreeHostTests: XCTestCase {
     func testLoopbackLinkLocalAndPrivateIPv4AreBlocked() throws {
