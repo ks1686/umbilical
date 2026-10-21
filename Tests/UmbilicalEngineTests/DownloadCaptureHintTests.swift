@@ -47,7 +47,7 @@ final class DownloadCaptureHintTests: XCTestCase {
 }
 
 final class CookieFreeHTTPTests: XCTestCase {
-    func testFetchDoesNotExceedTheSizeCapAndParsesATorrent() async throws {
+    func testFetchRejectsLoopbackEvenWhenAServerIsListening() async throws {
         let torrent = TorrentBuild.single(
             name: "payload.bin",
             payload: Data([1, 2, 3, 4]),
@@ -58,24 +58,23 @@ final class CookieFreeHTTPTests: XCTestCase {
         server.start()
         defer { server.stop() }
         let url = try testURL("http://127.0.0.1:\(server.port)/payload.torrent")
-        let data = try await CookieFreeHTTP.get(url)
-        XCTAssertEqual(data, torrent.bytes)
-        _ = try TorrentMetadata.parse(data)
-
+        do {
+            _ = try await CookieFreeHTTP.get(url)
+            XCTFail("expected loopback to be rejected")
+        } catch let error as EngineError {
+            XCTAssertEqual(error, .torrentRejected("host"))
+        }
         do {
             _ = try await CookieFreeHTTP.get(url, maxBytes: 4)
-            XCTFail("expected the size cap to reject the body")
+            XCTFail("expected loopback to be rejected")
         } catch let error as EngineError {
-            guard case .torrentRejected("size") = error else {
-                XCTFail("unexpected \(error)")
-                return
-            }
+            XCTAssertEqual(error, .torrentRejected("host"))
         }
     }
 }
 
 final class HandoffImportTests: XCTestCase {
-    func testCopyAndFetchLandInsideTheDownloadFolder() async throws {
+    func testCopyLandsInsideAndHTTPFetchRejectsLoopback() async throws {
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(
             "umb-import-\(UUID().uuidString)",
             isDirectory: true
@@ -104,16 +103,16 @@ final class HandoffImportTests: XCTestCase {
         XCTAssertEqual(copied.lastPathComponent, "payload.torrent")
         XCTAssertEqual(try DownloadPath.resolveInside(root: root, raw: copied.path), copied.path)
 
-        let server = try LocalHTTPServer(body: torrent.bytes, hold: false)
-        server.start()
-        defer { server.stop() }
-        let url = try testURL("http://127.0.0.1:\(server.port)/payload.torrent")
-        let fetched = try await HandoffImport.fetchTorrent(
-            url: url,
-            filename: "from-http.torrent",
-            directory: root
-        )
-        XCTAssertEqual(fetched.lastPathComponent, "from-http.torrent")
-        XCTAssertEqual(try Data(contentsOf: fetched), torrent.bytes)
+        let url = try testURL("http://127.0.0.1/payload.torrent")
+        do {
+            _ = try await HandoffImport.fetchTorrent(
+                url: url,
+                filename: "from-http.torrent",
+                directory: root
+            )
+            XCTFail("expected loopback torrent fetch to be rejected")
+        } catch let error as EngineError {
+            XCTAssertEqual(error, .torrentRejected("host"))
+        }
     }
 }

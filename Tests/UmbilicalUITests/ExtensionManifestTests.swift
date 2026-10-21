@@ -73,6 +73,7 @@ final class ExtensionManifestTests: XCTestCase {
         XCTAssertTrue(source.contains("xt=urn:btmh:"))
         XCTAssertTrue(source.contains("application/x-bittorrent"))
         XCTAssertTrue(source.contains("passThrough"))
+        XCTAssertTrue(source.contains("if (!event.isTrusted) return;"))
         XCTAssertFalse(source.contains("innerText"))
         XCTAssertFalse(source.contains("textContent"))
         XCTAssertFalse(source.contains("document.cookie"))

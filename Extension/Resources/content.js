@@ -2,7 +2,9 @@
 // Opt-in click capture. Reads only the clicked link's href, download, and type.
 // Does not read page text, forms, cookies, or other nodes.
 
-const api = globalThis.browser ?? globalThis.chrome;
+function extensionAPI() {
+  return globalThis.browser ?? globalThis.chrome;
+}
 const FILE_EXTENSIONS = new Set([
   "7z", "apk", "avi", "azw3", "bin", "bz2", "csv", "deb", "dmg", "doc", "docx",
   "epub", "exe", "flac", "gz", "ics", "iso", "jar", "m4a", "mka", "mkv", "mov",
@@ -112,6 +114,7 @@ function shouldIntercept(anchor, urlString) {
 
 function sendIntercept(url, filename) {
   return new Promise((resolve) => {
+    const api = extensionAPI();
     if (!api || !api.runtime || typeof api.runtime.sendMessage !== "function") {
       resolve(false);
       return;
@@ -136,6 +139,7 @@ function closestLink(target) {
 }
 
 function onClick(event) {
+  if (!event.isTrusted) return;
   if (passThrough) return;
   if (!captureOn) return;
   if (event.defaultPrevented) return;
@@ -163,6 +167,7 @@ function onClick(event) {
 }
 
 function loadCaptureState() {
+  const api = extensionAPI();
   if (!api || !api.runtime || typeof api.runtime.sendMessage !== "function") {
     captureOn = false;
     return;
@@ -185,6 +190,7 @@ function loadCaptureState() {
 if (typeof document !== "undefined" && document.addEventListener) {
   document.addEventListener("click", onClick, true);
   loadCaptureState();
+  const api = extensionAPI();
   if (api && api.storage && api.storage.onChanged && api.storage.onChanged.addListener) {
     api.storage.onChanged.addListener((changes, area) => {
       if (area && area !== "local") return;
@@ -202,5 +208,9 @@ if (typeof module !== "undefined" && module.exports) {
     pathExtension,
     isPlainFilename,
     filenameFromLink,
+    onClick,
+    setCaptureOn(value) {
+      captureOn = value === true;
+    },
   };
 }

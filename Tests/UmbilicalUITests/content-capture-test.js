@@ -83,4 +83,69 @@ assert.strictEqual(capture.isPlainFilename("-o"), false);
 assert.ok(capture.FILE_EXTENSIONS.has("torrent"));
 assert.ok(capture.FILE_EXTENSIONS.has("meta4"));
 
+const messages = [];
+globalThis.browser = {
+  runtime: {
+    sendMessage(payload, callback) {
+      messages.push(payload);
+      const reply = { accepted: true };
+      if (typeof callback === "function") callback(reply);
+      return Promise.resolve(reply);
+    },
+  },
+};
+
+function clickOnZip(trusted) {
+  let prevented = false;
+  let stopped = false;
+  const attrs = { href: "https://example.com/a.zip" };
+  const anchor = {
+    getAttribute(name) {
+      if (!Object.prototype.hasOwnProperty.call(attrs, name)) return null;
+      return attrs[name];
+    },
+    hasAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(attrs, name);
+    },
+    closest(selector) {
+      return selector === "a[href]" ? this : null;
+    },
+  };
+  const event = {
+    isTrusted: trusted,
+    defaultPrevented: false,
+    button: 0,
+    altKey: false,
+    metaKey: false,
+    ctrlKey: false,
+    shiftKey: false,
+    target: anchor,
+    preventDefault() {
+      prevented = true;
+      this.defaultPrevented = true;
+    },
+    stopPropagation() {
+      stopped = true;
+    },
+  };
+  return { event, stats: () => ({ prevented, stopped }) };
+}
+
+capture.setCaptureOn(true);
+messages.length = 0;
+const synthetic = clickOnZip(false);
+capture.onClick(synthetic.event);
+assert.strictEqual(synthetic.stats().prevented, false);
+assert.strictEqual(synthetic.stats().stopped, false);
+assert.strictEqual(messages.length, 0);
+
+messages.length = 0;
+const trusted = clickOnZip(true);
+capture.onClick(trusted.event);
+assert.strictEqual(trusted.stats().prevented, true);
+assert.strictEqual(trusted.stats().stopped, true);
+assert.strictEqual(messages.length, 1);
+assert.strictEqual(messages[0].type, "umbilical-intercept");
+assert.strictEqual(messages[0].url, "https://example.com/a.zip");
+
 console.log("ok");
