@@ -34,7 +34,8 @@ struct SettingsView: View {
                 }
             }
             Text(
-                "Every download stays inside this folder. Active downloads stop when umbilical quits."
+                "Every download stays inside this folder. "
+                    + "Active downloads stop when umbilical quits."
             )
             .font(.callout)
             .foregroundStyle(.secondary)

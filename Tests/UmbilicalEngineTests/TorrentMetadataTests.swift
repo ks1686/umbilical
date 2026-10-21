@@ -67,7 +67,9 @@ final class MagnetLinkTests: XCTestCase {
         XCTAssertFalse(canonical.contains("btih"))
         let missingQuery = try testURL("magnet:xt=urn:btih:" + String(repeating: "ab", count: 20))
         XCTAssertThrowsError(try MagnetLink.canonical(missingQuery))
-        let withHost = try testURL("magnet://host?xt=urn:btih:" + String(repeating: "ab", count: 20))
+        let withHost = try testURL(
+            "magnet://host?xt=urn:btih:" + String(repeating: "ab", count: 20)
+        )
         XCTAssertThrowsError(try MagnetLink.canonical(withHost))
     }
 }

@@ -64,7 +64,8 @@ struct HandoffConfirmSheet: View {
         case .video:
             return "A video download was requested. Nothing starts until you confirm."
         case .torrentFile:
-            return "A torrent file was opened. Nothing starts until you confirm. umbilical never seeds."
+            return "A torrent file was opened. Nothing starts until you confirm. "
+                + "umbilical never seeds."
         case .metalinkFile:
             return "A metalink file was opened. It will be saved in your download folder. "
                 + "The files it names are not started."

@@ -11,16 +11,28 @@ final class DownloadCaptureHintTests: XCTestCase {
         let named = try testURL("https://example.com/dl")
         XCTAssertTrue(DownloadCaptureHint.isTorrent(url: named, filename: "a.torrent"))
         XCTAssertFalse(
-            DownloadCaptureHint.isTorrent(url: try testURL("https://example.com/a.zip"), filename: nil)
+            DownloadCaptureHint.isTorrent(
+                url: try testURL("https://example.com/a.zip"),
+                filename: nil
+            )
         )
         XCTAssertTrue(
-            DownloadCaptureHint.isMetalink(url: try testURL("https://example.com/a.meta4"), filename: nil)
+            DownloadCaptureHint.isMetalink(
+                url: try testURL("https://example.com/a.meta4"),
+                filename: nil
+            )
         )
         XCTAssertTrue(
-            DownloadCaptureHint.isMetalink(url: try testURL("https://example.com/a"), filename: "pack.metalink")
+            DownloadCaptureHint.isMetalink(
+                url: try testURL("https://example.com/a"),
+                filename: "pack.metalink"
+            )
         )
         XCTAssertTrue(
-            DownloadCaptureHint.looksLikeDownload(url: try testURL("https://example.com/a.zip"), filename: nil)
+            DownloadCaptureHint.looksLikeDownload(
+                url: try testURL("https://example.com/a.zip"),
+                filename: nil
+            )
         )
         XCTAssertFalse(
             DownloadCaptureHint.looksLikeDownload(

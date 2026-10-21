@@ -155,13 +155,19 @@ final class ExternalDownloadTests: XCTestCase {
         )
         XCTAssertThrowsError(
             try ExternalDownload.stage(
-                nativeMessage: ["url": "https://example.com/watch", "video": false] as [String: Any],
+                nativeMessage: [
+                    "url": "https://example.com/watch",
+                    "video": false
+                ] as [String: Any],
                 downloadRoot: root
             )
         )
         XCTAssertThrowsError(
             try ExternalDownload.stage(
-                nativeMessage: ["url": "https://example.com/watch", "video": "true"] as [String: Any],
+                nativeMessage: [
+                    "url": "https://example.com/watch",
+                    "video": "true"
+                ] as [String: Any],
                 downloadRoot: root
             )
         )

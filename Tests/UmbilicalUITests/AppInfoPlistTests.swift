@@ -13,7 +13,11 @@ final class AppInfoPlistTests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("App/Info.plist")
         let data = try Data(contentsOf: url)
-        let object = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
+        let object = try PropertyListSerialization.propertyList(
+            from: data,
+            options: [],
+            format: nil
+        )
         let plist = try XCTUnwrap(object as? [String: Any])
         let urlTypes = try XCTUnwrap(plist["CFBundleURLTypes"] as? [[String: Any]])
         var schemes: [String] = []

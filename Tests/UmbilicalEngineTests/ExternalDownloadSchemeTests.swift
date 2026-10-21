@@ -202,7 +202,9 @@ final class ExternalDownloadSchemeTests: XCTestCase {
         let videoQuery = try XCTUnwrap(
             URL(string: "umbilical://download?url=https://example.com/a.bin&video=true")
         )
-        XCTAssertThrowsError(try ExternalDownload.stage(openURL: videoQuery, downloadRoot: root)) { error in
+        XCTAssertThrowsError(
+            try ExternalDownload.stage(openURL: videoQuery, downloadRoot: root)
+        ) { error in
             XCTAssertEqual(error as? EngineError, EngineError.handoffRejected("video"))
         }
     }
