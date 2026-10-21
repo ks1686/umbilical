@@ -33,5 +33,8 @@ final class AppInfoPlistTests: XCTestCase {
         XCTAssertTrue(extensions.contains("meta4"))
         let imported = try XCTUnwrap(plist["UTImportedTypeDeclarations"] as? [[String: Any]])
         XCTAssertFalse(imported.isEmpty)
+        // macOS rejects LSSupportsOpeningDocumentsInPlace = NO. Finder still
+        // delivers the original file URL to application(_:open:).
+        XCTAssertNil(plist["LSSupportsOpeningDocumentsInPlace"])
     }
 }

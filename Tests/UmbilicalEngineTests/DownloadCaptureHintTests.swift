@@ -64,11 +64,16 @@ final class CookieFreeHTTPTests: XCTestCase {
 
 final class HandoffImportTests: XCTestCase {
     func testCopyAndFetchLandInsideTheDownloadFolder() async throws {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(
             "umb-import-\(UUID().uuidString)",
             isDirectory: true
         )
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        // realpath. On macOS /var is a symlink to /private/var.
+        let root = URL(
+            fileURLWithPath: try DownloadPath.resolveInside(root: scratch, raw: scratch.path),
+            isDirectory: true
+        )
         defer { try? FileManager.default.removeItem(at: root) }
         let torrent = TorrentBuild.single(
             name: "payload.bin",

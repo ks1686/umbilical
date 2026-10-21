@@ -39,12 +39,12 @@ public enum HandoffImport {
         } catch {
             throw EngineError.handoffRejected("copy")
         }
-        _ = try DownloadPath.resolveInside(root: directory, raw: destination.path)
+        let confined = try confinedURL(destination, directory: directory)
         if torrent {
-            let data = try TorrentMetadata.readFile(destination)
+            let data = try TorrentMetadata.readFile(confined)
             _ = try TorrentMetadata.parse(data)
         }
-        return destination
+        return confined
     }
 
     private static func write(_ data: Data, named name: String, into directory: URL) throws -> URL {
@@ -54,8 +54,12 @@ public enum HandoffImport {
         } catch {
             throw EngineError.handoffRejected("copy")
         }
-        _ = try DownloadPath.resolveInside(root: directory, raw: destination.path)
-        return destination
+        return try confinedURL(destination, directory: directory)
+    }
+
+    private static func confinedURL(_ destination: URL, directory: URL) throws -> URL {
+        let resolved = try DownloadPath.resolveInside(root: directory, raw: destination.path)
+        return URL(fileURLWithPath: resolved)
     }
 
     private static func uniqueDestination(named name: String, in directory: URL) throws -> URL {
