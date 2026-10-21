@@ -22,11 +22,24 @@ enum CookieFreeHTTP {
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 20
         configuration.timeoutIntervalForResource = 20
-        let session = URLSession(configuration: configuration)
-        defer {
-            session.finishTasksAndInvalidate()
+        let queue = OperationQueue()
+        queue.name = "umbilical.cookie-free-http"
+        queue.qualityOfService = .utility
+        queue.maxConcurrentOperationCount = 1
+        let session = URLSession(
+            configuration: configuration,
+            delegate: nil,
+            delegateQueue: queue
+        )
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(from: url)
+        } catch {
+            session.invalidateAndCancel()
+            throw error
         }
-        let (data, response) = try await session.data(from: url)
+        session.invalidateAndCancel()
         if let http = response as? HTTPURLResponse {
             if !(200...299).contains(http.statusCode) {
                 throw EngineError.torrentRejected("fetch")

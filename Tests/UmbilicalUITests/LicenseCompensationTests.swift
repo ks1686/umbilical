@@ -6,10 +6,15 @@ import XCTest
 
 @testable import UmbilicalUI
 
-@MainActor
 final class LicenseCompensationTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    override func setUp() {
+        super.setUp()
+        boundLicenseTestDuration()
+    }
+
+    @MainActor
     func testCompensationFailureDoesNotClaimTheSeatWasFreed() async throws {
         let captured = try await activate(compensation: .success(polarReply(status: 500)))
         XCTAssertEqual(licenseDenial(captured.service.snapshot.status), .keychainFailed)
@@ -26,6 +31,7 @@ final class LicenseCompensationTests: XCTestCase {
         assertLogOmitsLicenseSecrets(captured.lines)
     }
 
+    @MainActor
     func testCompensationSuccessLogsStatusWithoutTheLicenseKey() async throws {
         for status in [204, 404] {
             let captured = try await activate(compensation: .success(polarReply(status: status)))
@@ -40,6 +46,7 @@ final class LicenseCompensationTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testCompensationErrorLogsTheTypeWithoutTheLicenseKey() async throws {
         let captured = try await activate(compensation: .failure(LicenseSecretLeakError()))
         XCTAssertEqual(
@@ -56,6 +63,7 @@ final class LicenseCompensationTests: XCTestCase {
         assertLogOmitsLicenseSecrets(captured.lines)
     }
 
+    @MainActor
     private func activate(
         compensation: Result<PolarReply, Error>
     ) async throws -> CapturedCompensation {
@@ -88,6 +96,7 @@ final class LicenseCompensationTests: XCTestCase {
         )
     }
 
+    @MainActor
     private func assertVisibleCopyDoesNotClaimTheSeatWasFreed(_ service: LicenseService) {
         let panel = LicenseCopy.panel(for: service.snapshot)
         XCTAssertFalse(panel.showsDeactivate)

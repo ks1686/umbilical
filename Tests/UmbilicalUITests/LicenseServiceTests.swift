@@ -6,10 +6,15 @@ import XCTest
 
 @testable import UmbilicalUI
 
-@MainActor
 final class LicenseServiceTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    override func setUp() {
+        super.setUp()
+        boundLicenseTestDuration()
+    }
+
+    @MainActor
     func testActivateStoresKeyActivationAndThisDevice() async throws {
         let store = MemoryLicenseStore()
         let transport = StubLicenseTransport([
@@ -44,6 +49,7 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).stopsActiveDownloads)
     }
 
+    @MainActor
     func testActivationLimitSaysHowManyMacs() async throws {
         XCTAssertEqual(LicensePolicy.activationLimit, 1)
         let store = MemoryLicenseStore()
@@ -77,6 +83,7 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertEqual(licenseDenial(service.snapshot.status), .missing)
     }
 
+    @MainActor
     func testDeactivateFailureStaysUntilTheUserClearsIt() async throws {
         let store = MemoryLicenseStore()
         store.credential = LicenseFixture.credential()
@@ -106,6 +113,7 @@ final class LicenseServiceTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testStickyDeactivateErrorDoesNotExtendGrace() async {
         let store = MemoryLicenseStore()
         store.credential = LicenseFixture.credential()
@@ -132,6 +140,7 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertEqual(store.validation?.validatedAt, now)
     }
 
+    @MainActor
     func testStickyDeactivateErrorDoesNotIgnoreClockRollback() async {
         let store = MemoryLicenseStore()
         let observed = now
@@ -159,6 +168,7 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).stopsActiveDownloads)
     }
 
+    @MainActor
     func testValidateRefreshesTheSameActivation() async throws {
         let store = MemoryLicenseStore()
         let checked = now.addingTimeInterval(-3_600)
@@ -186,6 +196,7 @@ final class LicenseServiceTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testDifferentKeyDeactivatesBeforeUsingAnotherSlot() async throws {
         let store = MemoryLicenseStore()
         store.credential = LicenseFixture.credential()
@@ -209,6 +220,7 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
     }
 
+    @MainActor
     func testDifferentKeyStaysPutWhenDeactivateFails() async {
         let store = MemoryLicenseStore()
         store.credential = LicenseFixture.credential()
@@ -226,6 +238,7 @@ final class LicenseServiceTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testSameKeyValidatesInsteadOfActivatingAgain() async throws {
         let store = MemoryLicenseStore()
         store.credential = LicenseFixture.credential()
@@ -240,6 +253,7 @@ final class LicenseServiceTests: XCTestCase {
         XCTAssertEqual(transport.calls.map(\.path), [PolarLicenseEndpoint.validate.rawValue])
     }
 
+    @MainActor
     func testRevokedClearsGraceAndStaysRevokedOffline() async throws {
         let store = MemoryLicenseStore()
         store.credential = LicenseFixture.credential()
@@ -264,10 +278,15 @@ final class LicenseServiceTests: XCTestCase {
     }
 }
 
-@MainActor
 final class LicenseKeychainFailureTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    override func setUp() {
+        super.setUp()
+        boundLicenseTestDuration()
+    }
+
+    @MainActor
     func testActivateRefusesWhenTheLicenseCannotBeStored() async throws {
         let store = MemoryLicenseStore()
         store.failCredentialSave = true

@@ -51,10 +51,15 @@ final class LicensePanelTests: XCTestCase {
     }
 }
 
-@MainActor
 final class LicenseDeactivatePanelTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    override func setUp() {
+        super.setUp()
+        boundLicenseTestDuration()
+    }
+
+    @MainActor
     func testConfirmedDeactivateShowsSeatIsFree() async throws {
         XCTAssertEqual(LicensePolicy.activationLimit, 1)
         XCTAssertEqual(
@@ -91,6 +96,7 @@ final class LicenseDeactivatePanelTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testFailedDeactivateShowsNoConfirmation() async {
         XCTAssertEqual(
             LicenseCopy.deactivateFailed,
@@ -123,6 +129,7 @@ final class LicenseDeactivatePanelTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testConfirmedDeactivateNoticeSurvivesTick() async {
         let store = MemoryLicenseStore()
         store.credential = LicenseFixture.credential()
