@@ -130,6 +130,31 @@ final class ExternalDownloadSessionTests: XCTestCase {
         XCTAssertTrue(session.client.torrents.isEmpty)
     }
 
+    func testHTTPMetalinkIsAddedAsAFileDownload() async throws {
+        let session = try await running()
+        defer { try? FileManager.default.removeItem(at: session.root) }
+        let staged = try ExternalDownload.stage(
+            urlText: "https://example.com/pack.metalink",
+            filename: "pack.metalink",
+            downloadRoot: session.root
+        )
+        let confirmed = try ExternalDownload.confirm(staged, downloadRoot: session.root)
+        try await session.model.addExternal(confirmed)
+        XCTAssertEqual(session.client.added.first?.url.scheme?.lowercased(), "https")
+        XCTAssertEqual(session.client.added.first?.options, ["out": "pack.metalink"])
+        XCTAssertTrue(session.client.torrents.isEmpty)
+        let meta4 = try ExternalDownload.stage(
+            urlText: "http://mirror.example.com/list.meta4",
+            filename: "list.meta4",
+            downloadRoot: session.root
+        )
+        try await session.model.addExternal(
+            try ExternalDownload.confirm(meta4, downloadRoot: session.root)
+        )
+        XCTAssertEqual(session.client.added.last?.options, ["out": "list.meta4"])
+        XCTAssertTrue(session.client.torrents.isEmpty)
+    }
+
     func testConfirmedFTPIsAdded() async throws {
         let session = try await running()
         defer { try? FileManager.default.removeItem(at: session.root) }
@@ -142,6 +167,15 @@ final class ExternalDownloadSessionTests: XCTestCase {
         try await session.model.addExternal(confirmed)
         XCTAssertEqual(session.client.added.first?.url.scheme?.lowercased(), "ftp")
         XCTAssertEqual(session.client.added.first?.options, ["out": "a.bin"])
+        let sftp = try ExternalDownload.stage(
+            urlText: "sftp://files.example.com/b.bin",
+            filename: "b.bin",
+            downloadRoot: session.root
+        )
+        try await session.model.addExternal(
+            try ExternalDownload.confirm(sftp, downloadRoot: session.root)
+        )
+        XCTAssertEqual(session.client.added.last?.url.scheme?.lowercased(), "sftp")
         XCTAssertTrue(session.client.torrents.isEmpty)
     }
 

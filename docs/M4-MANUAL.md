@@ -183,18 +183,28 @@ open 'magnet:?xt=urn:btih:abababababababababababababababababababab'
    ```
 
    The sheet shows `magnet` in large type, not a sender name. Press Return before a second has passed and confirm the list is unchanged. Open it again, wait about a second, and click Download. A row appears. It may later fail to find peers. That still counts: the handoff was accepted. The add sheet still rejects the same magnet.
-7. Rejected schemes and fields. None of these add a row. Each one shows "Download rejected" (or the sheet stays closed) and does not start a download:
+7. ftp, sftp, and HTTP metalink. Each of these opens the confirm sheet. Cancel leaves the queue empty:
+
+   ```bash
+   open 'umbilical://download?url=ftp://example.com/a.bin'
+   open 'umbilical://download?url=sftp://files.example.com/a.bin'
+   open 'umbilical://download?url=https://example.com/pack.metalink'
+   open 'umbilical://download?url=http://example.com/list.meta4'
+   ```
+
+8. Rejected schemes and fields. None of these add a row. Each one shows "Download rejected" (or the sheet stays closed) and does not start a download:
 
    ```bash
    open 'umbilical://download?url=file:///tmp/x'
    open 'umbilical://download?url=javascript:alert(1)'
+   open 'umbilical://download?url=data:text/plain,hi'
    open 'umbilical://download?url=https://user:secret@example.com/a'
    open 'umbilical://download?url=https://example.com/&cookie=secret'
    open 'umbilical://download?url=https://example.com/a.bin&filename=../x'
    open 'umbilical://download?url=--header=Bearer'
    ```
 
-8. Quit from the menu bar. `pgrep aria2c` prints nothing.
+9. Quit from the menu bar. `pgrep aria2c` prints nothing.
 
 ## Package tests
 

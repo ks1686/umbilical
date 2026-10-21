@@ -88,6 +88,10 @@ final class AppModel: ObservableObject {
         let allowed =
             scheme == ExternalDownload.scheme
             || scheme == "magnet"
+            || scheme == "http"
+            || scheme == "https"
+            || scheme == "ftp"
+            || scheme == "sftp"
             || url.isFileURL
         guard allowed else { return }
         let key = url.absoluteString

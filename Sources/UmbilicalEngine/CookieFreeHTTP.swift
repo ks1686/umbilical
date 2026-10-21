@@ -18,9 +18,8 @@ enum CookieFreeHTTP {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.httpCookieAcceptPolicy = .never
         configuration.httpShouldSetCookies = false
-        configuration.httpCookieStorage = nil
         configuration.urlCache = nil
-        configuration.httpAdditionalHeaders = [:]
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
         configuration.timeoutIntervalForRequest = 20
         configuration.timeoutIntervalForResource = 20
         let session = URLSession(configuration: configuration)

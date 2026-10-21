@@ -91,21 +91,30 @@ public enum ExternalDownload {
         if openURL.isFileURL {
             return try stage(localFile: openURL, downloadRoot: downloadRoot)
         }
-        if openURL.scheme?.lowercased() == "magnet" {
+        switch openURL.scheme?.lowercased() {
+        case "magnet":
             return try make(
                 urlText: openURL.absoluteString,
                 filename: nil,
                 downloadRoot: downloadRoot,
                 kind: .download
             )
+        case "http", "https", "ftp", "sftp":
+            return try make(
+                urlText: openURL.absoluteString,
+                filename: suggestedName(for: openURL),
+                downloadRoot: downloadRoot,
+                kind: .download
+            )
+        default:
+            let parsed = try fields(from: openURL)
+            return try make(
+                urlText: parsed.url,
+                filename: parsed.filename,
+                downloadRoot: downloadRoot,
+                kind: parsed.video ? .video : .download
+            )
         }
-        let parsed = try fields(from: openURL)
-        return try make(
-            urlText: parsed.url,
-            filename: parsed.filename,
-            downloadRoot: downloadRoot,
-            kind: parsed.video ? .video : .download
-        )
     }
 
     public static func stage(
@@ -294,6 +303,14 @@ public enum ExternalDownload {
         case nil:
             throw EngineError.schemeRejected("")
         }
+    }
+
+    private static func suggestedName(for url: URL) -> String? {
+        let name = url.lastPathComponent
+        guard DownloadCaptureHint.looksLikeDownload(url: url, filename: name) else {
+            return nil
+        }
+        return try? acceptedName(name)
     }
 
     private static func acceptedName(_ filename: String?) throws -> String? {
