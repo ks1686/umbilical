@@ -99,10 +99,8 @@ final class ExtensionManifestTests: XCTestCase {
         process.standardError = pipe
         try process.run()
         process.waitUntilExit()
-        let output = String(
-            data: pipe.fileHandleForReading.readDataToEndOfFile(),
-            encoding: .utf8
-        ) ?? ""
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: data, encoding: .utf8) ?? ""
         XCTAssertEqual(process.terminationStatus, 0, output)
     }
 
