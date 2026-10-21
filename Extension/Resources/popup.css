@@ -17,13 +17,6 @@ p {
   margin: 0 0 12px;
 }
 
-label {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-}
-
-#note {
-  margin-top: 12px;
-  color: #6e6e73;
+p:last-child {
+  margin-bottom: 0;
 }

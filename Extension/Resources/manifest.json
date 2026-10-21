@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "umbilical",
   "description": "Send a link to the umbilical download manager. Only the URL and an optional file name are sent.",
-  "version": "0.0.1",
+  "version": "1.0.1",
   "background": {
     "scripts": ["background.js"],
     "persistent": false
@@ -12,8 +12,8 @@
     "default_popup": "popup.html"
   },
   "permissions": [
+    "activeTab",
     "contextMenus",
-    "nativeMessaging",
-    "storage"
+    "nativeMessaging"
   ]
 }

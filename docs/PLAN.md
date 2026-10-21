@@ -157,13 +157,13 @@ Permissions in `Extension/Resources/manifest.json`:
 
 | Permission | Why |
 | --- | --- |
+| `activeTab` | Safari's WebKit context-menu path (`WebExtensionContext::addItemsToContextMenu`) hides extension items unless the extension already has website access for that page, or has `activeTab` so choosing the item can grant it. umbilical has no host permission, so this is the grant that makes "Download with umbilical" appear. It does not inject a content script. |
 | `contextMenus` | Adds "Download with umbilical" to the link menu. |
 | `nativeMessaging` | Delivers the URL and optional file name to the appex. |
-| `storage` | Remembers the optional download-capture toggle. Default is off. |
 
-`downloads` is not requested. Safari does not let an extension see browser downloads, and an unsupported permission can keep the extension from loading. The popup leaves that control off and disabled. The background script still accepts a download event only when `browser.downloads` exists, and it forwards only the URL and a file name.
+`downloads` is not requested. Safari does not implement `browser.downloads` (Apple Developer Forums thread 660046, 2020, still absent from the Safari compatibility table). The 1.0.0 capture toggle was dead code and was removed. `storage` went with it.
 
-No host permission, `webRequest`, `cookies`, `tabs`, or `scripting`.
+No host permission, `webRequest`, `cookies`, `tabs`, `scripting`, or content scripts. The click handler reads `info.linkUrl` from the menu event and a file name from that URL's path. It does not read page text, form fields, cookies, or headers. If a download needs the user's site session, it can fail in umbilical; Safari's own download still works because this path does not intercept clicks.
 
 `docs/M4-MANUAL.md` is the Mac pass. `swift test` covers the handoff parser. It does not load Safari.
 

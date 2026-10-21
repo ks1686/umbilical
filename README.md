@@ -64,7 +64,9 @@ validated magnet and a `.torrent`. Safari can hand the app an `http`, `https`,
 or `magnet` link. The app validates it and waits for confirmation before
 starting the download. The sheet shows the host and does not name the
 program that opened the link. The extension sends the URL and an optional file name.
-It does not send cookies, headers, or aria2 options. Video uses the bundled
+It does not send cookies, headers, or aria2 options, and it does not
+read page content. Safari needs the `activeTab` permission so the link
+menu can appear without standing website access. Video uses the bundled
 yt-dlp for one combined file. It does not merge separate streams, and it
 does not ship ffmpeg or a JavaScript runtime. License checks are described
 in `docs/LICENSING.md`. Sparkle checks the GitHub Releases appcast. See
