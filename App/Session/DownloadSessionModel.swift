@@ -103,40 +103,6 @@ public final class DownloadSessionModel {
         rebuild()
     }
 
-    /// Adds a handoff the user already confirmed. Options are rebuilt from the URL and file name.
-    public func addExternal(_ download: ConfirmedExternalDownload) async throws {
-        guard let directory else {
-            throw SessionError.folderMissing
-        }
-        let checked = try ExternalDownload.confirm(
-            ExtensionHandoff(
-                uri: download.uri,
-                outputName: download.outputName,
-                url: download.url,
-                kind: download.kind
-            ),
-            downloadRoot: directory
-        )
-        switch checked.kind {
-        case .video:
-            try await addVideo(
-                urlText: checked.uri,
-                outputName: checked.outputName ?? "",
-                folder: nil
-            )
-        case .torrentFile:
-            try await addLocalTorrent(checked, directory: directory)
-        case .metalinkFile:
-            try await importLocalMetalink(checked, directory: directory)
-        case .download:
-            if DownloadCaptureHint.isTorrent(url: checked.url, filename: checked.outputName) {
-                try await addRemoteTorrent(checked, directory: directory)
-            } else {
-                try await addRemoteURI(checked, directory: directory)
-            }
-        }
-    }
-
     public func pause(id: String) async {
         await change(
             id: id,

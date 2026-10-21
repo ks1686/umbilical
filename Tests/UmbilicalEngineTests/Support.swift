@@ -167,6 +167,11 @@ func waitForStatus(
     throw EngineError.listenTimeout
 }
 
+func queryNames(_ url: URL) throws -> [String] {
+    let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+    return try XCTUnwrap(components.queryItems).map(\.name)
+}
+
 func makeTemporaryDirectory() throws -> URL {
     let name = "umb-test-\(UUID().uuidString)"
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(name, isDirectory: true)

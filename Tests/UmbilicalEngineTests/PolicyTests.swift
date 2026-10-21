@@ -111,7 +111,7 @@ final class PolicyTests: XCTestCase {
         XCTAssertNoThrow(try DownloadPath.resolveInside(root: root, raw: "nested/child"))
     }
 
-    func testOutputNamesAndSchemesAreRejected() async throws {
+    func testFTPAndSFTPAreAdded() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let transport = RecordingTransport()
@@ -125,6 +125,19 @@ final class PolicyTests: XCTestCase {
         _ = try await client.add(url: try testURL("ftp://example.com/a.bin"))
         _ = try await client.add(url: try testURL("sftp://files.example.com/a.bin"))
         XCTAssertEqual(transport.methods, ["aria2.addUri", "aria2.addUri"])
+    }
+
+    func testFileDashAndUserinfoStayRejected() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let transport = RecordingTransport()
+        let client = RPCClient(
+            port: 1,
+            secret: "secret",
+            downloadDirectory: root,
+            transport: transport,
+            quarantine: RecordingQuarantine()
+        )
         do {
             _ = try await client.add(url: try testURL("file:///tmp/x"))
             XCTFail("expected file URL to be rejected")
@@ -153,6 +166,20 @@ final class PolicyTests: XCTestCase {
                 return
             }
         }
+        XCTAssertTrue(transport.methods.isEmpty)
+    }
+
+    func testRejectedOutputNameDoesNotReachTheTransport() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let transport = RecordingTransport()
+        let client = RPCClient(
+            port: 1,
+            secret: "secret",
+            downloadDirectory: root,
+            transport: transport,
+            quarantine: RecordingQuarantine()
+        )
         do {
             _ = try await client.add(
                 url: try testURL("https://example.com/a"),
@@ -165,7 +192,7 @@ final class PolicyTests: XCTestCase {
                 return
             }
         }
-        XCTAssertEqual(transport.methods, ["aria2.addUri", "aria2.addUri"])
+        XCTAssertTrue(transport.methods.isEmpty)
     }
 
     func testAllowedOptionsReachTheTransport() async throws {
