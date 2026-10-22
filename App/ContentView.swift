@@ -13,6 +13,7 @@ struct ContentView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 unofficialCaption
+                SafariExtensionNoticeBanner(notice: model.safariNotice)
                 if showsBanner, let message = model.snapshot.message {
                     banner(message)
                 }

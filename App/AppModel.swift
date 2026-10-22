@@ -13,6 +13,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var license: LicenseSnapshot
     @Published private(set) var stagedHandoff: StagedHandoff?
     @Published private(set) var handoffError: String?
+    let safariNotice: SafariExtensionNoticeController
 
     private let session: DownloadSessionModel
     private let licensing: LicenseService
@@ -35,7 +36,13 @@ final class AppModel: ObservableObject {
         self.licensing = licensing
         self.snapshot = session.snapshot
         self.license = licensing.snapshot
+        let version =
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? ""
+        let safariNotice = SafariExtensionNoticeController(currentVersion: version)
+        self.safariNotice = safariNotice
         AppTermination.attach(self)
+        SafariExtensionBridge.refresh(safariNotice)
         loop = Task { @MainActor [weak self] in
             await self?.run()
         }

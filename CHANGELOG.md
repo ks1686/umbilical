@@ -1,0 +1,8 @@
+# Changelog
+
+## 1.0.1
+
+Safari turned off the umbilical extension after this update. To turn it back on, open Safari Settings, choose Extensions, and tick umbilical.
+
+- Keep a single main window on launch and `umbilical://` handoff.
+- Hide pause and resume on completed, failed, and cancelled download rows.

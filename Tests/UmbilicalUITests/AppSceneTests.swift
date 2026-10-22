@@ -17,6 +17,12 @@ final class AppSceneTests: XCTestCase {
         XCTAssertTrue(menu.contains("openWindow(id: \"main\")"))
         let list = try readAppSource("DownloadList.swift")
         XCTAssertTrue(list.contains("if row.showsPauseResume"))
+        let bridge = try readAppSource("SafariExtensionBridge.swift")
+        XCTAssertTrue(bridge.contains("SFSafariExtensionManager.getStateOfSafariExtension"))
+        XCTAssertTrue(bridge.contains("SFSafariApplication.showPreferencesForExtension"))
+        let banner = try readAppSource("SafariExtensionNoticeBanner.swift")
+        XCTAssertTrue(banner.contains("SafariExtensionNotice.message"))
+        XCTAssertTrue(banner.contains("SafariExtensionBridge.showPreferences"))
     }
 
     private func readAppSource(_ name: String) throws -> String {

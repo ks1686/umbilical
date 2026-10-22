@@ -144,6 +144,52 @@ class ReleaseToolsTest(unittest.TestCase):
             self.assertNotIn("stale==", text)
             self.assertIn("<sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>", text)
 
+    def test_appcast_includes_release_notes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "appcast.xml"
+            note = (
+                "Safari turned off the umbilical extension after this update. "
+                "To turn it back on, open Safari Settings, choose Extensions, "
+                "and tick umbilical."
+            )
+            release_tools.render_appcast(
+                version="1.0.1",
+                short_version="1.0.1",
+                minimum="14.0",
+                signature="abc123==",
+                length=10,
+                previous=None,
+                output=output,
+                pubdate="Thu, 22 Oct 2026 00:00:00 +0000",
+                notes=note,
+            )
+            text = output.read_text(encoding="utf-8")
+            self.assertIn("<description>", text)
+            self.assertIn("tick umbilical.", text)
+            self.assertNotIn("Umbilical", text)
+
+    def test_release_notes_mention_safari_extension_reenable(self) -> None:
+        sentence = (
+            "Safari turned off the umbilical extension after this update. "
+            "To turn it back on, open Safari Settings, choose Extensions, "
+            "and tick umbilical."
+        )
+        changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+        notes = release_tools.release_notes_path(ROOT, "1.0.1").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("## 1.0.1", changelog)
+        self.assertIn(sentence, changelog)
+        self.assertIn(sentence, notes)
+        self.assertNotIn("\u2014", changelog)
+        self.assertNotIn("\u2013", changelog)
+        self.assertNotIn("\u2014", notes)
+        publish = (ROOT / "scripts" / "release" / "publish.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("docs/release-notes/${version}.md", publish)
+        self.assertIn("--notes-file", publish)
+
     def test_previous_appcast_rejects_doctype(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             previous = Path(tmp) / "bad.xml"

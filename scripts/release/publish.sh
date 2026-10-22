@@ -207,7 +207,8 @@ else
 fi
 
 appcast="dist/appcast.xml"
-if [[ -f "${previous}" ]]; then
+notes_src="docs/release-notes/${version}.md"
+render_appcast() {
   python3 scripts/release/release_tools.py render-appcast \
     --version "${version}" \
     --short-version "${version}" \
@@ -215,15 +216,16 @@ if [[ -f "${previous}" ]]; then
     --signature-file "${signature_file}" \
     --dmg "${dmg}" \
     --output "${appcast}" \
-    --previous "${previous}"
+    "$@"
+}
+if [[ -f "${previous}" && -f "${notes_src}" ]]; then
+  render_appcast --previous "${previous}" --notes-file "${notes_src}"
+elif [[ -f "${previous}" ]]; then
+  render_appcast --previous "${previous}"
+elif [[ -f "${notes_src}" ]]; then
+  render_appcast --notes-file "${notes_src}"
 else
-  python3 scripts/release/release_tools.py render-appcast \
-    --version "${version}" \
-    --short-version "${version}" \
-    --minimum "${minimum}" \
-    --signature-file "${signature_file}" \
-    --dmg "${dmg}" \
-    --output "${appcast}"
+  render_appcast
 fi
 
 if ! "${sign_update}" --ed-key-file "${sparkle_key}" "${appcast}" \
@@ -273,6 +275,10 @@ SHA-256: ${sha256}
 The dmg is notarized. appcast.xml is the Sparkle feed.
 umbilical.rb is a Homebrew cask draft. It is not pushed to ks1686/homebrew-tap.
 EOF
+if [[ -f "${notes_src}" ]]; then
+  printf '\n' >>"${notes}"
+  cat "${notes_src}" >>"${notes}"
+fi
 
 if gh release view "${tag}" --repo ks1686/umbilical >/dev/null 2>&1; then
   gh release upload "${tag}" --repo ks1686/umbilical --clobber \

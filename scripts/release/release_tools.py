@@ -254,6 +254,12 @@ def _load_previous_items(path: Path | None, version: str) -> list[ET.Element]:
     return kept
 
 
+def release_notes_path(root: Path, version: str) -> Path:
+    if VERSION_RE.fullmatch(version) is None:
+        fail("version must look like 1.2.3")
+    return root / "docs" / "release-notes" / f"{version}.md"
+
+
 def render_appcast(
     *,
     version: str,
@@ -264,6 +270,7 @@ def render_appcast(
     previous: Path | None,
     output: Path,
     pubdate: str,
+    notes: str | None = None,
 ) -> None:
     if VERSION_RE.fullmatch(version) is None:
         fail("version must look like 1.2.3")
@@ -286,6 +293,8 @@ def render_appcast(
 
     item = ET.SubElement(channel, "item")
     ET.SubElement(item, "title").text = f"Version {short_version}"
+    if notes is not None and notes.strip() != "":
+        ET.SubElement(item, "description").text = notes.strip()
     ET.SubElement(item, "pubDate").text = pubdate
     ET.SubElement(item, f"{{{SPARKLE_NS}}}version").text = version
     ET.SubElement(item, f"{{{SPARKLE_NS}}}shortVersionString").text = short_version
@@ -772,6 +781,9 @@ def _cmd_render_appcast(args: argparse.Namespace) -> None:
     if int(length_text) != actual:
         fail("sign_update length does not match the dmg")
     previous = Path(args.previous) if args.previous else None
+    notes = None
+    if args.notes_file:
+        notes = Path(args.notes_file).read_text(encoding="utf-8")
     render_appcast(
         version=args.version,
         short_version=args.short_version,
@@ -781,6 +793,7 @@ def _cmd_render_appcast(args: argparse.Namespace) -> None:
         previous=previous,
         output=Path(args.output),
         pubdate=args.pubdate or rfc822_now(),
+        notes=notes,
     )
 
 
@@ -863,6 +876,7 @@ def build_parser() -> argparse.ArgumentParser:
     appcast.add_argument("--previous")
     appcast.add_argument("--output", required=True)
     appcast.add_argument("--pubdate")
+    appcast.add_argument("--notes-file")
     appcast.set_defaults(func=_cmd_render_appcast)
 
     cask = sub.add_parser("render-cask")
