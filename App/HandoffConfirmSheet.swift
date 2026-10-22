@@ -28,7 +28,7 @@ struct HandoffConfirmSheet: View {
             Text(hostLabel)
                 .font(.largeTitle)
                 .textSelection(.enabled)
-            Text("A download was requested. Nothing starts until you confirm.")
+            Text(requestCopy)
                 .fixedSize(horizontal: false, vertical: true)
             link
             if let name = staged.handoff.outputName {
@@ -36,7 +36,7 @@ struct HandoffConfirmSheet: View {
                     .font(.body.monospaced())
                     .textSelection(.enabled)
             }
-            Text("Only this URL is sent, plus the file name when one is shown.")
+            Text(privacyCopy)
                 .font(.callout)
                 .foregroundStyle(.secondary)
             if let reason = blockedReason {
@@ -55,6 +55,30 @@ struct HandoffConfirmSheet: View {
 
     private var hostLabel: String {
         HandoffConfirmationGate.prominentLabel(for: staged.handoff.url)
+    }
+
+    private var requestCopy: String {
+        switch staged.handoff.kind {
+        case .download:
+            return "A download was requested. Nothing starts until you confirm."
+        case .video:
+            return "A video download was requested. Nothing starts until you confirm."
+        case .torrentFile:
+            return "A torrent file was opened. Nothing starts until you confirm. "
+                + "umbilical never seeds."
+        case .metalinkFile:
+            return "A metalink file was opened. It will be saved in your download folder. "
+                + "The files it names are not started."
+        }
+    }
+
+    private var privacyCopy: String {
+        switch staged.handoff.kind {
+        case .download, .video:
+            return "Only this URL is sent, plus the file name when one is shown."
+        case .torrentFile, .metalinkFile:
+            return "This file stays on your Mac. It is not uploaded."
+        }
     }
 
     private var link: some View {

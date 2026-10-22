@@ -41,7 +41,14 @@ public struct HandoffConfirmationGate: Equatable {
     }
 
     /// Host when the link has one. A magnet has no host, so the label is the scheme.
+    /// A Finder file uses the file name.
     public static func prominentLabel(for url: URL) -> String {
+        if url.isFileURL {
+            let name = url.lastPathComponent.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty {
+                return name
+            }
+        }
         if let host = url.host?.trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty {
             return host
         }

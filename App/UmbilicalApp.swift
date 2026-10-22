@@ -59,7 +59,7 @@ final class AppTermination: NSObject, NSApplicationDelegate {
     }
 
     func application(_: NSApplication, open urls: [URL]) {
-        for url in urls where url.scheme?.lowercased() == ExternalDownload.scheme {
+        for url in urls {
             if let model = AppTermination.model {
                 model.receiveExternalURL(url)
             } else {

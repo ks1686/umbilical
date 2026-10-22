@@ -182,9 +182,13 @@ public final class RPCClient {
             throw EngineError.schemeRejected("")
         }
         switch scheme {
-        case "http", "https":
-            try HTTPURLPolicy.validate(url)
-            return url.absoluteString
+        case "http", "https", "ftp", "sftp":
+            try HTTPURLPolicy.validateTransfer(url)
+            let absolute = url.absoluteString
+            if absolute.hasPrefix("-") {
+                throw EngineError.schemeRejected("option")
+            }
+            return absolute
         case "magnet":
             return try MagnetLink.canonical(url)
         default:

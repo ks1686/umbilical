@@ -6,10 +6,15 @@ import XCTest
 
 @testable import UmbilicalUI
 
-@MainActor
 final class LicenseServiceCacheTests: XCTestCase {
     private let now = Date(timeIntervalSince1970: 1_800_000_000)
 
+    override func setUp() {
+        super.setUp()
+        boundLicenseTestDuration()
+    }
+
+    @MainActor
     func testOfflineWithinGraceKeepsFullUse() async {
         let store = MemoryLicenseStore()
         let checked = now.addingTimeInterval(-2 * 24 * 60 * 60)
@@ -31,6 +36,7 @@ final class LicenseServiceCacheTests: XCTestCase {
         XCTAssertFalse(permissions.stopsActiveDownloads)
     }
 
+    @MainActor
     func testOfflineAfterGraceBlocksNewWorkOnly() async {
         let store = MemoryLicenseStore()
         let checked = now.addingTimeInterval(-(LicensePolicy.offlineGrace + 1))
@@ -49,6 +55,7 @@ final class LicenseServiceCacheTests: XCTestCase {
         XCTAssertTrue(LicenseCopy.graceExpired.contains(String(LicensePolicy.offlineGraceDays)))
     }
 
+    @MainActor
     func testGraceAllowsTheExactDeadline() async {
         let store = MemoryLicenseStore()
         let checked = now.addingTimeInterval(-LicensePolicy.offlineGrace)
@@ -64,6 +71,7 @@ final class LicenseServiceCacheTests: XCTestCase {
         }
     }
 
+    @MainActor
     func testClockRollbackDoesNotExtendGrace() async throws {
         let store = MemoryLicenseStore()
         let checked = now.addingTimeInterval(-20 * 24 * 60 * 60)
@@ -88,6 +96,7 @@ final class LicenseServiceCacheTests: XCTestCase {
         XCTAssertEqual(store.validation?.validatedAt, checked)
     }
 
+    @MainActor
     func testSuccessfulCheckDoesNotMoveTheClockBackward() async throws {
         let store = MemoryLicenseStore()
         let checked = now.addingTimeInterval(-10 * 24 * 60 * 60)
@@ -109,6 +118,7 @@ final class LicenseServiceCacheTests: XCTestCase {
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
     }
 
+    @MainActor
     func testRecordCopiedFromAnotherDeviceIsUnvalidated() async {
         let store = MemoryLicenseStore()
         let checked = now.addingTimeInterval(-3_600)
@@ -133,6 +143,7 @@ final class LicenseServiceCacheTests: XCTestCase {
         XCTAssertTrue(transport.calls.isEmpty)
     }
 
+    @MainActor
     func testKeyMismatchIsUnvalidated() async {
         let store = MemoryLicenseStore()
         let checked = now.addingTimeInterval(-3_600)
@@ -152,6 +163,7 @@ final class LicenseServiceCacheTests: XCTestCase {
         XCTAssertFalse(LicensePermissions.resolve(service.snapshot.status).stopsActiveDownloads)
     }
 
+    @MainActor
     func testMissingDeviceIDDoesNotUseOrDeleteTheCache() async {
         let store = MemoryLicenseStore()
         store.credential = LicenseFixture.credential()
@@ -175,6 +187,7 @@ final class LicenseServiceCacheTests: XCTestCase {
         XCTAssertNotNil(store.validation)
     }
 
+    @MainActor
     func testDeactivateFreesTheLocalRecord() async throws {
         let store = MemoryLicenseStore()
         store.label = LicenseFixture.label
@@ -198,6 +211,7 @@ final class LicenseServiceCacheTests: XCTestCase {
         XCTAssertNil(panel.errorText)
     }
 
+    @MainActor
     func testUnofficialBuildDoesNotCallPolar() async {
         let transport = StubLicenseTransport([
             .success(polarReply(status: 200, body: Data("nope".utf8)))
@@ -219,6 +233,7 @@ final class LicenseServiceCacheTests: XCTestCase {
         XCTAssertTrue(LicensePermissions.resolve(service.snapshot.status).allowsNewDownloads)
     }
 
+    @MainActor
     func testRecheckWaitsAndRetryIsSooner() async throws {
         let store = MemoryLicenseStore()
         store.credential = LicenseFixture.credential()

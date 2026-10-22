@@ -21,7 +21,8 @@ public enum HandoffLaunch {
         guard url.scheme?.lowercased() == ExternalDownload.scheme else {
             throw EngineError.schemeRejected(url.scheme?.lowercased() ?? "")
         }
-        guard url.host?.lowercased() == ExternalDownload.host else {
+        let host = url.host?.lowercased() ?? ""
+        guard host == ExternalDownload.host || host == ExternalDownload.videoHost else {
             throw EngineError.handoffRejected("host")
         }
         return url

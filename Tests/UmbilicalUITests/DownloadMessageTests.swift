@@ -15,7 +15,11 @@ final class DownloadMessageTests: XCTestCase {
         )
         XCTAssertEqual(
             DownloadMessage.text(for: EngineError.schemeRejected("magnet")),
-            "Only http and https URLs can be added (magnet)."
+            "That URL scheme is not allowed (magnet)."
+        )
+        XCTAssertEqual(
+            DownloadMessage.text(for: EngineError.schemeRejected("option")),
+            "That URL cannot be used as a command option."
         )
         XCTAssertEqual(
             DownloadMessage.text(for: EngineError.schemeRejected("userinfo")),

@@ -56,6 +56,16 @@ struct SettingsView: View {
             )
             .font(.callout)
             .foregroundStyle(.secondary)
+            Text(
+                "Intercepting clicks is off until you turn it on in the extension popup. "
+                    + "That uses the same website access. The extension still sends only "
+                    + "the clicked link's URL and file name. It does not read the page, "
+                    + "forms, or cookies, and it does not send your login session. "
+                    + "Option-click a link to skip interception. Session-bound downloads "
+                    + "can fail; use Safari's own download in that case."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
         }
     }
 

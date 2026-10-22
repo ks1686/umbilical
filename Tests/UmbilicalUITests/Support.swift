@@ -13,10 +13,16 @@ struct RecordedAdd: Equatable {
     var options: [String: String]
 }
 
+struct RecordedTorrent: Equatable {
+    var file: URL
+    var options: [String: String]
+}
+
 final class FakeDownloads: DownloadControlling {
     var nextGID = 1
     var statuses: [String: DownloadStatus] = [:]
     var added: [RecordedAdd] = []
+    var torrents: [RecordedTorrent] = []
     var paused: [String] = []
     var resumed: [String] = []
     var removed: [String] = []
@@ -26,6 +32,15 @@ final class FakeDownloads: DownloadControlling {
 
     func add(url: URL, options: [String: String]) async throws -> String {
         added.append(RecordedAdd(url: url, options: options))
+        return register(url: url)
+    }
+
+    func addTorrent(file: URL, options: [String: String]) async throws -> String {
+        torrents.append(RecordedTorrent(file: file, options: options))
+        return register(url: file)
+    }
+
+    private func register(url: URL) -> String {
         let gid = "g\(nextGID)"
         nextGID += 1
         statuses[gid] = DownloadStatus(
@@ -34,7 +49,7 @@ final class FakeDownloads: DownloadControlling {
             totalLength: 0,
             completedLength: 0,
             downloadSpeed: 0,
-            files: [],
+            files: url.isFileURL ? [url] : [],
             errorMessage: nil
         )
         return gid
@@ -84,6 +99,10 @@ final class FakeEngine: EngineLaunching {
     func stop() {
         stopCount += 1
     }
+}
+
+final class NoopQuarantine: QuarantineApplying {
+    func markDownloaded(file _: URL) throws {}
 }
 
 final class MemorySettings: SettingsStoring {

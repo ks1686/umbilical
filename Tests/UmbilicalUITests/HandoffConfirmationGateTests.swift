@@ -32,5 +32,7 @@ final class HandoffConfirmationGateTests: XCTestCase {
         let magnetText = "magnet:?xt=urn:btih:" + String(repeating: "ab", count: 20)
         let magnet = try XCTUnwrap(URL(string: magnetText))
         XCTAssertEqual(HandoffConfirmationGate.prominentLabel(for: magnet), "magnet")
+        let file = URL(fileURLWithPath: "/tmp/payload.torrent")
+        XCTAssertEqual(HandoffConfirmationGate.prominentLabel(for: file), "payload.torrent")
     }
 }

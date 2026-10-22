@@ -108,9 +108,157 @@ final class ExternalDownloadSessionTests: XCTestCase {
         XCTAssertTrue(session.model.snapshot.rows.isEmpty)
     }
 
-    private func running() async throws -> RunningFixture {
+    func testVideoHandoffDoesNotUseAria2() async throws {
+        let session = try await running()
+        defer { try? FileManager.default.removeItem(at: session.root) }
+        let staged = try ExternalDownload.stage(
+            nativeMessage: ["url": "https://example.com/watch", "video": true] as [String: Any],
+            downloadRoot: session.root
+        )
+        XCTAssertEqual(staged.kind, .video)
+        let confirmed = try ExternalDownload.confirm(staged, downloadRoot: session.root)
+        do {
+            try await session.model.addExternal(confirmed)
+            XCTFail("expected yt-dlp to be required")
+        } catch let error as EngineError {
+            guard case .executableMissing("yt-dlp") = error else {
+                XCTFail("unexpected \(error)")
+                return
+            }
+        }
+        XCTAssertTrue(session.client.added.isEmpty)
+        XCTAssertTrue(session.client.torrents.isEmpty)
+    }
+
+    func testHTTPMetalinkIsAddedAsAFileDownload() async throws {
+        let session = try await running()
+        defer { try? FileManager.default.removeItem(at: session.root) }
+        let staged = try ExternalDownload.stage(
+            urlText: "https://example.com/pack.metalink",
+            filename: "pack.metalink",
+            downloadRoot: session.root
+        )
+        let confirmed = try ExternalDownload.confirm(staged, downloadRoot: session.root)
+        try await session.model.addExternal(confirmed)
+        XCTAssertEqual(session.client.added.first?.url.scheme?.lowercased(), "https")
+        XCTAssertEqual(session.client.added.first?.options, ["out": "pack.metalink"])
+        XCTAssertTrue(session.client.torrents.isEmpty)
+        let meta4 = try ExternalDownload.stage(
+            urlText: "http://mirror.example.com/list.meta4",
+            filename: "list.meta4",
+            downloadRoot: session.root
+        )
+        try await session.model.addExternal(
+            try ExternalDownload.confirm(meta4, downloadRoot: session.root)
+        )
+        XCTAssertEqual(session.client.added.last?.options, ["out": "list.meta4"])
+        XCTAssertTrue(session.client.torrents.isEmpty)
+    }
+
+    func testConfirmedFTPIsAdded() async throws {
+        let session = try await running()
+        defer { try? FileManager.default.removeItem(at: session.root) }
+        let staged = try ExternalDownload.stage(
+            urlText: "ftp://example.com/a.bin",
+            filename: "a.bin",
+            downloadRoot: session.root
+        )
+        let confirmed = try ExternalDownload.confirm(staged, downloadRoot: session.root)
+        try await session.model.addExternal(confirmed)
+        XCTAssertEqual(session.client.added.first?.url.scheme?.lowercased(), "ftp")
+        XCTAssertEqual(session.client.added.first?.options, ["out": "a.bin"])
+        let sftp = try ExternalDownload.stage(
+            urlText: "sftp://files.example.com/b.bin",
+            filename: "b.bin",
+            downloadRoot: session.root
+        )
+        try await session.model.addExternal(
+            try ExternalDownload.confirm(sftp, downloadRoot: session.root)
+        )
+        XCTAssertEqual(session.client.added.last?.url.scheme?.lowercased(), "sftp")
+        XCTAssertTrue(session.client.torrents.isEmpty)
+    }
+
+    func testDashPrefixedURLNeverReachesTheEngine() async throws {
+        let session = try await running()
+        defer { try? FileManager.default.removeItem(at: session.root) }
+        let poisoned = ConfirmedExternalDownload(
+            uri: "--out=evil",
+            outputName: nil,
+            url: try XCTUnwrap(URL(string: "https://example.com/a.bin")),
+            options: [:],
+            kind: .download
+        )
+        do {
+            try await session.model.addExternal(poisoned)
+            XCTFail("expected a dash-prefixed URL to be rejected")
+        } catch let error as EngineError {
+            XCTAssertNotNil(error)
+        }
+        XCTAssertTrue(session.client.added.isEmpty)
+        XCTAssertTrue(session.client.torrents.isEmpty)
+    }
+
+    func testLocalTorrentGoesToAddTorrent() async throws {
+        let session = try await running()
+        defer { try? FileManager.default.removeItem(at: session.root) }
+        let source = session.root.deletingLastPathComponent().appendingPathComponent(
+            "umb-src-\(UUID().uuidString).torrent"
+        )
+        try sampleTorrentBytes().write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let staged = try ExternalDownload.stage(localFile: source, downloadRoot: session.root)
+        let confirmed = try ExternalDownload.confirm(staged, downloadRoot: session.root)
+        try await session.model.addExternal(confirmed)
+        XCTAssertTrue(session.client.added.isEmpty)
+        let recorded = try XCTUnwrap(session.client.torrents.first)
+        XCTAssertTrue(recorded.file.path.hasPrefix(session.root.path))
+        XCTAssertTrue(recorded.options.isEmpty)
+    }
+
+    func testLocalMetalinkIsCopiedAndNotFollowed() async throws {
+        let session = try await running(quarantine: NoopQuarantine())
+        defer { try? FileManager.default.removeItem(at: session.root) }
+        let source = session.root.deletingLastPathComponent().appendingPathComponent(
+            "umb-src-\(UUID().uuidString).meta4"
+        )
+        try Data("<metalink></metalink>".utf8).write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let staged = try ExternalDownload.stage(localFile: source, downloadRoot: session.root)
+        let confirmed = try ExternalDownload.confirm(staged, downloadRoot: session.root)
+        try await session.model.addExternal(confirmed)
+        XCTAssertTrue(session.client.added.isEmpty)
+        XCTAssertTrue(session.client.torrents.isEmpty)
+        XCTAssertEqual(session.model.snapshot.rows.count, 1)
+        XCTAssertEqual(session.model.snapshot.rows.first?.stateText, "Complete")
+        let copied = session.root.appendingPathComponent(source.lastPathComponent)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copied.path))
+    }
+
+    private func sampleTorrentBytes() throws -> Data {
+        let header =
+            "d8:announce27:http://127.0.0.1:9/announce4:infod6:lengthi4e4:name11:payload.bin"
+            + "12:piece lengthi16e6:pieces20:"
+        var data = Data(header.utf8)
+        let hex = "12dada1fff4d4787ade3333147202c3b443e376f"
+        var hash = Data()
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2)
+            let byte = UInt8(hex[index..<next], radix: 16)!
+            hash.append(byte)
+            index = next
+        }
+        data.append(hash)
+        data.append(Data("ee".utf8))
+        return data
+    }
+
+    private func running(
+        quarantine: any QuarantineApplying = SystemQuarantine()
+    ) async throws -> RunningFixture {
         let root = try makeTempDirectory()
-        let fixture = makeSession()
+        let fixture = makeSession(quarantine: quarantine)
         try await fixture.model.updateDownloadDirectory(root)
         let accepted = URL(
             fileURLWithPath: try XCTUnwrap(fixture.model.snapshot.downloadDirectoryPath),

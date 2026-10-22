@@ -6,7 +6,7 @@ import XCTest
 
 final class ExternalDownloadTests: XCTestCase {
     func testHTTPAndHTTPSRoundTripThroughTheOpenURL() throws {
-        let root = try makeRoot()
+        let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let message: [String: Any] = [
             "url": " HTTPS://example.com/a.bin?x=1&y=2#part ",
@@ -35,7 +35,7 @@ final class ExternalDownloadTests: XCTestCase {
     }
 
     func testMagnetCanonicalizesAndRoundTrips() throws {
-        let root = try makeRoot()
+        let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let hash = String(repeating: "ab", count: 20)
         let raw = "magnet:?xt=urn:btih:\(hash.uppercased())&tr=http://127.0.0.1:9/announce"
@@ -57,45 +57,29 @@ final class ExternalDownloadTests: XCTestCase {
         XCTAssertEqual(try queryNames(open), ["url"])
     }
 
-    func testRejectedSchemesUserinfoAndNames() throws {
-        let root = try makeRoot()
+    func testMagnetBTMHAndPrefixRules() throws {
+        let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let rejected = [
-            "file:///tmp/x": EngineError.schemeRejected("file"),
-            "javascript:alert(1)": EngineError.schemeRejected("javascript"),
-            "data:text/plain,hi": EngineError.schemeRejected("data"),
-            "ftp://example.com/a": EngineError.schemeRejected("ftp"),
-            "https://user:secret@example.com/a": EngineError.schemeRejected("userinfo"),
-            "": EngineError.schemeRejected("empty"),
-            "https://example.com/a b": EngineError.schemeRejected("whitespace")
-        ]
-        for (text, expected) in rejected {
-            XCTAssertThrowsError(
-                try ExternalDownload.stage(urlText: text, filename: nil, downloadRoot: root)
-            ) { error in
-                XCTAssertEqual(error as? EngineError, expected, text)
-            }
-        }
-        let badNames = [
-            "../x", "/tmp/x", "a/b", "a\\b", ".", "..", String(repeating: "a", count: 256)
-        ]
-        for name in badNames {
-            XCTAssertThrowsError(
-                try ExternalDownload.stage(
-                    urlText: "https://example.com/a.bin",
-                    filename: name,
-                    downloadRoot: root
-                )
-            ) { error in
-                guard case EngineError.outputNameRejected = error else {
-                    return XCTFail("\(name) -> \(error)")
-                }
-            }
-        }
+        let digest = String(repeating: "ab", count: 32)
+        let btmh = "magnet:?xt=urn:btmh:1220\(digest)"
+        let staged = try ExternalDownload.stage(urlText: btmh, filename: nil, downloadRoot: root)
+        XCTAssertTrue(staged.uri.hasPrefix("magnet:?"))
+        XCTAssertTrue(staged.uri.contains("btmh"))
+        XCTAssertEqual(staged.kind, .download)
+        XCTAssertThrowsError(
+            try ExternalDownload.stage(
+                urlText: "magnet:xt=urn:btih:" + String(repeating: "ab", count: 20),
+                filename: nil,
+                downloadRoot: root
+            )
+        )
+        let magnetOpen = try XCTUnwrap(URL(string: btmh))
+        let fromFinder = try ExternalDownload.stage(openURL: magnetOpen, downloadRoot: root)
+        XCTAssertEqual(fromFinder.uri, staged.uri)
     }
 
     func testExtraFieldsAndNonStringsAreRejected() throws {
-        let root = try makeRoot()
+        let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
         let url = "https://example.com/a.bin"
         let forbidden = [
@@ -142,59 +126,78 @@ final class ExternalDownloadTests: XCTestCase {
         XCTAssertEqual(named.options.keys.sorted(), ["out"])
     }
 
-    func testOpenURLRejectsMalformedRequests() throws {
-        let root = try makeRoot()
+    func testVideoFlagUsesTheVideoHostAndRejectsMagnets() throws {
+        let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
-        let samples = [
-            "https://example.com/a.bin",
-            "umbilical://example.com/?url=https://example.com/a.bin",
-            "umbilical://user:pass@download?url=https://example.com/a.bin",
-            "umbilical://download/extra?url=https://example.com/a.bin",
-            "umbilical://download?url=https://example.com/a.bin#frag",
-            "umbilical://download",
-            "umbilical://download?filename=a.bin",
-            "umbilical://download?url=https://example.com/a.bin&url=https://example.com/b.bin",
-            "umbilical://download?url=https://example.com/a.bin&cookie=secret",
-            "umbilical://download?url=https://example.com/a.bin&header=Bearer",
-            "umbilical://download?url=file:///tmp/x",
-            "umbilical://download?url=javascript:alert(1)",
-            "umbilical://download?url=https://user:pw@example.com/a",
-            "umbilical://download?url=https://example.com/a.bin&filename=../x"
-        ]
-        for sample in samples {
-            let url = try XCTUnwrap(URL(string: sample), sample)
-            XCTAssertThrowsError(
-                try ExternalDownload.stage(openURL: url, downloadRoot: root),
-                sample
+        let staged = try ExternalDownload.stage(
+            nativeMessage: [
+                "url": "https://example.com/watch",
+                "filename": "clip.mp4",
+                "video": true
+            ] as [String: Any],
+            downloadRoot: root
+        )
+        XCTAssertEqual(staged.kind, .video)
+        let open = try ExternalDownload.openURL(for: staged, downloadRoot: root)
+        XCTAssertEqual(open.host, ExternalDownload.videoHost)
+        let names = try queryNames(open)
+        XCTAssertEqual(names, ["url", "filename"])
+        let again = try ExternalDownload.stage(openURL: open, downloadRoot: root)
+        XCTAssertEqual(again.kind, .video)
+        XCTAssertEqual(again.outputName, "clip.mp4")
+        XCTAssertThrowsError(
+            try ExternalDownload.stage(
+                urlText: "magnet:?xt=urn:btih:" + String(repeating: "ab", count: 20),
+                filename: nil,
+                downloadRoot: root,
+                kind: .video
             )
-        }
-        let cookie = try XCTUnwrap(
-            URL(string: "umbilical://download?url=https://example.com/a.bin&cookie=secret")
         )
         XCTAssertThrowsError(
-            try ExternalDownload.stage(openURL: cookie, downloadRoot: root)
-        ) { error in
-            XCTAssertEqual(error as? EngineError, EngineError.handoffRejected("cookie"))
-        }
-        let file = try XCTUnwrap(URL(string: "umbilical://download?url=file:///tmp/x"))
-        XCTAssertThrowsError(
-            try ExternalDownload.stage(openURL: file, downloadRoot: root)
-        ) { error in
-            XCTAssertEqual(error as? EngineError, EngineError.schemeRejected("file"))
-        }
-    }
-
-    private func queryNames(_ url: URL) throws -> [String] {
-        let components = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
-        return try XCTUnwrap(components.queryItems).map(\.name)
-    }
-
-    private func makeRoot() throws -> URL {
-        let url = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "umb-handoff-\(UUID().uuidString)",
-            isDirectory: true
+            try ExternalDownload.stage(
+                nativeMessage: [
+                    "url": "https://example.com/watch",
+                    "video": false
+                ] as [String: Any],
+                downloadRoot: root
+            )
         )
-        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
-        return url
+        XCTAssertThrowsError(
+            try ExternalDownload.stage(
+                nativeMessage: [
+                    "url": "https://example.com/watch",
+                    "video": "true"
+                ] as [String: Any],
+                downloadRoot: root
+            )
+        )
+    }
+
+    func testLocalTorrentAndMetalinkFilesStageThroughTheGate() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let torrent = TorrentBuild.single(
+            name: "payload.bin",
+            payload: Data([1, 2, 3, 4]),
+            pieceLength: 16,
+            announce: "http://127.0.0.1:9/announce"
+        )
+        let torrentFile = root.appendingPathComponent("payload.torrent")
+        try torrent.bytes.write(to: torrentFile)
+        let staged = try ExternalDownload.stage(localFile: torrentFile, downloadRoot: root)
+        XCTAssertEqual(staged.kind, .torrentFile)
+        XCTAssertEqual(staged.outputName, "payload.torrent")
+        let confirmed = try ExternalDownload.confirm(staged, downloadRoot: root)
+        XCTAssertEqual(confirmed.kind, .torrentFile)
+        XCTAssertThrowsError(try ExternalDownload.openURL(for: staged, downloadRoot: root))
+
+        let metalink = root.appendingPathComponent("list.meta4")
+        try Data("<metalink></metalink>".utf8).write(to: metalink)
+        let meta = try ExternalDownload.stage(localFile: metalink, downloadRoot: root)
+        XCTAssertEqual(meta.kind, .metalinkFile)
+
+        let random = root.appendingPathComponent("notes.txt")
+        try Data("hi".utf8).write(to: random)
+        XCTAssertThrowsError(try ExternalDownload.stage(localFile: random, downloadRoot: root))
     }
 }

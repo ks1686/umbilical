@@ -84,7 +84,16 @@ final class AppModel: ObservableObject {
     }
 
     func receiveExternalURL(_ url: URL) {
-        guard url.scheme?.lowercased() == ExternalDownload.scheme else { return }
+        let scheme = url.scheme?.lowercased() ?? ""
+        let allowed =
+            scheme == ExternalDownload.scheme
+            || scheme == "magnet"
+            || scheme == "http"
+            || scheme == "https"
+            || scheme == "ftp"
+            || scheme == "sftp"
+            || url.isFileURL
+        guard allowed else { return }
         let key = url.absoluteString
         let now = Date()
         if key == lastExternalURL, now.timeIntervalSince(lastExternalAt) < 2 {

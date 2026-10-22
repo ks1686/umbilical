@@ -7,6 +7,7 @@ import UmbilicalEngine
 
 public protocol DownloadControlling: AnyObject {
     func add(url: URL, options: [String: String]) async throws -> String
+    func addTorrent(file: URL, options: [String: String]) async throws -> String
     func pause(gid: String) async throws
     func resume(gid: String) async throws
     func remove(gid: String) async throws

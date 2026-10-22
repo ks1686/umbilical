@@ -128,6 +128,14 @@ struct LicenseHarnessOptions {
     var note = "Unofficial build. License checks are off."
 }
 
+extension XCTestCase {
+    func boundLicenseTestDuration() {
+        #if os(macOS)
+            executionTimeAllowance = 15
+        #endif
+    }
+}
+
 @MainActor
 func makeLicenseService(
     store: MemoryLicenseStore = MemoryLicenseStore(),
