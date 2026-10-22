@@ -58,7 +58,11 @@ let package = Package(
             name: "UmbilicalUITests",
             dependencies: ["UmbilicalUI", "UmbilicalEngine"],
             path: "Tests/UmbilicalUITests",
-            exclude: ["content-capture-test.js"]
+            exclude: [
+                "content-capture-test.js",
+                "website-access-test.js",
+                "popup-capture-test.js",
+            ]
         ),
     ],
     swiftLanguageVersions: [.v5]

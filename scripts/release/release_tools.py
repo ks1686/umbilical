@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import copy
+import json
 import os
 import plistlib
 import re
@@ -33,6 +34,7 @@ UUID_RE = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+MANIFEST_VERSION_RE = re.compile(r'("version"\s*:\s*")([^"]*)(")')
 SIGNATURE_LINE_RE = re.compile(
     r'^sparkle:edSignature="([A-Za-z0-9+/=]+)" length="([0-9]+)"$'
 )
@@ -48,6 +50,68 @@ def version_from_tag(tag: str) -> str:
     if TAG_RE.fullmatch(tag) is None:
         fail("release tag must look like v1.2.3")
     return tag[1:]
+
+
+def stamp_extension_manifest(manifest: Path, version: str) -> None:
+    if VERSION_RE.fullmatch(version) is None:
+        fail("version must look like 1.2.3")
+    if not manifest.is_file():
+        fail("extension manifest is missing")
+    text = manifest.read_text(encoding="utf-8")
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        fail("manifest.json is not JSON")
+    if not isinstance(data, dict):
+        fail("manifest.json is not an object")
+    if data.get("version") == version:
+        return
+    new_text, count = MANIFEST_VERSION_RE.subn(
+        lambda match: match.group(1) + version + match.group(3),
+        text,
+        count=1,
+    )
+    if count != 1:
+        fail("could not stamp manifest version")
+    try:
+        updated = json.loads(new_text)
+    except json.JSONDecodeError:
+        fail("stamped manifest.json is not JSON")
+    if updated.get("version") != version:
+        fail("stamped manifest version mismatch")
+    manifest.write_text(new_text, encoding="utf-8")
+
+
+def _check_extension_matches_app(app: Path, app_plist: dict) -> None:
+    plugins = list((app / "Contents" / "PlugIns").glob("*.appex"))
+    if len(plugins) != 1:
+        fail("built app does not contain one Safari extension")
+    appex = plugins[0]
+    ext_plist_path = appex / "Contents" / "Info.plist"
+    if not ext_plist_path.is_file():
+        fail("Safari extension has no Info.plist")
+    ext_plist = load_plist(ext_plist_path)
+    app_short = plist_string(app_plist, "CFBundleShortVersionString")
+    ext_short = plist_string(ext_plist, "CFBundleShortVersionString")
+    if not app_short:
+        fail("app CFBundleShortVersionString is missing")
+    if ext_short != app_short:
+        fail("Safari extension CFBundleShortVersionString does not match the app")
+    app_build = plist_string(app_plist, "CFBundleVersion")
+    ext_build = plist_string(ext_plist, "CFBundleVersion")
+    if app_build and ext_build != app_build:
+        fail("Safari extension CFBundleVersion does not match the app")
+    manifest_path = appex / "Contents" / "Resources" / "manifest.json"
+    if not manifest_path.is_file():
+        fail("Safari extension has no manifest.json")
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        fail("Safari extension manifest.json is not JSON")
+    if not isinstance(manifest, dict):
+        fail("Safari extension manifest.json is not an object")
+    if manifest.get("version") != app_short:
+        fail("Safari extension manifest version does not match the app")
 
 
 def assert_repo(name: str) -> None:
@@ -436,9 +500,7 @@ def check_built_app(app: Path, version: str, *, signed: bool) -> None:
     for path in required:
         if not path.exists():
             fail(f"built app is missing {path.name}")
-    plugins = list((app / "Contents" / "PlugIns").glob("*.appex"))
-    if len(plugins) != 1:
-        fail("built app does not contain one Safari extension")
+    _check_extension_matches_app(app, plist)
 
 
 _RFC822_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
@@ -806,6 +868,10 @@ def _cmd_check_built_app(args: argparse.Namespace) -> None:
     check_built_app(Path(args.app), args.version, signed=args.signed)
 
 
+def _cmd_stamp_manifest(args: argparse.Namespace) -> None:
+    stamp_extension_manifest(Path(args.manifest), args.version)
+
+
 def _cmd_resolve_provisioning_profile(_args: argparse.Namespace) -> None:
     sys.stdout.write(str(default_provisioning_profile()) + "\n")
 
@@ -891,6 +957,11 @@ def build_parser() -> argparse.ArgumentParser:
     built.add_argument("--version", default="")
     built.add_argument("--signed", action="store_true")
     built.set_defaults(func=_cmd_check_built_app)
+
+    stamp = sub.add_parser("stamp-manifest")
+    stamp.add_argument("--manifest", required=True)
+    stamp.add_argument("--version", required=True)
+    stamp.set_defaults(func=_cmd_stamp_manifest)
 
     profile = sub.add_parser("resolve-provisioning-profile")
     profile.set_defaults(func=_cmd_resolve_provisioning_profile)

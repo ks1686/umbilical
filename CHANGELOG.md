@@ -4,6 +4,8 @@
 
 Safari turned off the umbilical extension after this update. To turn it back on, open Safari Settings, choose Extensions, and tick umbilical. The notice shows when the extension is off until it is dismissed for this version.
 
+- Opening the Safari toolbar popup no longer turns download interception off.
+- The Safari extension version matches the app version (1.0.1).
 - Keep a single main window on launch and `umbilical://` handoff.
 - Hide pause and resume on completed, failed, and cancelled download rows.
 - Confirmed metalink files start the files they name after every mirror URL and output name is checked.
