@@ -28,6 +28,8 @@ final class AppSceneTests: XCTestCase {
         XCTAssertTrue(banner.contains("SafariExtensionBridge.showPreferences"))
         let content = try readAppSource("ContentView.swift")
         XCTAssertFalse(content.contains(".alert("))
+        XCTAssertTrue(content.contains("presentNextStagedHandoff"))
+        XCTAssertTrue(content.contains("onDismiss"))
         let actions = try readAppSource("MacActions.swift")
         XCTAssertTrue(actions.contains("presentRejectedDownload"))
         XCTAssertTrue(actions.contains("beginTermination"))

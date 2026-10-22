@@ -22,6 +22,7 @@ final class AppModel: ObservableObject {
     private var licenseLaunched = false
     private var lastExternalURL = ""
     private var lastExternalAt = Date.distantPast
+    private var handoffQueue = HandoffConfirmQueue<StagedHandoff>()
 
     init() {
         let located = AppHelpers.locate()
@@ -113,11 +114,20 @@ final class AppModel: ObservableObject {
             ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
         do {
             let handoff = try ExternalDownload.stage(openURL: url, downloadRoot: root)
-            stagedHandoff = StagedHandoff(handoff: handoff)
-            handoffError = nil
+            let staged = StagedHandoff(handoff: handoff)
+            let showing = stagedHandoff != nil
+            handoffQueue.enqueue(staged)
+            stagedHandoff = handoffQueue.current
+            if !showing {
+                handoffError = nil
+            }
         } catch {
-            stagedHandoff = nil
-            reportHandoffFailure(DownloadMessage.text(for: error))
+            let text = DownloadMessage.text(for: error)
+            if stagedHandoff == nil {
+                reportHandoffFailure(text)
+            } else {
+                MacActions.presentRejectedDownload(text) {}
+            }
         }
         MacActions.activate()
     }
@@ -136,8 +146,7 @@ final class AppModel: ObservableObject {
         do {
             let confirmed = try ExternalDownload.confirm(staged.handoff, downloadRoot: root)
             try await session.addExternal(confirmed)
-            stagedHandoff = nil
-            handoffError = nil
+            finishCurrentHandoff()
         } catch {
             reportHandoffFailure(DownloadMessage.text(for: error))
         }
@@ -145,12 +154,25 @@ final class AppModel: ObservableObject {
     }
 
     func declineStagedHandoff() {
-        stagedHandoff = nil
-        handoffError = nil
+        finishCurrentHandoff()
+    }
+
+    func presentNextStagedHandoff() {
+        handoffQueue.presentNextIfIdle()
+        stagedHandoff = handoffQueue.current
+        if stagedHandoff != nil {
+            handoffError = nil
+        }
     }
 
     func clearHandoffError() {
         handoffError = nil
+    }
+
+    private func finishCurrentHandoff() {
+        handoffError = nil
+        handoffQueue.clearCurrent()
+        stagedHandoff = nil
     }
 
     private func reportHandoffFailure(_ text: String) {

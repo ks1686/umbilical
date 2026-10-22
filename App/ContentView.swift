@@ -30,9 +30,15 @@ struct ContentView: View {
         .sheet(isPresented: $showingAdd) {
             AddDownloadSheet(model: model)
         }
-        .sheet(item: stagedHandoff) { staged in
-            HandoffConfirmSheet(model: model, staged: staged)
-        }
+        .sheet(
+            item: stagedHandoff,
+            onDismiss: {
+                model.presentNextStagedHandoff()
+            },
+            content: { staged in
+                HandoffConfirmSheet(model: model, staged: staged)
+            }
+        )
     }
 
     private var stagedHandoff: Binding<StagedHandoff?> {
