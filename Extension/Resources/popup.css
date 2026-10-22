@@ -1,7 +1,7 @@
 body {
   margin: 0;
   padding: 16px;
-  width: 280px;
+  width: 320px;
   color: #1d1d1f;
   background: #fff;
   font: 13px/1.4 -apple-system, BlinkMacSystemFont, sans-serif;
@@ -17,13 +17,20 @@ p {
   margin: 0 0 12px;
 }
 
-label {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
+button {
+  display: block;
+  width: 100%;
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  font: inherit;
 }
 
-#note {
-  margin-top: 12px;
+.status {
   color: #6e6e73;
+}
+
+p:last-child,
+.status:last-child,
+button:last-child {
+  margin-bottom: 0;
 }

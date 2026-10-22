@@ -13,6 +13,7 @@ struct SettingsView: View {
         Form {
             LicenseSettingsSection(model: model)
             downloadsSection
+            safariSection
             notificationsSection
             helpersSection
         }
@@ -33,7 +34,8 @@ struct SettingsView: View {
                 }
             }
             Text(
-                "Every download stays inside this folder. Active downloads stop when umbilical quits."
+                "Every download stays inside this folder. "
+                    + "Active downloads stop when umbilical quits."
             )
             .font(.callout)
             .foregroundStyle(.secondary)
@@ -41,6 +43,19 @@ struct SettingsView: View {
                 Text(folderError)
                     .foregroundStyle(.red)
             }
+        }
+    }
+
+    private var safariSection: some View {
+        Section("Safari") {
+            Text(
+                "Right-click a link for Download with umbilical. Safari hides that item "
+                    + "until website access is allowed. Click the umbilical toolbar button "
+                    + "and choose Allow website access, or turn it on in "
+                    + "Safari Settings > Extensions > umbilical."
+            )
+            .font(.callout)
+            .foregroundStyle(.secondary)
         }
     }
 

@@ -1,88 +1,79 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Requests optional website access from a toolbar popup click, a user gesture.
+// Safari hides the link menu until that access is granted.
 
 const api = globalThis.browser ?? globalThis.chrome;
-const captureKey = "captureDownloads";
-const box = document.querySelector("#capture");
-const note = document.querySelector("#note");
+const allWebsites = { origins: ["<all_urls>"] };
 
-function setNote(text) {
-  if (note) note.textContent = text;
+function $(id) {
+  return document.getElementById(id);
 }
 
-function downloadsAvailable() {
-  return Boolean(api && api.downloads && api.downloads.onCreated);
-}
-
-async function load() {
-  if (!box || !api || !api.storage || !api.storage.local) return;
-  let enabled = false;
-  try {
-    const stored = await api.storage.local.get(captureKey);
-    enabled = stored[captureKey] === true;
-  } catch {
-    enabled = false;
-  }
-  if (!downloadsAvailable()) {
-    box.checked = false;
-    box.disabled = true;
-    setNote("Safari does not let this extension see downloads. Right-click a link instead.");
-    if (enabled) {
-      try {
-        await api.storage.local.set({ [captureKey]: false });
-      } catch {
-        // The menu still works when storage is unavailable.
-      }
-    }
+function setStatus(text) {
+  const node = $("access-status");
+  if (!node) return;
+  if (!text) {
+    node.hidden = true;
+    node.textContent = "";
     return;
   }
-  box.checked = enabled;
-  if (enabled) {
-    setNote("New browser downloads are sent to umbilical. The browser download is cancelled after the app accepts the link.");
+  node.hidden = false;
+  node.textContent = text;
+}
+
+function settingsHint() {
+  return "Allow it in Safari Settings > Extensions > umbilical.";
+}
+
+async function hasWebsiteAccess() {
+  if (!api || !api.permissions || typeof api.permissions.contains !== "function") {
+    return false;
+  }
+  try {
+    return await api.permissions.contains(allWebsites);
+  } catch {
+    return false;
   }
 }
 
-async function persist(enabled) {
-  await api.storage.local.set({ [captureKey]: enabled });
-  if (api.runtime && typeof api.runtime.sendMessage === "function") {
-    await api.runtime.sendMessage({ type: "capture-setting" });
+function onGrantResult(granted) {
+  const button = $("allow-access");
+  if (granted === true) {
+    if (button) button.disabled = true;
+    setStatus("Website access is on. Right-click a link and choose Download with umbilical.");
+    return;
+  }
+  if (button) button.disabled = false;
+  setStatus("Safari did not grant website access. " + settingsHint());
+}
+
+async function requestAccess() {
+  const button = $("allow-access");
+  if (button) button.disabled = true;
+  setStatus("");
+  if (!api || !api.permissions || typeof api.permissions.request !== "function") {
+    if (button) button.disabled = false;
+    setStatus("Website access could not be requested. " + settingsHint());
+    return;
+  }
+  try {
+    const granted = await api.permissions.request(allWebsites);
+    onGrantResult(granted === true);
+  } catch {
+    if (button) button.disabled = false;
+    setStatus("Website access could not be requested. " + settingsHint());
   }
 }
 
-if (box) {
-  box.addEventListener("change", async () => {
-    if (!box.checked) {
-      setNote("");
-      try {
-        await persist(false);
-      } catch {
-        setNote("The setting could not be saved.");
-      }
-      return;
-    }
-    if (!downloadsAvailable() || !api.permissions || typeof api.permissions.request !== "function") {
-      box.checked = false;
-      setNote("Safari does not let this extension see downloads. Right-click a link instead.");
-      return;
-    }
-    let granted = false;
-    try {
-      granted = await api.permissions.request({ permissions: ["downloads"] });
-    } catch {
-      granted = false;
-    }
-    if (!granted) {
-      box.checked = false;
-      setNote("Download capture stays off.");
-      return;
-    }
-    try {
-      await persist(true);
-      setNote("New browser downloads are sent to umbilical. The browser download is cancelled after the app accepts the link.");
-    } catch {
-      box.checked = false;
-      setNote("The setting could not be saved.");
-    }
-  });
+async function syncButton() {
+  const granted = await hasWebsiteAccess();
+  if (granted === true) {
+    onGrantResult(true);
+  }
 }
 
-load();
+document.addEventListener("DOMContentLoaded", () => {
+  const button = $("allow-access");
+  if (button) button.addEventListener("click", requestAccess);
+  syncButton();
+});

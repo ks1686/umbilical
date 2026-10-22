@@ -46,14 +46,18 @@ can attach. A Release build must not. CI runs
 
 | Permission | Why |
 | --- | --- |
+| `activeTab` | Kept so choosing the toolbar button can grant the current tab. WebKit still hides extension context menus until the page is already granted. |
 | `contextMenus` | Puts "Download with umbilical" on the link menu. |
 | `nativeMessaging` | Sends the URL and optional file name to the appex. |
-| `storage` | Stores the optional download-capture toggle. It starts off. |
+| `optional_host_permissions` `<all_urls>` | Not granted at install. A toolbar popup click calls `permissions.request`, or the user allows Website Access in Safari Settings > Extensions > umbilical. |
 
-`downloads` is not requested. Safari does not let an extension see browser
-downloads, so the popup leaves that control off and disabled. There is no
-host permission and no `cookies`, `webRequest`, `tabs`, or `scripting`
-permission. The message may contain `url` and `filename` only.
+`downloads` is not requested. Safari does not implement `browser.downloads`.
+There is no required `host_permissions` key and no `cookies`, `webRequest`,
+`tabs`, `scripting`, or `storage` permission, and no content scripts. The
+native message may contain `url` and `filename` only. Until website access
+is allowed, Safari Settings may say the extension does not have permission
+to read, alter, or transmit content from any webpages, and the link menu
+stays hidden. That is expected.
 
 ## Enable the extension
 
@@ -62,7 +66,33 @@ permission. The message may contain `url` and `filename` only.
 3. In Safari, open Settings, then Advanced, and turn on "Show features for web developers".
 4. From the Develop menu, choose "Allow Unsigned Extensions" and confirm.
 5. Safari Settings, Extensions. Enable umbilical. If Safari asks which app it belongs to, it is this build.
-6. Click the umbilical toolbar button. The popup says to right-click a link. The capture checkbox is off and disabled, and it says Safari does not let the extension see downloads.
+6. Click the umbilical toolbar button. The popup says Safari hides the
+   link item until website access is allowed, has Allow website access,
+   and says only the URL and an optional file name are sent. There is no
+   download-capture checkbox.
+
+## 1.0.1 menu regression (notarized or Debug)
+
+This is the pass for the v1.0.0 bug: the link item never appeared, and
+Safari Settings said umbilical does not have permission to read, alter,
+or transmit content from any webpages. `activeTab` alone is not enough
+on a notarized 1.0.1 build. Website access has to be granted.
+
+1. Install this build (notarized 1.0.1, or this Debug app). Enable
+   umbilical in Safari Settings > Extensions. Website Access should be
+   listed. Leave it unset for now.
+2. Click the umbilical toolbar button. Choose Allow website access.
+   Safari must prompt. Grant this website or all websites. You can
+   instead set Website Access in Safari Settings > Extensions >
+   umbilical.
+3. Open a real page over https, for example `https://example.com/`.
+4. Right-click a real link on that page. "Download with umbilical" must
+   appear. If it does not after access is granted, this build fails.
+5. Choose that item. The confirm sheet must open with that link. The
+   popup must still say the extension sends only the URL and an optional
+   file name.
+
+Then continue with the checklist below.
 
 ## Checklist
 
