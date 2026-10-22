@@ -65,6 +65,14 @@ final class DownloadMessageTests: XCTestCase {
         let text = DownloadMessage.text(for: EngineError.videoRejected("bad token:abcdef"))
         XCTAssertFalse(text.contains("abcdef"))
         XCTAssertTrue(text.contains("token:[redacted]"))
+        XCTAssertEqual(
+            DownloadMessage.text(
+                for: EngineError.videoRejected(
+                    "This site didn't offer a version with sound that umbilical can save without extra tools."
+                )
+            ),
+            "This site didn't offer a version with sound that umbilical can save without extra tools."
+        )
     }
 
     func testRPCTokenIsRedacted() {

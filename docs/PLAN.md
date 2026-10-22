@@ -180,7 +180,7 @@ The add sheet has a Video control. Known hosts turn it on until the user changes
 
 A video download does not go through aria2. The app launches `umb-watch` with yt-dlp and a fixed argument list built in `VideoDownloadPlan`. The user cannot add flags. The child environment is an allowlist (`PATH`, `HOME`, `LC_ALL`, `LANG`, and `TMPDIR` when it is an absolute path). Config files, cookies, plugins, `--exec`, remote components, and JS runtimes are turned off (`--ignore-config`, `--no-config-locations`, `--no-plugin-dirs`, `--no-exec`, `--no-remote-components`, `--no-js-runtimes`). The downloader is `--downloader native`.
 
-The format selector is `b/bv*/ba`. A `+` merge is not requested. `--fixup never` is set. `--ffmpeg-location` is the private staging directory, so yt-dlp does not search `PATH` for ffmpeg. Separate audio and video streams fail. That gap stays until ffmpeg is bundled on purpose.
+The format selector is `b[acodec!=none][vcodec!=none]/best[acodec!=none][vcodec!=none]`. A `+` merge is not requested, so a video-only stream is never saved. `--fixup never` is set. `--ffmpeg-location` is the private staging directory, so yt-dlp does not search `PATH` for ffmpeg. If no combined format exists, the row fails with a plain-language error. That gap stays until ffmpeg is bundled on purpose.
 
 `--no-js-runtimes` and `--no-remote-components` mean a system deno or node is not executed and yt-dlp-ejs is not downloaded. YouTube's web client may be skipped. A direct media URL is the v1 pass. A YouTube failure is not a pass.
 

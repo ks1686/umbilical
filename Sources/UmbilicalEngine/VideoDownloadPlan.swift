@@ -61,8 +61,11 @@ struct VideoDownloadTarget: Equatable {
 
 enum VideoDownloadPlan {
     static let outputTemplate = "umb-video.%(ext)s"
-    /// Single-file selector. `/` is fallback. `+` would ask ffmpeg to merge.
-    static let formatSelector = "b/bv*/ba"
+    /// Combined formats only. `/` is fallback. `+` would ask ffmpeg to merge.
+    static let formatSelector =
+        "b[acodec!=none][vcodec!=none]/best[acodec!=none][vcodec!=none]"
+    static let unavailableAudioMessage =
+        "This site didn't offer a version with sound that umbilical can save without extra tools."
     static let progressPrefix = "UMBPROGRESS"
     static let progressTemplate =
         "download:\(progressPrefix) %(progress.downloaded_bytes)s "
@@ -108,8 +111,10 @@ enum VideoDownloadPlan {
         return url
     }
 
-    static func arguments(for target: VideoDownloadTarget, stagingDirectory: URL) throws -> [String] {
-        let staging = try resolvedStaging(stagingDirectory, folder: target.folder, root: target.root)
+    static func arguments(for target: VideoDownloadTarget, stagingDirectory: URL) throws -> [String]
+    {
+        let staging = try resolvedStaging(
+            stagingDirectory, folder: target.folder, root: target.root)
         if formatSelector.contains("+") || formatSelector.contains(" ") {
             throw EngineError.videoRejected("The video download was rejected.")
         }
@@ -150,6 +155,32 @@ enum VideoDownloadPlan {
         ]
         try assertSafe(arguments, url: target.url.absoluteString, stagingPath: stagingPath)
         return arguments
+    }
+
+    static func failureMessage(from lines: [String]) -> String {
+        if describesMissingAudio(lines) {
+            return unavailableAudioMessage
+        }
+        let line = lines.reversed().first { !$0.isEmpty } ?? ""
+        let redacted = line.replacingOccurrences(
+            of: "token:[0-9A-Fa-f]+",
+            with: "token:[redacted]",
+            options: .regularExpression
+        )
+        let cleaned = redacted.filter { character in
+            character == "\t" || (character >= " " && character <= "~")
+        }
+        let clipped = String(cleaned.prefix(180))
+        if clipped.isEmpty {
+            return "The video download failed."
+        }
+        return "The video download failed. \(clipped)"
+    }
+
+    static func describesMissingAudio(_ lines: [String]) -> Bool {
+        let text = lines.joined(separator: "\n").lowercased()
+        return text.contains("requested format is not available")
+            || text.contains("requested format not available")
     }
 
     static func childEnvironment(home: String) -> [String: String] {
@@ -286,7 +317,8 @@ enum VideoDownloadPlan {
         try expectPair("--format", formatSelector, in: arguments)
         try expectPair("--ffmpeg-location", stagingPath, in: arguments)
         try expectPair("--output", outputTemplate, in: arguments)
-        if !arguments.contains("home:\(stagingPath)") || !arguments.contains("temp:\(stagingPath)") {
+        if !arguments.contains("home:\(stagingPath)") || !arguments.contains("temp:\(stagingPath)")
+        {
             throw EngineError.videoRejected("The video download was rejected.")
         }
         guard arguments.count >= 2, arguments[arguments.count - 2] == "--" else {

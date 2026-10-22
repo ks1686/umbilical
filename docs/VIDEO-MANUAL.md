@@ -109,8 +109,9 @@ ignores `YT_DLP`, `ARIA2C`, and `UMB_WATCH` and uses `Contents/Helpers` only.
 10. Debug build: set `YT_DLP` to another executable yt-dlp and confirm that
     path is the one launched. Release must not do this.
 11. ffmpeg gap: a page that only offers separate video and audio streams
-    fails. The app does not download ffmpeg, and it does not search `PATH`
-    for ffmpeg. That failure is expected. Do not treat it as a pass.
+    fails with "This site didn't offer a version with sound that umbilical
+    can save without extra tools." The app does not download ffmpeg, and it
+    does not search `PATH` for ffmpeg. A silent video-only file is a fail.
 12. JavaScript gap: the helper is launched with `--no-js-runtimes` and
     `--no-remote-components`. The app does not download deno, node, or
     yt-dlp-ejs. A YouTube page may fail for that reason. The direct media

@@ -39,6 +39,11 @@ final class VideoDownloadPlanTests: XCTestCase {
         XCTAssertFalse(arguments.contains("clip.mp4"))
         XCTAssertFalse(arguments.contains("+"))
         XCTAssertFalse(VideoDownloadPlan.formatSelector.contains("+"))
+        XCTAssertFalse(VideoDownloadPlan.formatSelector.contains(" "))
+        XCTAssertTrue(VideoDownloadPlan.formatSelector.contains("acodec!=none"))
+        XCTAssertTrue(VideoDownloadPlan.formatSelector.contains("vcodec!=none"))
+        XCTAssertTrue(VideoDownloadPlan.formatSelector.contains("/"))
+        XCTAssertFalse(VideoDownloadPlan.formatSelector.contains("bv*"))
         XCTAssertEqual(arguments.last, "https://example.com/watch?v=1")
         assertRequired(arguments)
         XCTAssertEqual(pair("--downloader", in: arguments), "native")
@@ -142,6 +147,31 @@ final class VideoDownloadPlanTests: XCTestCase {
         XCTAssertThrowsError(
             try VideoDownloadPlan.arguments(for: target, stagingDirectory: elsewhere)
         )
+    }
+
+    func testFormatSelectorRequiresAudioAndVideo() {
+        let selector = VideoDownloadPlan.formatSelector
+        XCTAssertEqual(
+            selector,
+            "b[acodec!=none][vcodec!=none]/best[acodec!=none][vcodec!=none]"
+        )
+        XCTAssertFalse(selector.contains("+"))
+        XCTAssertFalse(selector.contains("bv*"))
+        XCTAssertFalse(selector.contains("/ba"))
+    }
+
+    func testMissingCombinedFormatMapsToAPlainError() {
+        XCTAssertEqual(
+            VideoDownloadPlan.failureMessage(from: [
+                "ERROR: [youtube] abc: Requested format is not available. Use --list-formats"
+            ]),
+            VideoDownloadPlan.unavailableAudioMessage
+        )
+        let generic = VideoDownloadPlan.failureMessage(from: ["HTTP Error 403: Forbidden"])
+        XCTAssertTrue(generic.hasPrefix("The video download failed."))
+        XCTAssertTrue(generic.contains("403"))
+        XCTAssertFalse(generic.contains("without extra tools"))
+        XCTAssertEqual(VideoDownloadPlan.failureMessage(from: []), "The video download failed.")
     }
 
     func testProgressParserReadsTheFixedTemplate() {

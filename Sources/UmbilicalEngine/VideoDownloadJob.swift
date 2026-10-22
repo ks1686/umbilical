@@ -260,7 +260,7 @@ public final class VideoDownloadJob {
                     speed: 0,
                     phase: .failed,
                     filePath: nil,
-                    message: failureMessage(tailLinesCopy())
+                    message: VideoDownloadPlan.failureMessage(from: tailLinesCopy())
                 )
             )
             return
@@ -331,23 +331,6 @@ public final class VideoDownloadJob {
         let copy = tailLines
         lock.unlock()
         return copy
-    }
-
-    private func failureMessage(_ lines: [String]) -> String {
-        let line = lines.reversed().first { !$0.isEmpty } ?? ""
-        let redacted = line.replacingOccurrences(
-            of: "token:[0-9A-Fa-f]+",
-            with: "token:[redacted]",
-            options: .regularExpression
-        )
-        let cleaned = redacted.filter { character in
-            character == "\t" || (character >= " " && character <= "~")
-        }
-        let clipped = String(cleaned.prefix(180))
-        if clipped.isEmpty {
-            return "The video download failed."
-        }
-        return "The video download failed. \(clipped)"
     }
 
     private func isCancelled() -> Bool {
