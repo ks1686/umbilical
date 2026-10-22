@@ -79,6 +79,47 @@ enum DownloadPath {
         }
     }
 
+    static func validateFollowMetalink(_ value: String) throws {
+        if value != "true" && value != "false" {
+            throw EngineError.optionValueRejected("follow-metalink")
+        }
+    }
+
+    /// Confirms `raw` is a regular file inside `root`. Symlinks, directories, and `..` are refused.
+    static func deletableRegularFile(root: URL, raw: String) throws -> String {
+        if raw.isEmpty || raw.contains("\0") || raw.contains("\n") || raw.contains("\r")
+            || raw.contains("\\")
+        {
+            throw EngineError.directoryRejected(raw)
+        }
+        let rootReal = try existingRealPath(root.path)
+        let absolute = raw.hasPrefix("/") ? raw : rootReal + "/" + raw
+        let pieces = absolute.split(
+            separator: "/",
+            omittingEmptySubsequences: true
+        ).map(String.init)
+        if pieces.contains("..") || pieces.contains(".") {
+            throw EngineError.directoryRejected(raw)
+        }
+        var info = stat()
+        if lstat(absolute, &info) != 0 {
+            throw EngineError.directoryRejected(raw)
+        }
+        let type = info.st_mode & S_IFMT
+        if type == S_IFLNK || type != S_IFREG {
+            throw EngineError.directoryRejected(raw)
+        }
+        let resolved = try resolveInside(root: root, raw: raw)
+        if lstat(resolved, &info) != 0 {
+            throw EngineError.directoryRejected(raw)
+        }
+        let resolvedType = info.st_mode & S_IFMT
+        if resolvedType == S_IFLNK || resolvedType != S_IFREG {
+            throw EngineError.directoryRejected(raw)
+        }
+        return resolved
+    }
+
     static func isInside(rootReal: String, path: String) -> Bool {
         if path == rootReal {
             return true

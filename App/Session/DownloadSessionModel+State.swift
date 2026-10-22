@@ -29,6 +29,14 @@ extension DownloadSessionModel {
         item.track && item.state != .removed
     }
 
+    func listedFiles(gid: String, client: any DownloadControlling) async -> [URL] {
+        do {
+            return try await client.files(gid: gid)
+        } catch {
+            return []
+        }
+    }
+
     func change(
         id: String,
         allow: KeyPath<TrackedDownload, Bool>,

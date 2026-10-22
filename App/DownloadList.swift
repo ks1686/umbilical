@@ -41,7 +41,10 @@ struct DownloadRowView: View {
                 Button("Cancel", role: .cancel) {}
             },
             message: {
-                Text("An active download stops. A finished download leaves the list.")
+                Text(
+                    "An unfinished download is stopped and its partial file is deleted. "
+                        + "A finished download leaves the list."
+                )
             }
         )
     }

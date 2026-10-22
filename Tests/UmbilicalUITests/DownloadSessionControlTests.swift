@@ -76,6 +76,82 @@ final class DownloadSessionControlTests: XCTestCase {
         XCTAssertTrue(model.snapshot.rows.isEmpty)
     }
 
+    func testRemovingAnUnfinishedDownloadDeletesItsPartialFile() async throws {
+        let session = try await running()
+        let model = session.model
+        let client = session.client
+        let root = session.root
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await model.add(urlText: "https://example.com/a.bin", outputName: "a.bin", folder: nil)
+        let partial = root.appendingPathComponent("a.bin")
+        try Data("partial".utf8).write(to: partial)
+        let control = URL(fileURLWithPath: partial.path + ".aria2")
+        try Data("ctrl".utf8).write(to: control)
+        client.filesByGID["g1"] = [partial]
+        await model.remove(id: "g1")
+        XCTAssertEqual(client.removed, ["g1"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partial.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: control.path))
+        XCTAssertTrue(model.snapshot.rows.isEmpty)
+    }
+
+    func testRemovingACompleteDownloadLeavesTheFile() async throws {
+        let session = try await running()
+        let model = session.model
+        let client = session.client
+        let root = session.root
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await model.add(urlText: "https://example.com/a.bin", outputName: "a.bin", folder: nil)
+        let finished = root.appendingPathComponent("a.bin")
+        try Data("done".utf8).write(to: finished)
+        client.filesByGID["g1"] = [finished]
+        client.statuses["g1"] = DownloadStatus(
+            gid: "g1",
+            state: .complete,
+            totalLength: 4,
+            completedLength: 4,
+            downloadSpeed: 0,
+            files: [finished],
+            errorMessage: nil
+        )
+        await model.refresh()
+        let row = try XCTUnwrap(model.snapshot.rows.first)
+        await model.remove(id: row.id)
+        XCTAssertTrue(client.removed.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: finished.path))
+        XCTAssertTrue(model.snapshot.rows.isEmpty)
+    }
+
+    func testRemoveRefusesAnOutsideSymlinkAndAParentPath() async throws {
+        let session = try await running()
+        let model = session.model
+        let client = session.client
+        let root = session.root
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await model.add(urlText: "https://example.com/a.bin", outputName: "a.bin", folder: nil)
+        let outside = root.deletingLastPathComponent().appendingPathComponent(
+            "umb-secret-\(UUID().uuidString)"
+        )
+        try Data("secret".utf8).write(to: outside)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let link = root.appendingPathComponent("escape.bin")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        client.filesByGID["g1"] = [link]
+        await model.remove(id: "g1")
+        XCTAssertEqual(client.removed, ["g1"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: link.path))
+
+        try await model.add(urlText: "https://example.com/b.bin", outputName: "b.bin", folder: nil)
+        let parentPath = root.appendingPathComponent("..").appendingPathComponent(
+            outside.lastPathComponent
+        )
+        client.filesByGID["g2"] = [parentPath]
+        await model.remove(id: "g2")
+        XCTAssertEqual(client.removed, ["g1", "g2"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: outside.path))
+    }
+
     func testRemovingAFinishedDownloadSkipsRPC() async throws {
         let session = try await running()
         let model = session.model
