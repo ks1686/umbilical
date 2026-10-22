@@ -176,7 +176,7 @@ No required host permission, `webRequest`, `cookies`, `tabs`, or `scripting`. If
 
 v1 launches the pinned yt-dlp binary. It does not download yt-dlp, ffmpeg, or a JavaScript runtime at runtime, and it does not pass `-U` or `--update`.
 
-The add sheet has a Video control. Known hosts turn it on until the user changes it. Any other http(s) URL stays off until the user turns it on. The host check is the exact host or a dot-suffix (`m.youtube.com`), not a substring (`notyoutube.com`).
+The add sheet has a Video control. Known hosts turn it on until the user changes it. Any other http(s) URL stays off until the user turns it on. The host check is the exact host or a dot-suffix (`m.youtube.com`), not a substring (`notyoutube.com`). A Safari `umbilical://` handoff of a known video-site URL uses that same host check, then the same scheme checks, confirm sheet, and license check as every other handoff, and starts through yt-dlp. Cookies are not passed. `--cookies-from-browser` is not used.
 
 A video download does not go through aria2. The app launches `umb-watch` with yt-dlp and a fixed argument list built in `VideoDownloadPlan`. The user cannot add flags. The child environment is an allowlist (`PATH`, `HOME`, `LC_ALL`, `LANG`, and `TMPDIR` when it is an absolute path). Config files, cookies, plugins, `--exec`, remote components, and JS runtimes are turned off (`--ignore-config`, `--no-config-locations`, `--no-plugin-dirs`, `--no-exec`, `--no-remote-components`, `--no-js-runtimes`). The downloader is `--downloader native`.
 

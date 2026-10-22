@@ -11,3 +11,4 @@ Safari turned off the umbilical extension after this update. To turn it back on,
 - Removing an unfinished download deletes that download's partial file and matching .aria2 control file.
 - Video downloads require a version with sound and fail plainly when none exists.
 - Video files are named after the title and stay inside the download folder.
+- A YouTube or other video-site handoff uses the video download path.

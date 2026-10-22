@@ -130,6 +130,34 @@ final class ExternalDownloadSessionTests: XCTestCase {
         XCTAssertTrue(session.client.torrents.isEmpty)
     }
 
+    func testYouTubeHandoffUsesYtDlpNotAria2() async throws {
+        let session = try await running()
+        defer { try? FileManager.default.removeItem(at: session.root) }
+        var components = URLComponents()
+        components.scheme = ExternalDownload.scheme
+        components.host = ExternalDownload.host
+        components.queryItems = [
+            URLQueryItem(name: "url", value: "https://www.youtube.com/watch?v=abcdefghijk")
+        ]
+        let open = try XCTUnwrap(components.url)
+        let staged = try ExternalDownload.stage(openURL: open, downloadRoot: session.root)
+        XCTAssertEqual(staged.kind, .video)
+        let confirmed = try ExternalDownload.confirm(staged, downloadRoot: session.root)
+        XCTAssertEqual(confirmed.kind, .video)
+        do {
+            try await session.model.addExternal(confirmed)
+            XCTFail("expected yt-dlp to be required")
+        } catch let error as EngineError {
+            guard case .executableMissing("yt-dlp") = error else {
+                XCTFail("unexpected \(error)")
+                return
+            }
+        }
+        XCTAssertTrue(session.client.added.isEmpty)
+        XCTAssertTrue(session.client.torrents.isEmpty)
+        XCTAssertTrue(session.model.snapshot.rows.isEmpty)
+    }
+
     func testRemoteMetalinkDoesNotUseAddUri() async throws {
         let session = try await running()
         defer { try? FileManager.default.removeItem(at: session.root) }

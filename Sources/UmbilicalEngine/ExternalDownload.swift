@@ -243,8 +243,17 @@ public enum ExternalDownload {
         guard let parsed = URL(string: trimmed), parsed.scheme != nil else {
             throw EngineError.schemeRejected("unparseable")
         }
-        let accepted = try acceptedURI(parsed, kind: kind)
-        let outputName = try acceptedName(filename)
+        let acceptedKind: ExtensionHandoffKind
+        let acceptedFilename: String?
+        if kind == .download && VideoPagePolicy.prefersVideo(urlText: trimmed) {
+            acceptedKind = .video
+            acceptedFilename = nil
+        } else {
+            acceptedKind = kind
+            acceptedFilename = filename
+        }
+        let accepted = try acceptedURI(parsed, kind: acceptedKind)
+        let outputName = try acceptedName(acceptedFilename)
         var options: [String: String] = [:]
         if let outputName {
             options["out"] = outputName
@@ -257,7 +266,7 @@ public enum ExternalDownload {
             uri: accepted.uri,
             outputName: outputName,
             url: accepted.url,
-            kind: kind
+            kind: acceptedKind
         )
     }
 
