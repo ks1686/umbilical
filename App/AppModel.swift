@@ -116,10 +116,17 @@ final class AppModel: ObservableObject {
             let handoff = try ExternalDownload.stage(openURL: url, downloadRoot: root)
             let staged = StagedHandoff(handoff: handoff)
             let showing = stagedHandoff != nil
-            handoffQueue.enqueue(staged)
-            stagedHandoff = handoffQueue.current
-            if !showing {
-                handoffError = nil
+            switch handoffQueue.enqueue(staged) {
+            case .accepted:
+                stagedHandoff = handoffQueue.current
+                if !showing {
+                    handoffError = nil
+                }
+            case .overflow:
+                MacActions.presentRejectedDownload(
+                    HandoffConfirmQueue<StagedHandoff>.overflowMessage,
+                    onDismiss: {}
+                )
             }
         } catch {
             let text = DownloadMessage.text(for: error)
@@ -146,7 +153,9 @@ final class AppModel: ObservableObject {
         do {
             let confirmed = try ExternalDownload.confirm(staged.handoff, downloadRoot: root)
             try await session.addExternal(confirmed)
-            finishCurrentHandoff()
+            if stagedHandoff?.id == staged.id {
+                finishCurrentHandoff()
+            }
         } catch {
             reportHandoffFailure(DownloadMessage.text(for: error))
         }

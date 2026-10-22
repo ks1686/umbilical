@@ -31,10 +31,29 @@ final class AppSceneTests: XCTestCase {
         XCTAssertFalse(content.contains(".alert("))
         XCTAssertTrue(content.contains("presentNextStagedHandoff"))
         XCTAssertTrue(content.contains("onDismiss"))
+        let appModel = try readAppSource("AppModel.swift")
+        XCTAssertTrue(appModel.contains("HandoffConfirmQueue"))
+        XCTAssertTrue(appModel.contains("overflowMessage"))
+        let confirm = slice(
+            appModel,
+            from: "func confirmStagedHandoff",
+            to: "func declineStagedHandoff"
+        )
+        XCTAssertFalse(confirm.contains("presentNextStagedHandoff"))
+        XCTAssertFalse(confirm.contains("presentNextIfIdle"))
         let actions = try readAppSource("MacActions.swift")
         XCTAssertTrue(actions.contains("presentRejectedDownload"))
         XCTAssertTrue(actions.contains("beginTermination"))
         XCTAssertTrue(source.contains("beginTermination"))
+    }
+
+    private func slice(_ source: String, from: String, to: String) -> String {
+        guard let start = source.range(of: from), let end = source.range(of: to),
+            start.lowerBound < end.lowerBound
+        else {
+            return ""
+        }
+        return String(source[start.lowerBound..<end.lowerBound])
     }
 
     private func readAppSource(_ name: String) throws -> String {

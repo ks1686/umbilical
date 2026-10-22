@@ -4,21 +4,38 @@
 
 import Foundation
 
+public enum HandoffEnqueueResult: Equatable {
+    case accepted
+    case overflow
+}
+
 /// Holds confirm requests so a later open cannot replace an earlier sheet.
+/// Finishing the current item never approves a pending one.
 public struct HandoffConfirmQueue<Item> {
+    public static var pendingLimit: Int { 10 }
+    public static var overflowMessage: String {
+        "Too many downloads are waiting for confirmation. Finish or cancel the open ones first."
+    }
+
     public private(set) var current: Item?
     public private(set) var pending: [Item] = []
 
     public init() {}
 
-    public mutating func enqueue(_ item: Item) {
+    @discardableResult
+    public mutating func enqueue(_ item: Item) -> HandoffEnqueueResult {
         if current == nil {
             current = item
-        } else {
-            pending.append(item)
+            return .accepted
         }
+        if pending.count >= Self.pendingLimit {
+            return .overflow
+        }
+        pending.append(item)
+        return .accepted
     }
 
+    /// Drops the open sheet only. Pending items stay unconfirmed.
     public mutating func clearCurrent() {
         current = nil
     }
