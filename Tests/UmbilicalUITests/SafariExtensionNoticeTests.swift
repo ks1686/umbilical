@@ -7,19 +7,33 @@ import XCTest
 @testable import UmbilicalUI
 
 final class SafariExtensionNoticeTests: XCTestCase {
-    func testDisabledUnknownVersionShowsOnce() {
+    func testDisabledOrUnknownShowsUntilDismissedForThisVersion() {
         XCTAssertTrue(
             SafariExtensionNotice.shouldShow(
                 isEnabled: false,
                 currentVersion: "1.0.1",
-                shownVersion: nil
+                dismissedVersion: nil
+            )
+        )
+        XCTAssertTrue(
+            SafariExtensionNotice.shouldShow(
+                isEnabled: nil,
+                currentVersion: "1.0.1",
+                dismissedVersion: nil
             )
         )
         XCTAssertFalse(
             SafariExtensionNotice.shouldShow(
                 isEnabled: false,
                 currentVersion: "1.0.1",
-                shownVersion: "1.0.1"
+                dismissedVersion: "1.0.1"
+            )
+        )
+        XCTAssertFalse(
+            SafariExtensionNotice.shouldShow(
+                isEnabled: nil,
+                currentVersion: "1.0.1",
+                dismissedVersion: "1.0.1"
             )
         )
     }
@@ -29,7 +43,7 @@ final class SafariExtensionNoticeTests: XCTestCase {
             SafariExtensionNotice.shouldShow(
                 isEnabled: false,
                 currentVersion: "1.1.0",
-                shownVersion: "1.0.1"
+                dismissedVersion: "1.0.1"
             )
         )
     }
@@ -39,14 +53,14 @@ final class SafariExtensionNoticeTests: XCTestCase {
             SafariExtensionNotice.shouldShow(
                 isEnabled: true,
                 currentVersion: "1.0.1",
-                shownVersion: nil
+                dismissedVersion: nil
             )
         )
         XCTAssertFalse(
             SafariExtensionNotice.shouldShow(
                 isEnabled: true,
                 currentVersion: "1.0.1",
-                shownVersion: "1.0.0"
+                dismissedVersion: "1.0.0"
             )
         )
     }
@@ -56,43 +70,15 @@ final class SafariExtensionNoticeTests: XCTestCase {
             SafariExtensionNotice.shouldShow(
                 isEnabled: false,
                 currentVersion: "",
-                shownVersion: nil
+                dismissedVersion: nil
             )
         )
     }
 
-    func testApplyRecordsShownVersionOncePerRelease() {
-        let first = SafariExtensionNotice.applied(
-            isEnabled: nil,
-            currentVersion: "1.0.1",
-            shownVersion: nil
-        )
-        XCTAssertFalse(first.show)
-        XCTAssertNil(first.shownVersion)
-
-        let shown = SafariExtensionNotice.applied(
-            isEnabled: false,
-            currentVersion: "1.0.1",
-            shownVersion: first.shownVersion
-        )
-        XCTAssertTrue(shown.show)
-        XCTAssertEqual(shown.shownVersion, "1.0.1")
-
-        let again = SafariExtensionNotice.applied(
-            isEnabled: false,
-            currentVersion: "1.0.1",
-            shownVersion: shown.shownVersion
-        )
-        XCTAssertFalse(again.show)
-        XCTAssertEqual(again.shownVersion, "1.0.1")
-
-        let next = SafariExtensionNotice.applied(
-            isEnabled: false,
-            currentVersion: "1.1.0",
-            shownVersion: again.shownVersion
-        )
-        XCTAssertTrue(next.show)
-        XCTAssertEqual(next.shownVersion, "1.1.0")
+    func testUnavailableStateCountsAsDisabled() {
+        XCTAssertTrue(SafariExtensionNotice.isDisabled(nil))
+        XCTAssertTrue(SafariExtensionNotice.isDisabled(false))
+        XCTAssertFalse(SafariExtensionNotice.isDisabled(true))
     }
 
     func testCopyNamesUmbilicalAndHasNoEmDash() {
@@ -103,6 +89,10 @@ final class SafariExtensionNoticeTests: XCTestCase {
         XCTAssertEqual(
             SafariExtensionNotice.extensionBundleIdentifier,
             "me.peapod.umbilical.extension"
+        )
+        XCTAssertEqual(
+            SafariExtensionNotice.dismissedVersionKey,
+            "umb.safariExtensionNoticeDismissedVersion"
         )
     }
 }

@@ -22,19 +22,16 @@ final class SafariExtensionNoticeController: ObservableObject {
     }
 
     func apply(isEnabled: Bool?) {
-        let shown = defaults.string(forKey: SafariExtensionNotice.shownVersionKey)
-        let result = SafariExtensionNotice.applied(
+        let dismissed = defaults.string(forKey: SafariExtensionNotice.dismissedVersionKey)
+        isVisible = SafariExtensionNotice.shouldShow(
             isEnabled: isEnabled,
             currentVersion: currentVersion,
-            shownVersion: shown
+            dismissedVersion: dismissed
         )
-        guard result.show else { return }
-        isVisible = true
-        defaults.set(currentVersion, forKey: SafariExtensionNotice.shownVersionKey)
     }
 
     func dismiss() {
         isVisible = false
-        defaults.set(currentVersion, forKey: SafariExtensionNotice.shownVersionKey)
+        defaults.set(currentVersion, forKey: SafariExtensionNotice.dismissedVersionKey)
     }
 }

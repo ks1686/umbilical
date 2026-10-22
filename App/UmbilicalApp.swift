@@ -57,6 +57,9 @@ final class AppTermination: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_: Notification) {
         closeRestoredExtraWindows()
+        // Safari's state API can error before the window exists. Retry
+        // after launch without blocking startup.
+        AppTermination.model?.refreshSafariNotice()
     }
 
     func applicationWillTerminate(_: Notification) {

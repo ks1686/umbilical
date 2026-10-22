@@ -201,6 +201,10 @@ final class AppModel: ObservableObject {
         publish()
     }
 
+    func refreshSafariNotice() {
+        SafariExtensionBridge.refresh(safariNotice)
+    }
+
     func start() async {
         await session.start()
         publish()

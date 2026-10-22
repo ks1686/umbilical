@@ -14,6 +14,7 @@ final class AppSceneTests: XCTestCase {
         XCTAssertTrue(source.contains("applicationShouldOpenUntitledFile"))
         XCTAssertTrue(source.contains("applicationDidFinishLaunching"))
         XCTAssertTrue(source.contains("closeRestoredExtraWindows"))
+        XCTAssertTrue(source.contains("refreshSafariNotice"))
         XCTAssertTrue(source.contains("endSheet"))
         XCTAssertTrue(source.contains("application(_: NSApplication, open urls:"))
         let menu = try readAppSource("MenuBarMenu.swift")

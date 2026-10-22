@@ -6,7 +6,7 @@ import Foundation
 
 public enum SafariExtensionNotice {
     public static let extensionBundleIdentifier = "me.peapod.umbilical.extension"
-    public static let shownVersionKey = "umb.safariExtensionNoticeVersion"
+    public static let dismissedVersionKey = "umb.safariExtensionNoticeDismissedVersion"
 
     public static let message =
         "Safari turned off the umbilical extension after this update. "
@@ -16,31 +16,20 @@ public enum SafariExtensionNotice {
     public static let openPreferencesTitle = "Open Safari Settings"
     public static let dismissTitle = "Dismiss"
 
-    public static func shouldShow(
-        isEnabled: Bool,
-        currentVersion: String,
-        shownVersion: String?
-    ) -> Bool {
-        guard !isEnabled else { return false }
-        guard !currentVersion.isEmpty else { return false }
-        return shownVersion != currentVersion
+    /// Safari can return nil or an error when the extension is off after a
+    /// permission change. Those reads count as disabled. An enabled result
+    /// hides the notice.
+    public static func isDisabled(_ isEnabled: Bool?) -> Bool {
+        isEnabled != true
     }
 
-    public static func applied(
+    public static func shouldShow(
         isEnabled: Bool?,
         currentVersion: String,
-        shownVersion: String?
-    ) -> (show: Bool, shownVersion: String?) {
-        guard let isEnabled else {
-            return (false, shownVersion)
-        }
-        if shouldShow(
-            isEnabled: isEnabled,
-            currentVersion: currentVersion,
-            shownVersion: shownVersion
-        ) {
-            return (true, currentVersion)
-        }
-        return (false, shownVersion)
+        dismissedVersion: String?
+    ) -> Bool {
+        guard isDisabled(isEnabled) else { return false }
+        guard !currentVersion.isEmpty else { return false }
+        return dismissedVersion != currentVersion
     }
 }
