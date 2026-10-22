@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import plistlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -190,6 +192,43 @@ class ReleaseToolsTest(unittest.TestCase):
         self.assertIn("docs/release-notes/${version}.md", publish)
         self.assertIn("--notes-file", publish)
 
+    def test_stamp_extension_manifest_rewrites_version(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = Path(tmp) / "manifest.json"
+            manifest.write_text(
+                '{\n  "manifest_version": 3,\n  "name": "umbilical",\n'
+                '  "version": "1.1.0"\n}\n',
+                encoding="utf-8",
+            )
+            release_tools.stamp_extension_manifest(manifest, "1.0.1")
+            text = manifest.read_text(encoding="utf-8")
+            self.assertIn('"version": "1.0.1"', text)
+            self.assertNotIn("1.1.0", text)
+            self.assertEqual(json.loads(text)["name"], "umbilical")
+            release_tools.stamp_extension_manifest(manifest, "1.0.1")
+            self.assertEqual(json.loads(text)["version"], "1.0.1")
+            with self.assertRaises(SystemExit):
+                release_tools.stamp_extension_manifest(manifest, "1.0")
+            missing = Path(tmp) / "missing.json"
+            with self.assertRaises(SystemExit):
+                release_tools.stamp_extension_manifest(missing, "1.0.1")
+
+    def test_source_manifest_matches_marketing_version(self) -> None:
+        project = (ROOT / "project.yml").read_text(encoding="utf-8")
+        versions = re.findall(r'MARKETING_VERSION:\s*"([^"]+)"', project)
+        self.assertEqual(versions, ["1.0.1", "1.0.1"])
+        manifest = json.loads(
+            (ROOT / "Extension" / "Resources" / "manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(manifest["version"], "1.0.1")
+        stamp = (ROOT / "scripts" / "stamp-extension-manifest.sh").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("stamp-manifest", stamp)
+        self.assertIn("MARKETING_VERSION", stamp)
+
     def test_previous_appcast_rejects_doctype(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             previous = Path(tmp) / "bad.xml"
@@ -281,7 +320,18 @@ class ReleaseToolsTest(unittest.TestCase):
             (contents / "Helpers" / "aria2c").write_bytes(b"")
             (contents / "Helpers" / "yt-dlp").write_bytes(b"")
             (contents / "Helpers" / "umb-watch").write_bytes(b"")
-            (contents / "PlugIns" / "umbilicalExtension.appex").mkdir()
+            appex = contents / "PlugIns" / "umbilicalExtension.appex"
+            (appex / "Contents" / "Resources").mkdir(parents=True)
+            ext_info = {
+                "CFBundleShortVersionString": "1.2.3",
+                "CFBundleVersion": "1.2.3",
+            }
+            with (appex / "Contents" / "Info.plist").open("wb") as handle:
+                plistlib.dump(ext_info, handle)
+            (appex / "Contents" / "Resources" / "manifest.json").write_text(
+                '{"manifest_version": 3, "version": "1.2.3"}\n',
+                encoding="utf-8",
+            )
             info = {
                 "SUFeedURL": release_tools.FEED_URL,
                 "SUPublicEDKey": release_tools.PUBLIC_ED_KEY,
@@ -297,6 +347,16 @@ class ReleaseToolsTest(unittest.TestCase):
             with (contents / "Info.plist").open("wb") as handle:
                 plistlib.dump(info, handle)
             release_tools.check_built_app(app, "", signed=False)
+            (appex / "Contents" / "Resources" / "manifest.json").write_text(
+                '{"manifest_version": 3, "version": "1.1.0"}\n',
+                encoding="utf-8",
+            )
+            with self.assertRaises(SystemExit):
+                release_tools.check_built_app(app, "", signed=False)
+            (appex / "Contents" / "Resources" / "manifest.json").write_text(
+                '{"manifest_version": 3, "version": "1.2.3"}\n',
+                encoding="utf-8",
+            )
             info["PolarOrganizationID"] = "abcdabcd-abcd-abcd-abcd-abcdabcdabcd"
             with (contents / "Info.plist").open("wb") as handle:
                 plistlib.dump(info, handle)

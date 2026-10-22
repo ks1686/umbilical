@@ -159,7 +159,12 @@ async function captureEnabled() {
   if (!api || !api.storage || !api.storage.local) return false;
   try {
     const stored = await api.storage.local.get(captureKey);
-    return stored && stored[captureKey] === true;
+    if (!(stored && stored[captureKey] === true)) return false;
+    const access = globalThis.umbilicalWebsiteAccess;
+    if (!access || typeof access.hasWebsiteAccess !== "function") {
+      return false;
+    }
+    return (await access.hasWebsiteAccess(api.permissions)) === true;
   } catch {
     return false;
   }

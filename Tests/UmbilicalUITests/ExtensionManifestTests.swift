@@ -9,7 +9,7 @@ final class ExtensionManifestTests: XCTestCase {
     func testManifestKeepsCaptureOptIn() throws {
         let json = try readJSON("manifest.json")
         XCTAssertEqual(json["manifest_version"] as? Int, 3)
-        XCTAssertEqual(json["version"] as? String, "1.1.0")
+        XCTAssertEqual(json["version"] as? String, try marketingVersion())
         XCTAssertEqual(
             json["permissions"] as? [String],
             ["activeTab", "contextMenus", "nativeMessaging", "storage"]
@@ -24,9 +24,19 @@ final class ExtensionManifestTests: XCTestCase {
         XCTAssertEqual(scripts[0]["matches"] as? [String], ["http://*/*", "https://*/*"])
         XCTAssertEqual(scripts[0]["all_frames"] as? Bool, true)
         let background = try XCTUnwrap(json["background"] as? [String: Any])
-        XCTAssertEqual(background["scripts"] as? [String], ["background.js"])
+        XCTAssertEqual(
+            background["scripts"] as? [String],
+            ["website-access.js", "background.js"]
+        )
         XCTAssertEqual(background["persistent"] as? Bool, false)
         XCTAssertNil(background["service_worker"])
+    }
+
+    func testManifestVersionMatchesAppMarketingVersion() throws {
+        let version = try marketingVersion()
+        XCTAssertEqual(version, "1.0.1")
+        let json = try readJSON("manifest.json")
+        XCTAssertEqual(json["version"] as? String, version)
     }
 
     func testBackgroundSendsOnlyTheClickedLink() throws {
@@ -39,6 +49,8 @@ final class ExtensionManifestTests: XCTestCase {
         XCTAssertTrue(source.contains("onAdded"))
         XCTAssertTrue(source.contains("download-video-with-umbilical"))
         XCTAssertTrue(source.contains("umbilical-intercept"))
+        XCTAssertTrue(source.contains("umbilicalWebsiteAccess"))
+        XCTAssertTrue(source.contains("hasWebsiteAccess"))
         XCTAssertFalse(source.contains("browser.downloads"))
         XCTAssertFalse(source.contains("chrome.downloads"))
         XCTAssertFalse(source.contains("executeScript"))
@@ -58,12 +70,22 @@ final class ExtensionManifestTests: XCTestCase {
         XCTAssertTrue(html.contains("Intercept download links"))
         XCTAssertTrue(html.contains("Download this page with umbilical"))
         let popup = try readText("popup.js")
+        XCTAssertTrue(html.contains("website-access.js"))
         XCTAssertTrue(popup.contains("permissions.request"))
         XCTAssertTrue(popup.contains("<all_urls>"))
         XCTAssertTrue(popup.contains("captureDownloads"))
+        XCTAssertTrue(popup.contains("umbilicalWebsiteAccess"))
         XCTAssertTrue(popup.contains("activeTab") || popup.contains("tabs.query"))
         XCTAssertTrue(popup.contains("video = true") || popup.contains("video: true"))
         XCTAssertFalse(popup.contains("downloads.download"))
+        XCTAssertFalse(popup.contains("if (enabled && !granted)"))
+        XCTAssertFalse(popup.contains("host_permissions"))
+        let access = try readText("website-access.js")
+        XCTAssertTrue(access.contains("*://*/*"))
+        XCTAssertTrue(access.contains("http://*/*"))
+        XCTAssertTrue(access.contains("https://*/*"))
+        XCTAssertTrue(access.contains("originsCoverHttpAndHttps"))
+        XCTAssertFalse(access.contains("host_permissions"))
     }
 
     func testHostAppTellsUsersToAllowSafariWebsiteAccess() throws {
@@ -99,12 +121,45 @@ final class ExtensionManifestTests: XCTestCase {
     }
 
     func testContentScriptHeuristics() throws {
+        try runNodeTest("content-capture-test.js")
+    }
+
+    func testWebsiteAccessGrantPatterns() throws {
+        try runNodeTest("website-access-test.js")
+    }
+
+    func testOpeningPopupDoesNotClearCapture() throws {
+        try runNodeTest("popup-capture-test.js")
+    }
+
+    private func marketingVersion() throws -> String {
+        let yaml = try String(
+            contentsOf: repoRoot().appendingPathComponent("project.yml"),
+            encoding: .utf8
+        )
+        let pattern = try NSRegularExpression(
+            pattern: #"MARKETING_VERSION:\s*"([^"]+)""#
+        )
+        let range = NSRange(yaml.startIndex..<yaml.endIndex, in: yaml)
+        let matches = pattern.matches(in: yaml, range: range)
+        XCTAssertEqual(matches.count, 2)
+        var versions: [String] = []
+        for match in matches {
+            let capture = match.range(at: 1)
+            let captured = try XCTUnwrap(Range(capture, in: yaml))
+            versions.append(String(yaml[captured]))
+        }
+        XCTAssertEqual(Set(versions).count, 1)
+        return try XCTUnwrap(versions.first)
+    }
+
+    private func runNodeTest(_ name: String) throws {
         guard let executable = nodeExecutable() else {
             throw XCTSkip("node is not installed")
         }
         let script = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
-            .appendingPathComponent("content-capture-test.js")
+            .appendingPathComponent(name)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = [script.path]

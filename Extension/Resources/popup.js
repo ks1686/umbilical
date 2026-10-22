@@ -114,11 +114,12 @@ async function captureIsOn() {
 }
 
 async function hasWebsiteAccess() {
-  if (!api || !api.permissions || typeof api.permissions.contains !== "function") {
+  const helper = globalThis.umbilicalWebsiteAccess;
+  if (!helper || typeof helper.hasWebsiteAccess !== "function") {
     return false;
   }
   try {
-    return await api.permissions.contains(allWebsites);
+    return (await helper.hasWebsiteAccess(api && api.permissions)) === true;
   } catch {
     return false;
   }
@@ -184,12 +185,13 @@ async function syncCheckbox() {
   const box = $("capture");
   if (!box) return;
   const enabled = await captureIsOn();
-  const granted = await hasWebsiteAccess();
-  box.checked = enabled === true && granted === true;
-  if (enabled && !granted) {
-    await setCapture(false);
-    box.checked = false;
+  let granted = false;
+  try {
+    granted = await hasWebsiteAccess();
+  } catch {
+    granted = false;
   }
+  box.checked = enabled === true && granted === true;
 }
 
 async function syncAccessButton() {
@@ -225,13 +227,25 @@ async function onCaptureChange(event) {
   }
 }
 
-document.addEventListener("DOMContentLoaded", () => {
-  const access = $("allow-access");
-  if (access) access.addEventListener("click", requestAccess);
-  const page = $("download-page");
-  if (page) page.addEventListener("click", downloadPage);
-  const box = $("capture");
-  if (box) box.addEventListener("change", onCaptureChange);
-  syncAccessButton();
-  syncCheckbox();
-});
+if (typeof document !== "undefined" && document.addEventListener) {
+  document.addEventListener("DOMContentLoaded", () => {
+    const access = $("allow-access");
+    if (access) access.addEventListener("click", requestAccess);
+    const page = $("download-page");
+    if (page) page.addEventListener("click", downloadPage);
+    const box = $("capture");
+    if (box) box.addEventListener("change", onCaptureChange);
+    syncAccessButton();
+    syncCheckbox();
+  });
+}
+
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = {
+    hasWebsiteAccess,
+    syncCheckbox,
+    turnCaptureOff,
+    captureIsOn,
+    setCapture,
+  };
+}
