@@ -36,7 +36,8 @@ The app never links aria2; it launches `aria2c` as a child process and talks JSO
 - `--rpc-listen-all=false --rpc-allow-origin-all=false`
 - `--seed-time=0` stops seeding when the download completes. Do not set `--seed-ratio=0.0`. In aria2 that value means seed regardless of share ratio. Leave the ratio at its default of 1.0.
 - `--max-upload-limit=1K` (0 means unlimited in aria2, so never 0). This caps upload while a download is in progress. It is not a claim of zero upload.
-- `--follow-torrent=false` and `--follow-metalink=false`. An HTTP download of a `.torrent` or a metalink is saved as that file. aria2 does not start the downloads named inside it. Magnet links are added with `aria2.addUri` and do not use this switch.
+- `--follow-torrent=false` and `--follow-metalink=false`. An HTTP `addUri` of a `.torrent` or a metalink is saved as that file. Confirmed metalink handoffs use `aria2.addMetalink` with `follow-metalink=true` after the document is checked. Magnet links are added with `aria2.addUri` and do not use this switch.
+- `--rpc-save-upload-metadata=false` and `--bt-save-metadata=false` so a torrent does not write extra torrent copies into the download folder.
 - `--bt-max-peers` capped, DHT and PEX on by default for magnet resolution, toggle in settings
 - `--check-certificate=true` (explicit, so a later change cannot silently disable TLS checks)
 - `--check-integrity=true`, `--auto-file-renaming=true`, `--allow-overwrite=false`
@@ -116,7 +117,7 @@ Per-download RPC options still cannot set `seed-ratio`, `seed-time`, or `max-upl
 
 `RPCClient.addTorrent` reads a `.torrent`, rejects path components that escape the download folder (`..`, absolute paths, empty names, and a name that is a symlink out of the folder), and rejects non-http(s) web seeds. Tracker URLs must be `http`, `https`, or `udp`. `select-file` is 1-based and must name a file in the torrent. The RPC call is `aria2.addTorrent` with the file base64-encoded and no extra web-seed URIs.
 
-Metalink stays unsupported as an RPC method. `follow-metalink=false` is separate: an HTTP URL that returns a metalink is saved as a file, and aria2 does not start the files named in it. A Safari or Finder `.torrent` is fetched or copied without cookies, then added with `aria2.addTorrent` so the never-seed config applies. A Finder metalink is copied into the download folder and is not followed. A magnet is still `aria2.addUri`.
+Global `follow-metalink=false` stays so an HTTP `addUri` of a `.metalink` is saved as that file. A confirmed Finder `.meta4` or `.metalink`, and a confirmed remote metalink URL, are parsed first: every mirror URL uses the same scheme allowlist as a pasted link, and every output name must be a plain file name inside the download folder. The whole metalink is refused if any entry fails. After that check, `aria2.addMetalink` is called with `follow-metalink=true`. A Safari or Finder `.torrent` is fetched or read without cookies, then added with `aria2.addTorrent` so the never-seed config applies. The original torrent is not copied into the download folder. A magnet is still `aria2.addUri`.
 
 ### Running the engine tests
 

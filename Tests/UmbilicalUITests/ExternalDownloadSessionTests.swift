@@ -130,29 +130,26 @@ final class ExternalDownloadSessionTests: XCTestCase {
         XCTAssertTrue(session.client.torrents.isEmpty)
     }
 
-    func testHTTPMetalinkIsAddedAsAFileDownload() async throws {
+    func testRemoteMetalinkDoesNotUseAddUri() async throws {
         let session = try await running()
         defer { try? FileManager.default.removeItem(at: session.root) }
         let staged = try ExternalDownload.stage(
-            urlText: "https://example.com/pack.metalink",
+            urlText: "http://127.0.0.1/pack.metalink",
             filename: "pack.metalink",
             downloadRoot: session.root
         )
-        let confirmed = try ExternalDownload.confirm(staged, downloadRoot: session.root)
-        try await session.model.addExternal(confirmed)
-        XCTAssertEqual(session.client.added.first?.url.scheme?.lowercased(), "https")
-        XCTAssertEqual(session.client.added.first?.options, ["out": "pack.metalink"])
+        do {
+            try await session.model.addExternal(
+                try ExternalDownload.confirm(staged, downloadRoot: session.root)
+            )
+            XCTFail("expected loopback metalink fetch to be rejected")
+        } catch let error as EngineError {
+            XCTAssertEqual(error, .torrentRejected("host"))
+        }
+        XCTAssertTrue(session.client.added.isEmpty)
+        XCTAssertTrue(session.client.metalinks.isEmpty)
         XCTAssertTrue(session.client.torrents.isEmpty)
-        let meta4 = try ExternalDownload.stage(
-            urlText: "http://mirror.example.com/list.meta4",
-            filename: "list.meta4",
-            downloadRoot: session.root
-        )
-        try await session.model.addExternal(
-            try ExternalDownload.confirm(meta4, downloadRoot: session.root)
-        )
-        XCTAssertEqual(session.client.added.last?.options, ["out": "list.meta4"])
-        XCTAssertTrue(session.client.torrents.isEmpty)
+        XCTAssertTrue(session.model.snapshot.rows.isEmpty)
     }
 
     func testConfirmedFTPIsAdded() async throws {
@@ -212,27 +209,81 @@ final class ExternalDownloadSessionTests: XCTestCase {
         try await session.model.addExternal(confirmed)
         XCTAssertTrue(session.client.added.isEmpty)
         let recorded = try XCTUnwrap(session.client.torrents.first)
-        XCTAssertTrue(recorded.file.path.hasPrefix(session.root.path))
+        XCTAssertEqual(recorded.file.path, source.path)
         XCTAssertTrue(recorded.options.isEmpty)
+        let copied = session.root.appendingPathComponent(source.lastPathComponent)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copied.path))
     }
 
-    func testLocalMetalinkIsCopiedAndNotFollowed() async throws {
+    func testLocalMetalinkGoesToAddMetalink() async throws {
         let session = try await running(quarantine: NoopQuarantine())
         defer { try? FileManager.default.removeItem(at: session.root) }
         let source = session.root.deletingLastPathComponent().appendingPathComponent(
             "umb-src-\(UUID().uuidString).meta4"
         )
-        try Data("<metalink></metalink>".utf8).write(to: source)
+        try sampleMetalinkBytes().write(to: source)
         defer { try? FileManager.default.removeItem(at: source) }
         let staged = try ExternalDownload.stage(localFile: source, downloadRoot: session.root)
         let confirmed = try ExternalDownload.confirm(staged, downloadRoot: session.root)
         try await session.model.addExternal(confirmed)
         XCTAssertTrue(session.client.added.isEmpty)
         XCTAssertTrue(session.client.torrents.isEmpty)
+        let recorded = try XCTUnwrap(session.client.metalinks.first)
+        XCTAssertEqual(recorded.file.path, source.path)
+        XCTAssertEqual(recorded.options["follow-metalink"], "true")
         XCTAssertEqual(session.model.snapshot.rows.count, 1)
-        XCTAssertEqual(session.model.snapshot.rows.first?.stateText, "Complete")
+        XCTAssertEqual(session.model.snapshot.rows.first?.stateText, "Waiting")
         let copied = session.root.appendingPathComponent(source.lastPathComponent)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: copied.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copied.path))
+    }
+
+    func testRejectedMetalinkNeverReachesAddMetalink() async throws {
+        let session = try await running()
+        defer { try? FileManager.default.removeItem(at: session.root) }
+        let cases: [(String, String)] = [
+            ("payload.bin", "file:///tmp/payload.bin"),
+            ("payload.bin", "-o"),
+            ("../payload.bin", "https://example.com/payload.bin"),
+            ("/tmp/payload.bin", "https://example.com/payload.bin")
+        ]
+        for (name, url) in cases {
+            let source = session.root.deletingLastPathComponent().appendingPathComponent(
+                "umb-bad-\(UUID().uuidString).meta4"
+            )
+            try sampleMetalinkBytes(name: name, url: url).write(to: source)
+            defer { try? FileManager.default.removeItem(at: source) }
+            XCTAssertThrowsError(
+                try ExternalDownload.stage(localFile: source, downloadRoot: session.root)
+            )
+        }
+        XCTAssertTrue(session.client.metalinks.isEmpty)
+        XCTAssertTrue(session.client.added.isEmpty)
+        XCTAssertTrue(session.model.snapshot.rows.isEmpty)
+    }
+
+    private func sampleMetalinkBytes(
+        name: String = "payload.bin",
+        url: String = "https://example.com/payload.bin"
+    ) -> Data {
+        let escapedName =
+            name
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+        let escapedURL =
+            url
+            .replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+        let lines = [
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+            "<metalink xmlns=\"urn:ietf:params:xml:ns:metalink\">",
+            "  <file name=\"\(escapedName)\">",
+            "    <url>\(escapedURL)</url>",
+            "  </file>",
+            "</metalink>",
+            ""
+        ]
+        return Data(lines.joined(separator: "\n").utf8)
     }
 
     private func sampleTorrentBytes() throws -> Data {

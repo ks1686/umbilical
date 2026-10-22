@@ -132,8 +132,10 @@ Serve it with `python3 -m http.server 8765` and open `http://127.0.0.1:8765/`.
    If the URL is a placeholder, the fetch can fail after confirm. That is
    still a pass for interception. The failure must not start aria2 with
    cookies or extra options.
-6. Click `metalink`. The sheet opens. After confirm, the metalink is
-   saved as a file. The files named inside it are not started.
+6. Click `metalink`. The sheet opens. After confirm, umbilical fetches
+   that metalink, checks its mirror URLs and file names, and starts the
+   files it names. If the URL is a placeholder, the fetch can fail after
+   confirm.
 7. Click `magnet`. The sheet shows `magnet`. The add sheet still rejects
    the same magnet.
 8. Click `ordinary`. Safari follows the link. umbilical does not open.
@@ -164,11 +166,12 @@ Do not auto-intercept ordinary page loads as video.
 ## Finder openers
 
 1. Double-click a `.torrent` file that opens with this build. The confirm
-   sheet appears. Cancel leaves the queue empty. Confirm copies the file
-   into the download folder and adds it as a torrent. umbilical never
-   seeds.
-2. Double-click a `.metalink` or `.meta4` file. Confirm saves that file
-   in the download folder and does not start the files it names.
+   sheet appears. Cancel leaves the queue empty. Confirm adds it as a
+   torrent without copying an extra torrent file into the download folder.
+   umbilical never seeds.
+2. Double-click a `.metalink` or `.meta4` file. Confirm starts the files
+   it names. A metalink that uses a rejected URL scheme or a file name
+   with a path is refused.
 3. Open a `magnet:` URL with this build. The same confirm sheet appears.
 
 ```bash

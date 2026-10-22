@@ -9,6 +9,7 @@ enum RPCOptionPolicy {
         "max-download-limit",
         "split",
         "dir",
+        "follow-metalink"
     ]
 
     static func validate(_ options: [String: String], downloadRoot: URL) throws {
@@ -30,6 +31,8 @@ enum RPCOptionPolicy {
                 try DownloadPath.validateRate(value)
             case "select-file":
                 try DownloadPath.validateSelectFile(value)
+            case "follow-metalink":
+                try DownloadPath.validateFollowMetalink(value)
             default:
                 throw EngineError.optionRejected(key)
             }

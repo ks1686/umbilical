@@ -40,6 +40,13 @@ final class DownloadMessageTests: XCTestCase {
             DownloadMessage.text(for: EngineError.directoryRejected("/tmp")),
             "That folder cannot be used."
         )
+        XCTAssertEqual(
+            DownloadMessage.text(for: EngineError.metalinkRejected("url")),
+            "That metalink cannot be used."
+        )
+        XCTAssertFalse(
+            DownloadMessage.text(for: EngineError.metalinkRejected("url")).contains("url")
+        )
     }
 
     func testSessionErrorsPassThrough() {

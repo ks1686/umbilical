@@ -192,7 +192,7 @@ final class ExternalDownloadTests: XCTestCase {
         XCTAssertThrowsError(try ExternalDownload.openURL(for: staged, downloadRoot: root))
 
         let metalink = root.appendingPathComponent("list.meta4")
-        try Data("<metalink></metalink>".utf8).write(to: metalink)
+        try metalink4(name: "payload.bin", url: "https://example.com/payload.bin").write(to: metalink)
         let meta = try ExternalDownload.stage(localFile: metalink, downloadRoot: root)
         XCTAssertEqual(meta.kind, .metalinkFile)
 

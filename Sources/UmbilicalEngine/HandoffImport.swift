@@ -6,13 +6,23 @@ import Foundation
 public enum HandoffImport {
     public static func fetchTorrent(
         url: URL,
-        filename: String?,
-        directory: URL
+        filename: String?
     ) async throws -> URL {
         let data = try await CookieFreeHTTP.get(url)
         _ = try TorrentMetadata.parse(data)
         let name = try acceptedName(filename, url: url, fallback: "download.torrent")
-        return try write(data, named: name, into: directory)
+        return try writePrivate(data, named: name)
+    }
+
+    public static func fetchMetalink(
+        url: URL,
+        filename: String?,
+        downloadRoot: URL
+    ) async throws -> URL {
+        let data = try await CookieFreeHTTP.get(url)
+        _ = try MetalinkDocument.parse(data, downloadRoot: downloadRoot)
+        let name = try acceptedName(filename, url: url, fallback: "download.meta4")
+        return try writePrivate(data, named: name)
     }
 
     public static func copyLocal(
@@ -57,6 +67,18 @@ public enum HandoffImport {
         return try confinedURL(destination, directory: directory)
     }
 
+    private static func writePrivate(_ data: Data, named name: String) throws -> URL {
+        try DownloadPath.validateOutputName(name)
+        let folder = URL(fileURLWithPath: try POSIX.makePrivateDirectory(), isDirectory: true)
+        let destination = folder.appendingPathComponent(name)
+        do {
+            try data.write(to: destination, options: .withoutOverwriting)
+        } catch {
+            throw EngineError.handoffRejected("copy")
+        }
+        return destination
+    }
+
     private static func confinedURL(_ destination: URL, directory: URL) throws -> URL {
         let resolved = try DownloadPath.resolveInside(root: directory, raw: destination.path)
         return URL(fileURLWithPath: resolved)
@@ -86,7 +108,9 @@ public enum HandoffImport {
         throw EngineError.outputNameRejected(name)
     }
 
-    private static func acceptedName(_ outputName: String?, url: URL, fallback: String) throws -> String {
+    private static func acceptedName(_ outputName: String?, url: URL, fallback: String) throws
+        -> String
+    {
         if let outputName, !outputName.isEmpty {
             return try plainName(outputName)
         }

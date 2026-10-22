@@ -18,11 +18,18 @@ struct RecordedTorrent: Equatable {
     var options: [String: String]
 }
 
+struct RecordedMetalink: Equatable {
+    var file: URL
+    var options: [String: String]
+}
+
 final class FakeDownloads: DownloadControlling {
     var nextGID = 1
     var statuses: [String: DownloadStatus] = [:]
     var added: [RecordedAdd] = []
     var torrents: [RecordedTorrent] = []
+    var metalinks: [RecordedMetalink] = []
+    var filesByGID: [String: [URL]] = [:]
     var paused: [String] = []
     var resumed: [String] = []
     var removed: [String] = []
@@ -38,6 +45,18 @@ final class FakeDownloads: DownloadControlling {
     func addTorrent(file: URL, options: [String: String]) async throws -> String {
         torrents.append(RecordedTorrent(file: file, options: options))
         return register(url: file)
+    }
+
+    func addMetalink(file: URL, options: [String: String]) async throws -> [String] {
+        metalinks.append(RecordedMetalink(file: file, options: options))
+        return [register(url: file)]
+    }
+
+    func files(gid: String) async throws -> [URL] {
+        if let listed = filesByGID[gid] {
+            return listed
+        }
+        return statuses[gid]?.files ?? []
     }
 
     private func register(url: URL) -> String {

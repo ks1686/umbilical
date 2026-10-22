@@ -22,6 +22,7 @@ public enum EngineError: Error, Equatable, CustomStringConvertible {
     case unexpectedStatus(String)
     case torrentRejected(String)
     case magnetRejected(String)
+    case metalinkRejected(String)
     case notSupported(String)
     case handoffRejected(String)
     case videoRejected(String)
@@ -66,6 +67,8 @@ public enum EngineError: Error, Equatable, CustomStringConvertible {
             return "torrent rejected: \(detail)"
         case .magnetRejected(let detail):
             return "magnet rejected: \(detail)"
+        case .metalinkRejected(let detail):
+            return "metalink rejected: \(detail)"
         case .notSupported(let feature):
             return "not supported: \(feature)"
         case .handoffRejected(let reason):
