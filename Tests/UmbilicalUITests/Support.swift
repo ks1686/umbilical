@@ -99,9 +99,10 @@ final class FakeDownloads: DownloadControlling {
         if let statusError {
             throw statusError
         }
-        if removed.contains(gid), let control = controlPathOnRemovedStatus.removeValue(forKey: gid)
-        {
-            try? Data("ctrl".utf8).write(to: control)
+        if removed.contains(gid) {
+            if let control = controlPathOnRemovedStatus.removeValue(forKey: gid) {
+                try? Data("ctrl".utf8).write(to: control)
+            }
         }
         guard let status = statuses[gid] else {
             throw EngineError.transport("missing")

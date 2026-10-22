@@ -34,9 +34,8 @@ enum MacActions {
             presentingAlert = false
             onDismiss()
         }
-        if let window = NSApp.mainWindow ?? NSApp.keyWindow, window.isVisible,
-            window.attachedSheet == nil
-        {
+        let host = NSApp.mainWindow ?? NSApp.keyWindow
+        if let window = host, window.isVisible, window.attachedSheet == nil {
             alert.beginSheetModal(for: window) { _ in finish() }
         } else {
             _ = alert.runModal()

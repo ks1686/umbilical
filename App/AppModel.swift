@@ -91,6 +91,108 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func pause(id: String) async {
+        await session.pause(id: id)
+        publish()
+    }
+
+    func resume(id: String) async {
+        guard licenseAllowsResume else { return }
+        await session.resume(id: id)
+        publish()
+    }
+
+    func remove(id: String) async {
+        await session.remove(id: id)
+        publish()
+    }
+
+    func refreshSafariNotice() {
+        SafariExtensionBridge.refresh(safariNotice)
+    }
+
+    func start() async {
+        await session.start()
+        publish()
+    }
+
+    func stop() {
+        loop?.cancel()
+        licenseStartup?.cancel()
+        session.stop()
+        publish()
+    }
+
+    func setNotifyOnComplete(_ enabled: Bool) {
+        session.setNotifyOnComplete(enabled)
+        publish()
+    }
+
+    func setNotifyOnFailure(_ enabled: Bool) {
+        session.setNotifyOnFailure(enabled)
+        publish()
+    }
+
+    func activateLicense(_ rawKey: String) async -> Bool {
+        licensing.clearActionError()
+        publish()
+        await licensing.activate(rawKey)
+        publish()
+        guard license.actionError == nil else { return false }
+        return licenseAllowsNewDownloads
+    }
+
+    func deactivateLicense() async {
+        licensing.clearActionError()
+        publish()
+        await licensing.deactivate()
+        publish()
+    }
+
+    func clearLicenseError() {
+        guard license.actionError != nil || license.actionNotice != nil else { return }
+        licensing.clearActionError()
+        publish()
+    }
+
+    private func requireNewDownload() throws {
+        guard licenseAllowsNewDownloads else {
+            throw LicenseBlocked(message: LicenseCopy.actionBlocked)
+        }
+    }
+
+    private func run() async {
+        await session.start()
+        publish()
+        licenseStartup = Task { @MainActor [weak self] in
+            await self?.licensing.launch()
+            guard let self, !Task.isCancelled else { return }
+            self.licenseLaunched = true
+            self.publish()
+        }
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            if Task.isCancelled {
+                break
+            }
+            await session.refresh()
+            if licenseLaunched {
+                await licensing.tick()
+            }
+            publish()
+        }
+    }
+
+    private func publish() {
+        license = licensing.snapshot
+        snapshot = session.snapshot
+        for notice in session.takeNotices() {
+            DownloadNotifier.post(notice)
+        }
+    }
+}
+
+extension AppModel {
     func receiveExternalURL(_ url: URL) {
         let scheme = url.scheme?.lowercased() ?? ""
         let allowed =
@@ -191,106 +293,6 @@ final class AppModel: ObservableObject {
         }
         MacActions.presentRejectedDownload(text) { [weak self] in
             self?.clearHandoffError()
-        }
-    }
-
-    func pause(id: String) async {
-        await session.pause(id: id)
-        publish()
-    }
-
-    func resume(id: String) async {
-        guard licenseAllowsResume else { return }
-        await session.resume(id: id)
-        publish()
-    }
-
-    func remove(id: String) async {
-        await session.remove(id: id)
-        publish()
-    }
-
-    func refreshSafariNotice() {
-        SafariExtensionBridge.refresh(safariNotice)
-    }
-
-    func start() async {
-        await session.start()
-        publish()
-    }
-
-    func stop() {
-        loop?.cancel()
-        licenseStartup?.cancel()
-        session.stop()
-        publish()
-    }
-
-    func setNotifyOnComplete(_ enabled: Bool) {
-        session.setNotifyOnComplete(enabled)
-        publish()
-    }
-
-    func setNotifyOnFailure(_ enabled: Bool) {
-        session.setNotifyOnFailure(enabled)
-        publish()
-    }
-
-    func activateLicense(_ rawKey: String) async -> Bool {
-        licensing.clearActionError()
-        publish()
-        await licensing.activate(rawKey)
-        publish()
-        guard license.actionError == nil else { return false }
-        return licenseAllowsNewDownloads
-    }
-
-    func deactivateLicense() async {
-        licensing.clearActionError()
-        publish()
-        await licensing.deactivate()
-        publish()
-    }
-
-    func clearLicenseError() {
-        guard license.actionError != nil || license.actionNotice != nil else { return }
-        licensing.clearActionError()
-        publish()
-    }
-
-    private func requireNewDownload() throws {
-        guard licenseAllowsNewDownloads else {
-            throw LicenseBlocked(message: LicenseCopy.actionBlocked)
-        }
-    }
-
-    private func run() async {
-        await session.start()
-        publish()
-        licenseStartup = Task { @MainActor [weak self] in
-            await self?.licensing.launch()
-            guard let self, !Task.isCancelled else { return }
-            self.licenseLaunched = true
-            self.publish()
-        }
-        while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            if Task.isCancelled {
-                break
-            }
-            await session.refresh()
-            if licenseLaunched {
-                await licensing.tick()
-            }
-            publish()
-        }
-    }
-
-    private func publish() {
-        license = licensing.snapshot
-        snapshot = session.snapshot
-        for notice in session.takeNotices() {
-            DownloadNotifier.post(notice)
         }
     }
 }
