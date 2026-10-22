@@ -218,7 +218,9 @@ struct ContentView: View {
         if let licenseBanner {
             return licenseBanner
         }
-        return "Add an http or https URL. Active downloads stop when umbilical quits."
+        return "Add an http or https URL. Active downloads stop when umbilical quits. "
+            + "In Safari, allow website access in Safari Settings > Extensions > umbilical, "
+            + "then right-click a link."
     }
 
     private func chooseRoot() {

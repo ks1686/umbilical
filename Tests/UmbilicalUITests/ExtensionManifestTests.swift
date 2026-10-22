@@ -15,7 +15,8 @@ final class ExtensionManifestTests: XCTestCase {
             ["activeTab", "contextMenus", "nativeMessaging"]
         )
         XCTAssertNil(json["host_permissions"])
-        XCTAssertNil(json["optional_host_permissions"])
+        XCTAssertEqual(json["optional_host_permissions"] as? [String], ["<all_urls>"])
+        XCTAssertFalse((json["permissions"] as? [String] ?? []).contains("<all_urls>"))
         XCTAssertNil(json["optional_permissions"])
         XCTAssertNil(json["content_scripts"])
         let background = try XCTUnwrap(json["background"] as? [String: Any])
@@ -31,6 +32,7 @@ final class ExtensionManifestTests: XCTestCase {
         XCTAssertTrue(source.contains("sendNativeMessage"))
         XCTAssertTrue(source.contains("onInstalled"))
         XCTAssertTrue(source.contains("onStartup"))
+        XCTAssertTrue(source.contains("onAdded"))
         XCTAssertFalse(source.contains("downloads"))
         XCTAssertFalse(source.contains("executeScript"))
         XCTAssertFalse(source.contains("selectionText"))
@@ -38,13 +40,26 @@ final class ExtensionManifestTests: XCTestCase {
         XCTAssertFalse(source.contains("cookies"))
     }
 
-    func testPopupDoesNotOfferDownloadCapture() throws {
+    func testPopupRequestsOptionalWebsiteAccess() throws {
         let html = try readText("popup.html")
         XCTAssertTrue(html.contains("Right-click a link"))
         XCTAssertTrue(html.contains("does not read the page"))
+        XCTAssertTrue(html.contains("Allow website access"))
+        XCTAssertTrue(html.contains("Safari Settings"))
+        XCTAssertTrue(html.contains("popup.js"))
         XCTAssertFalse(html.contains("capture"))
-        XCTAssertFalse(html.contains("popup.js"))
-        XCTAssertThrowsError(try readText("popup.js"))
+        let popup = try readText("popup.js")
+        XCTAssertTrue(popup.contains("permissions.request"))
+        XCTAssertTrue(popup.contains("<all_urls>"))
+        XCTAssertFalse(popup.contains("capture"))
+    }
+
+    func testHostAppTellsUsersToAllowSafariWebsiteAccess() throws {
+        let settings = try readApp("SettingsView.swift")
+        XCTAssertTrue(settings.contains("Safari Settings > Extensions > umbilical"))
+        XCTAssertTrue(settings.contains("Allow website access"))
+        let empty = try readApp("ContentView.swift")
+        XCTAssertTrue(empty.contains("Safari Settings > Extensions > umbilical"))
     }
 
     private func readJSON(_ name: String) throws -> [String: Any] {
@@ -58,10 +73,17 @@ final class ExtensionManifestTests: XCTestCase {
     }
 
     private func resourceURL(_ name: String) -> URL {
+        repoRoot().appendingPathComponent("Extension/Resources/\(name)")
+    }
+
+    private func readApp(_ name: String) throws -> String {
+        try String(contentsOf: repoRoot().appendingPathComponent("App/\(name)"), encoding: .utf8)
+    }
+
+    private func repoRoot() -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Extension/Resources/\(name)")
     }
 }
