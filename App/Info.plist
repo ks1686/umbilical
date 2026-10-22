@@ -16,6 +16,8 @@
 	<true/>
 	<key>SURequireSignedFeed</key>
 	<true/>
+	<key>NSQuitAlwaysKeepsWindows</key>
+	<false/>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

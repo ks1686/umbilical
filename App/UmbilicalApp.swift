@@ -4,6 +4,7 @@
 
 import SwiftUI
 import UmbilicalEngine
+import UmbilicalUI
 
 @main
 struct UmbilicalApp: App {
@@ -54,7 +55,16 @@ final class AppTermination: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationDidFinishLaunching(_: Notification) {
+        closeRestoredExtraWindows()
+    }
+
     func applicationWillTerminate(_: Notification) {
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet)
+            }
+        }
         AppTermination.model?.stop()
     }
 
@@ -62,6 +72,28 @@ final class AppTermination: NSObject, NSApplicationDelegate {
     // blank untitled window behind the main scene on launch and URL handoff.
     func applicationShouldOpenUntitledFile(_: NSApplication) -> Bool {
         false
+    }
+
+    /// Unique `Window(id: "main")` does not drop Saved Application State from
+    /// an older multi-instance window scene. `restorationBehavior` is macOS 15
+    /// or later, so extras are closed here and Resume is off in Info.plist.
+    private func closeRestoredExtraWindows() {
+        let snapshots = NSApp.windows.map { window in
+            RestoredWindowFilter.Snapshot(
+                title: window.title,
+                identifier: window.identifier?.rawValue ?? "",
+                isPanel: window is NSPanel,
+                canBecomeMain: window.canBecomeMain
+            )
+        }
+        let closing = Set(RestoredWindowFilter.indicesToClose(snapshots))
+        for (index, window) in NSApp.windows.enumerated() where closing.contains(index) {
+            window.isRestorable = false
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet)
+            }
+            window.close()
+        }
     }
 
     func application(_: NSApplication, open urls: [URL]) {

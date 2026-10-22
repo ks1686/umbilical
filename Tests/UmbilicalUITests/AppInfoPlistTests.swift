@@ -40,5 +40,6 @@ final class AppInfoPlistTests: XCTestCase {
         // macOS rejects LSSupportsOpeningDocumentsInPlace = NO. Finder still
         // delivers the original file URL to application(_:open:).
         XCTAssertNil(plist["LSSupportsOpeningDocumentsInPlace"])
+        XCTAssertEqual(plist["NSQuitAlwaysKeepsWindows"] as? Bool, false)
     }
 }
