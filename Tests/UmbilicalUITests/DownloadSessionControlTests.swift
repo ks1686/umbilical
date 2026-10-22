@@ -21,6 +21,7 @@ final class DownloadSessionControlTests: XCTestCase {
         XCTAssertEqual(client.paused, ["g1"])
         XCTAssertEqual(model.snapshot.rows.first?.stateText, "Paused")
         XCTAssertEqual(model.snapshot.rows.first?.canResume, true)
+        XCTAssertEqual(model.snapshot.rows.first?.showsPauseResume, true)
         XCTAssertEqual(model.snapshot.menuTitle, "umb")
         XCTAssertEqual(model.snapshot.menuRows.first?.label, "a.bin Paused")
         await model.resume(id: "g1")
@@ -93,7 +94,9 @@ final class DownloadSessionControlTests: XCTestCase {
         )
         await model.refresh()
         XCTAssertEqual(model.takeNotices().count, 1)
-        await model.remove(id: model.snapshot.rows[0].id)
+        let finished = try XCTUnwrap(model.snapshot.rows.first)
+        XCTAssertFalse(finished.showsPauseResume)
+        await model.remove(id: finished.id)
         XCTAssertTrue(client.removed.isEmpty)
         XCTAssertTrue(model.snapshot.rows.isEmpty)
     }

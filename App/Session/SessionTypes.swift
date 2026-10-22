@@ -70,6 +70,10 @@ public struct DownloadRow: Equatable, Identifiable {
     public var isActive: Bool
     public var showsInMenu: Bool
     public var bytesPerSecond: Int64
+
+    public var showsPauseResume: Bool {
+        canPause || canResume
+    }
 }
 
 public struct SessionSnapshot: Equatable {

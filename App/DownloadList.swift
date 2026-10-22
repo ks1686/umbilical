@@ -96,10 +96,12 @@ struct DownloadRowView: View {
 
     private var controls: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Button(row.canResume ? "Resume" : "Pause") {
-                Task { await toggleRun() }
+            if row.showsPauseResume {
+                Button(row.canResume ? "Resume" : "Pause") {
+                    Task { await toggleRun() }
+                }
+                .disabled(runControlDisabled)
             }
-            .disabled(runControlDisabled)
             Button(row.cancelsLiveVideo ? "Cancel" : "Remove") {
                 if row.cancelsLiveVideo {
                     Task { await model.remove(id: row.id) }

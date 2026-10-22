@@ -12,7 +12,7 @@ struct UmbilicalApp: App {
     @NSApplicationDelegateAdaptor(AppTermination.self) private var termination
 
     var body: some Scene {
-        WindowGroup(id: "main") {
+        Window("umbilical", id: "main") {
             ContentView(model: model)
                 .onOpenURL { url in
                     model.receiveExternalURL(url)
@@ -56,6 +56,12 @@ final class AppTermination: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_: Notification) {
         AppTermination.model?.stop()
+    }
+
+    // Torrent and metalink document types would otherwise make AppKit open a
+    // blank untitled window behind the main scene on launch and URL handoff.
+    func applicationShouldOpenUntitledFile(_: NSApplication) -> Bool {
+        false
     }
 
     func application(_: NSApplication, open urls: [URL]) {
