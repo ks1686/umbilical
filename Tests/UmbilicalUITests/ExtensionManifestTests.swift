@@ -15,7 +15,8 @@ final class ExtensionManifestTests: XCTestCase {
             ["activeTab", "contextMenus", "nativeMessaging", "storage"]
         )
         XCTAssertNil(json["host_permissions"])
-        XCTAssertEqual(json["optional_host_permissions"] as? [String], ["*://*/*"])
+        XCTAssertEqual(json["optional_host_permissions"] as? [String], ["<all_urls>"])
+        XCTAssertFalse((json["permissions"] as? [String] ?? []).contains("<all_urls>"))
         XCTAssertNil(json["optional_permissions"])
         let scripts = try XCTUnwrap(json["content_scripts"] as? [[String: Any]])
         XCTAssertEqual(scripts.count, 1)
@@ -35,6 +36,7 @@ final class ExtensionManifestTests: XCTestCase {
         XCTAssertTrue(source.contains("sendNativeMessage"))
         XCTAssertTrue(source.contains("onInstalled"))
         XCTAssertTrue(source.contains("onStartup"))
+        XCTAssertTrue(source.contains("onAdded"))
         XCTAssertTrue(source.contains("download-video-with-umbilical"))
         XCTAssertTrue(source.contains("umbilical-intercept"))
         XCTAssertFalse(source.contains("browser.downloads"))
@@ -48,6 +50,8 @@ final class ExtensionManifestTests: XCTestCase {
         let html = try readText("popup.html")
         XCTAssertTrue(html.contains("Right-click a link"))
         XCTAssertTrue(html.contains("does not read the page"))
+        XCTAssertTrue(html.contains("Allow website access"))
+        XCTAssertTrue(html.contains("Safari Settings"))
         XCTAssertTrue(html.contains("access to all websites"))
         XCTAssertTrue(html.contains("Option-click"))
         XCTAssertTrue(html.contains("popup.js"))
@@ -55,10 +59,19 @@ final class ExtensionManifestTests: XCTestCase {
         XCTAssertTrue(html.contains("Download this page with umbilical"))
         let popup = try readText("popup.js")
         XCTAssertTrue(popup.contains("permissions.request"))
+        XCTAssertTrue(popup.contains("<all_urls>"))
         XCTAssertTrue(popup.contains("captureDownloads"))
         XCTAssertTrue(popup.contains("activeTab") || popup.contains("tabs.query"))
         XCTAssertTrue(popup.contains("video = true") || popup.contains("video: true"))
         XCTAssertFalse(popup.contains("downloads.download"))
+    }
+
+    func testHostAppTellsUsersToAllowSafariWebsiteAccess() throws {
+        let settings = try readApp("SettingsView.swift")
+        XCTAssertTrue(settings.contains("Safari Settings > Extensions > umbilical"))
+        XCTAssertTrue(settings.contains("Allow website access"))
+        let empty = try readApp("ContentView.swift")
+        XCTAssertTrue(empty.contains("Safari Settings > Extensions > umbilical"))
     }
 
     func testContentScriptReadsOnlyTheClickedLink() throws {
@@ -136,10 +149,17 @@ final class ExtensionManifestTests: XCTestCase {
     }
 
     private func resourceURL(_ name: String) -> URL {
+        repoRoot().appendingPathComponent("Extension/Resources/\(name)")
+    }
+
+    private func readApp(_ name: String) throws -> String {
+        try String(contentsOf: repoRoot().appendingPathComponent("App/\(name)"), encoding: .utf8)
+    }
+
+    private func repoRoot() -> URL {
         URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
             .deletingLastPathComponent()
             .deletingLastPathComponent()
-            .appendingPathComponent("Extension/Resources/\(name)")
     }
 }

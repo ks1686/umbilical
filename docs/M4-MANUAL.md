@@ -47,19 +47,19 @@ can attach. A Release build must not. CI runs
 
 | Permission | Why |
 | --- | --- |
-| `activeTab` | Lets Safari show the link menu without standing website access, and lets the popup read the current tab URL after you click the toolbar button. |
+| `activeTab` | Kept so choosing the toolbar button can grant the current tab, and so the popup can read the current tab URL. WebKit still hides extension context menus until the page is already granted. |
 | `contextMenus` | Puts "Download with umbilical" on the link menu and "Download video with umbilical" on the page and link menus. |
 | `nativeMessaging` | Sends the URL and optional file name to the appex. |
 | `storage` | Remembers the capture toggle. Default is off. |
+| `optional_host_permissions` `<all_urls>` | Not granted at install. A toolbar popup click on Allow website access, or turning on intercept, calls `permissions.request`. You can also allow Website Access in Safari Settings > Extensions > umbilical. |
 
-`optional_host_permissions` is `*://*/*`. It is not granted until you turn on
-intercept in the popup. `downloads` is not requested. Safari does not
-implement `browser.downloads`. There is no required host permission and no
-`cookies`, `webRequest`, `tabs`, or `scripting` permission. The native
-message may contain `url`, `filename`, and an optional `video` flag. Safari
-Settings may still say the extension does not have permission to read,
-alter, or transmit content from any webpages while capture is off. That is
-expected. The link menu must still appear.
+`downloads` is not requested. Safari does not implement `browser.downloads`.
+There is no required `host_permissions` key and no `cookies`, `webRequest`,
+`tabs`, or `scripting` permission. The native message may contain `url`,
+`filename`, and an optional `video` flag. Until website access is allowed,
+Safari Settings may say the extension does not have permission to read,
+alter, or transmit content from any webpages, and the link menu stays
+hidden. That is expected.
 
 ## Enable the extension
 
@@ -68,8 +68,9 @@ expected. The link menu must still appear.
 3. In Safari, open Settings, then Advanced, and turn on "Show features for web developers".
 4. From the Develop menu, choose "Allow Unsigned Extensions" and confirm.
 5. Safari Settings, Extensions. Enable umbilical. If Safari asks which app it belongs to, it is this build.
-6. Click the umbilical toolbar button. The popup says to right-click a link
-   and that only the URL and an optional file name are sent. Intercept is
+6. Click the umbilical toolbar button. The popup says Safari hides the
+   link item until website access is allowed, has Allow website access,
+   and says only the URL and an optional file name are sent. Intercept is
    off. The copy explains that turning it on asks Safari for access to all
    websites.
 
@@ -77,15 +78,21 @@ expected. The link menu must still appear.
 
 This is the pass for the v1.0.0 bug: the link item never appeared, and
 Safari Settings said umbilical does not have permission to read, alter,
-or transmit content from any webpages.
+or transmit content from any webpages. `activeTab` alone is not enough
+on a notarized 1.0.1 build. Website access has to be granted.
 
 1. Install this build. Enable umbilical in Safari Settings > Extensions.
-   Do not grant website access. Leave intercept off.
-2. Quit Safari with Command-Q, then open it again.
+   Website Access should be listed. Leave intercept off.
+2. Click the umbilical toolbar button. Choose Allow website access.
+   Safari must prompt. Grant this website or all websites. You can
+   instead set Website Access in Safari Settings > Extensions >
+   umbilical.
 3. Open a real page over https, for example `https://example.com/`.
 4. Right-click a real link on that page. "Download with umbilical" must
-   appear. If it does not, this build fails.
-5. Choose that item. The confirm sheet must open with that link.
+   appear. If it does not after access is granted, this build fails.
+5. Choose that item. The confirm sheet must open with that link. The
+   popup must still say the extension sends only the URL and an optional
+   file name.
 
 Then continue with the checklist below.
 
@@ -113,9 +120,9 @@ Serve it with `python3 -m http.server 8765` and open `http://127.0.0.1:8765/`.
 1. Capture still off. Click `zip`. Safari navigates or downloads on its
    own. umbilical does not come forward. The queue is empty.
 2. Open the popup. Read the all-websites warning. Check "Intercept
-   download links in Safari". Safari must prompt for access to all
-   websites. Allow it. If you deny, the checkbox must stay off and clicks
-   must still reach Safari.
+   download links in Safari". If website access is not already granted,
+   Safari must prompt for access to all websites. Allow it. If you deny,
+   the checkbox must stay off and clicks must still reach Safari.
 3. Click `zip`. The confirm sheet opens with `example.com` and
    `file.zip`. No download row exists yet. Cancel. Safari must not also
    navigate that click.
@@ -132,8 +139,8 @@ Serve it with `python3 -m http.server 8765` and open `http://127.0.0.1:8765/`.
 8. Click `ordinary`. Safari follows the link. umbilical does not open.
 9. Option-click `zip`. Safari handles the click. umbilical does not open.
 10. Turn intercept off in the popup. Click `zip`. Safari handles it.
-    Website access should be dropped; if Safari still lists it, remove it
-    in Safari Settings > Extensions.
+    Website access stays so the link menu still works. Remove it in
+    Safari Settings > Extensions if you want it gone.
 11. If the app is quit, or native messaging fails, a captured click must
     fall through to Safari. Quit umbilical, click `zip` with capture on,
     and confirm Safari navigates or downloads.

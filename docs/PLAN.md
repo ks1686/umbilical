@@ -157,14 +157,15 @@ Permissions in `Extension/Resources/manifest.json`:
 
 | Permission | Why |
 | --- | --- |
-| `activeTab` | Safari's WebKit context-menu path (`WebExtensionContext::addItemsToContextMenu`) hides extension items unless the extension already has website access for that page, or has `activeTab` so choosing the item can grant it. The toolbar popup also uses it to read the current tab URL for "Download this page with umbilical". |
+| `activeTab` | Kept so the toolbar button can grant the current tab and so the popup can read the current tab URL for "Download this page with umbilical". WebKit's context-menu path (`WebExtensionContext::addItemsToContextMenu`) still hides extension items unless the page is already granted. |
 | `contextMenus` | Adds the link and video items. |
 | `nativeMessaging` | Delivers the URL and optional file name to the appex. |
 | `storage` | Remembers the capture toggle, default off. |
+| `optional_host_permissions` `<all_urls>` | Opt-in website access. Not granted at install. The toolbar popup's Allow website access button, or turning on intercept, calls `permissions.request`. Settings also tells users to allow it in Safari Settings > Extensions > umbilical. The background recreates the menu on `permissions.onAdded`. |
 
 `downloads` is not requested. Safari does not implement `browser.downloads` (Apple Developer Forums thread 660046, 2020, still absent from the Safari compatibility table). Click interception is the replacement.
 
-`optional_host_permissions` is `*://*/*`. It is not granted at install. Turning on "Intercept download links in Safari" explains the all-websites prompt first, then calls `permissions.request`. Safari has no `browser.downloads` API, so a content script is the only way to see a click before navigation. That script runs only after the grant, and only on `http` and `https` pages. It reads the clicked link's `href`, `download`, and `type`. It does not read page text, form fields, cookies, or headers. Option-click, Command-click, Control-click, and Shift-click skip interception. If the native handoff is not accepted, the original click proceeds.
+`optional_host_permissions` is `<all_urls>`. It is not granted at install. Allow website access, or turning on "Intercept download links in Safari", explains the all-websites prompt first, then calls `permissions.request`. Safari has no `browser.downloads` API, so a content script is the only way to see a click before navigation. That script runs only after the grant, and only on `http` and `https` pages. It reads the clicked link's `href`, `download`, and `type`. It does not read page text, form fields, cookies, or headers. Option-click, Command-click, Control-click, and Shift-click skip interception. If the native handoff is not accepted, the original click proceeds. Turning intercept off does not drop website access, so the link menu still appears.
 
 No required host permission, `webRequest`, `cookies`, `tabs`, or `scripting`. If a download needs the user's site session, it can fail in umbilical because cookies are not forwarded; Safari's own download still works, and Option-click bypasses capture.
 

@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Popup controls. Uses activeTab for the current page URL after this click.
+// Requests optional website access from a toolbar popup click, a user gesture.
+// Safari hides the link menu until that access is granted.
 
 const api = globalThis.browser ?? globalThis.chrome;
 const appID = "me.peapod.umbilical";
 const captureKey = "captureDownloads";
-const allWebsites = { origins: ["*://*/*"] };
+const allWebsites = { origins: ["<all_urls>"] };
 
 function $(id) {
   return document.getElementById(id);
@@ -20,6 +22,10 @@ function setStatus(id, text) {
   }
   node.hidden = false;
   node.textContent = text;
+}
+
+function settingsHint() {
+  return "Allow it in Safari Settings > Extensions > umbilical.";
 }
 
 function isPlainFilename(name) {
@@ -108,7 +114,9 @@ async function captureIsOn() {
 }
 
 async function hasWebsiteAccess() {
-  if (!api || !api.permissions || typeof api.permissions.contains !== "function") return false;
+  if (!api || !api.permissions || typeof api.permissions.contains !== "function") {
+    return false;
+  }
   try {
     return await api.permissions.contains(allWebsites);
   } catch {
@@ -124,6 +132,36 @@ async function setCapture(enabled) {
   }
 }
 
+function onGrantResult(granted) {
+  const button = $("allow-access");
+  if (granted === true) {
+    if (button) button.disabled = true;
+    setStatus("access-status", "Website access is on. Right-click a link and choose Download with umbilical.");
+    return;
+  }
+  if (button) button.disabled = false;
+  setStatus("access-status", "Safari did not grant website access. " + settingsHint());
+}
+
+async function requestAccess() {
+  const button = $("allow-access");
+  if (button) button.disabled = true;
+  setStatus("access-status", "");
+  if (!api || !api.permissions || typeof api.permissions.request !== "function") {
+    if (button) button.disabled = false;
+    setStatus("access-status", "Website access could not be requested. " + settingsHint());
+    return;
+  }
+  try {
+    const granted = await api.permissions.request(allWebsites);
+    onGrantResult(granted === true);
+    await syncCheckbox();
+  } catch {
+    if (button) button.disabled = false;
+    setStatus("access-status", "Website access could not be requested. " + settingsHint());
+  }
+}
+
 async function turnCaptureOn() {
   if (!api || !api.permissions || typeof api.permissions.request !== "function") {
     throw new Error("permissions");
@@ -133,18 +171,13 @@ async function turnCaptureOn() {
     return false;
   }
   await setCapture(true);
+  onGrantResult(true);
   return true;
 }
 
 async function turnCaptureOff() {
   await setCapture(false);
-  if (api && api.permissions && typeof api.permissions.remove === "function") {
-    try {
-      await api.permissions.remove(allWebsites);
-    } catch {
-      // Safari may keep the grant until the user changes it in Settings.
-    }
-  }
+  // Keep website access so the link menu still appears. Remove it in Safari Settings.
 }
 
 async function syncCheckbox() {
@@ -156,6 +189,13 @@ async function syncCheckbox() {
   if (enabled && !granted) {
     await setCapture(false);
     box.checked = false;
+  }
+}
+
+async function syncAccessButton() {
+  const granted = await hasWebsiteAccess();
+  if (granted === true) {
+    onGrantResult(true);
   }
 }
 
@@ -178,14 +218,20 @@ async function onCaptureChange(event) {
   try {
     await turnCaptureOff();
   } catch {
-    setStatus("capture-status", "Interception is off. Remove website access in Safari Settings if it is still listed.");
+    setStatus(
+      "capture-status",
+      "Interception is off. Remove website access in Safari Settings if you no longer want the link menu."
+    );
   }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  const access = $("allow-access");
+  if (access) access.addEventListener("click", requestAccess);
   const page = $("download-page");
   if (page) page.addEventListener("click", downloadPage);
   const box = $("capture");
   if (box) box.addEventListener("change", onCaptureChange);
+  syncAccessButton();
   syncCheckbox();
 });

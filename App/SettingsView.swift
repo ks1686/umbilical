@@ -49,18 +49,20 @@ struct SettingsView: View {
     private var safariSection: some View {
         Section("Safari") {
             Text(
-                "Right-click a link for Download with umbilical. That menu needs the activeTab "
-                    + "permission so it can appear without standing website access."
+                "Right-click a link for Download with umbilical. Safari hides that item "
+                    + "until website access is allowed. Click the umbilical toolbar button "
+                    + "and choose Allow website access, or turn it on in Safari Settings > "
+                    + "Extensions > umbilical."
             )
             .font(.callout)
             .foregroundStyle(.secondary)
             Text(
                 "Intercepting clicks is off until you turn it on in the extension popup. "
-                    + "Safari will then ask for access to all websites. The extension still "
-                    + "sends only the clicked link's URL and file name. It does not read the "
-                    + "page, forms, or cookies, and it does not send your login session. "
-                    + "Option-click a link to skip interception. Session-bound downloads can fail; "
-                    + "use Safari's own download in that case."
+                    + "That uses the same website access. The extension still sends only "
+                    + "the clicked link's URL and file name. It does not read the page, "
+                    + "forms, or cookies, and it does not send your login session. "
+                    + "Option-click a link to skip interception. Session-bound downloads "
+                    + "can fail; use Safari's own download in that case."
             )
             .font(.callout)
             .foregroundStyle(.secondary)

@@ -196,3 +196,7 @@ if (api && api.runtime) {
     api.runtime.onMessage.addListener(onMessage);
   }
 }
+if (api && api.permissions && api.permissions.onAdded
+    && typeof api.permissions.onAdded.addListener === "function") {
+  api.permissions.onAdded.addListener(replaceMenus);
+}

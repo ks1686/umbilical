@@ -66,11 +66,13 @@ starting the download. The sheet shows the host and does not name the
 program that opened the link. The extension sends the URL and an optional file name.
 It does not send cookies, headers, or aria2 options, and it does not
 read page content beyond the clicked link's address, download name, and type.
-Safari needs the `activeTab` permission so the link menu
-can appear without standing website access. Click interception is off by
-default. Turning it on asks Safari for access to all websites because Safari
-has no downloads API; Option-click skips it. Finder can open `.torrent`,
-`.metalink`, `.meta4`, and `magnet:` through the same confirm sheet. Video uses the bundled
+Safari hides the link menu until website access is allowed. Click the
+toolbar button and choose Allow website access, or turn it on in Safari
+Settings > Extensions > umbilical. `activeTab` stays declared. Click
+interception is off by default. Turning it on uses that same website
+access because Safari has no downloads API; Option-click skips it.
+Finder can open `.torrent`, `.metalink`, `.meta4`, and `magnet:` through
+the same confirm sheet. Video uses the bundled
 yt-dlp for one combined file. It does not merge separate streams, and it
 does not ship ffmpeg or a JavaScript runtime. License checks are described
 in `docs/LICENSING.md`. Sparkle checks the GitHub Releases appcast. See

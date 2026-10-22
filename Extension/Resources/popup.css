@@ -44,6 +44,7 @@ button {
 
 p:last-child,
 .status:last-child,
-label:last-child {
+label:last-child,
+button:last-child {
   margin-bottom: 0;
 }
