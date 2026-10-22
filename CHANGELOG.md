@@ -8,7 +8,7 @@ Safari turned off the umbilical extension after this update. To turn it back on,
 - Hide pause and resume on completed, failed, and cancelled download rows.
 - Confirmed metalink files start the files they name after every mirror URL and output name is checked.
 - Torrents no longer save extra torrent copies in the download folder.
-- Removing an unfinished download deletes that download's partial file and matching .aria2 control file after aria2 has finished the remove.
+- Removing an unfinished download deletes that download's partial file and matching .aria2 control file after aria2 has finished the remove. A finished file that already used the requested name is left in place.
 - Video sites work when they offer a single file with sound. Some sites, including YouTube, may show a clear error instead.
 - Video files are named after the title and stay inside the download folder.
 - A video-site handoff uses the video download path.

@@ -58,9 +58,6 @@ extension DownloadSessionModel {
         if let path = item.filePath, !path.isEmpty {
             files.append(URL(fileURLWithPath: path))
         }
-        if let directory, !item.outputName.isEmpty {
-            files.append(directory.appendingPathComponent(item.outputName))
-        }
         return files
     }
 

@@ -152,6 +152,43 @@ final class DownloadSessionRemoveTests: XCTestCase {
         XCTAssertTrue(model.snapshot.rows.isEmpty)
     }
 
+    func testRemoveOfARenamedDownloadLeavesAPreexistingFile() async throws {
+        let session = try await running()
+        let model = session.model
+        let client = session.client
+        let root = session.root
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await model.add(
+            urlText: "https://example.com/10Gb.dat",
+            outputName: "10Gb.dat",
+            folder: nil
+        )
+        let finished = root.appendingPathComponent("10Gb.dat")
+        try Data("done".utf8).write(to: finished)
+        let renamed = root.appendingPathComponent("10Gb.1.dat")
+        try Data("partial".utf8).write(to: renamed)
+        let control = URL(fileURLWithPath: renamed.path + ".aria2")
+        try Data("ctrl".utf8).write(to: control)
+        client.filesByGID["g1"] = [renamed]
+        client.statuses["g1"] = DownloadStatus(
+            gid: "g1",
+            state: .active,
+            totalLength: 7,
+            completedLength: 3,
+            downloadSpeed: 1,
+            files: [renamed],
+            errorMessage: nil
+        )
+        await model.refresh()
+        await model.remove(id: "g1")
+        XCTAssertEqual(client.removed, ["g1"])
+        XCTAssertTrue(FileManager.default.fileExists(atPath: finished.path))
+        XCTAssertEqual(try String(contentsOf: finished, encoding: .utf8), "done")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: renamed.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: control.path))
+        XCTAssertTrue(model.snapshot.rows.isEmpty)
+    }
+
     func testRemovingAnUnfinishedDownloadDeletesItsPartialFile() async throws {
         let session = try await running()
         let model = session.model
