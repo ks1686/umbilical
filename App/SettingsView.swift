@@ -51,8 +51,8 @@ struct SettingsView: View {
             Text(
                 "Right-click a link for Download with umbilical. Safari hides that item "
                     + "until website access is allowed. Click the umbilical toolbar button "
-                    + "and choose Allow website access, or turn it on in Safari Settings > "
-                    + "Extensions > umbilical."
+                    + "and choose Allow website access, or turn it on in "
+                    + "Safari Settings > Extensions > umbilical."
             )
             .font(.callout)
             .foregroundStyle(.secondary)
