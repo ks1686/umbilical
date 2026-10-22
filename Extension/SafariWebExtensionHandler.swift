@@ -2,37 +2,65 @@
 // Copyright (C) 2026 Karim Smires
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import AppKit
 import Foundation
 import SafariServices
 import UmbilicalEngine
 
+/// Opens only an `umbilical://` URL this process built after staging.
+private struct WorkspaceHandoffURLOpener: HandoffURLOpening {
+    func open(_ url: URL, completionHandler: @escaping (Bool, Error?) -> Void) {
+        guard url.scheme?.lowercased() == ExternalDownload.scheme else {
+            completionHandler(false, EngineError.schemeRejected(url.scheme ?? ""))
+            return
+        }
+        NSWorkspace.shared.open(
+            url,
+            configuration: NSWorkspace.OpenConfiguration()
+        ) { _, error in
+            completionHandler(error == nil, error)
+        }
+    }
+}
+
 /// Receives a native message from the extension page and opens the app.
 /// The message may contain a URL, an optional file name, and an optional video flag.
 /// The app confirms it. No cookies or page content are accepted.
+/// Never opens a URL taken from the message; only the staged `umbilical://` URL.
 public class SafariWebExtensionHandler: NSObject, NSExtensionRequestHandling {
-    public func beginRequest(with context: NSExtensionContext) {
-        guard let openURL = handoffURL(in: context) else {
-            finish(context, accepted: false)
-            return
-        }
-        context.open(openURL) { accepted in
-            self.finish(context, accepted: accepted)
-        }
+    let opener: HandoffURLOpening
+
+    public override init() {
+        opener = WorkspaceHandoffURLOpener()
+        super.init()
     }
 
-    private func handoffURL(in context: NSExtensionContext) -> URL? {
+    init(opener: HandoffURLOpening) {
+        self.opener = opener
+        super.init()
+    }
+
+    public func beginRequest(with context: NSExtensionContext) {
         guard
             let input = context.inputItems.first as? NSExtensionItem,
             let message = input.userInfo?[SFExtensionMessageKey]
         else {
-            return nil
+            finish(context, accepted: false)
+            return
         }
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        guard let handoff = try? ExternalDownload.stage(nativeMessage: message, downloadRoot: root)
-        else {
-            return nil
+        HandoffLaunch.open(
+            nativeMessage: message,
+            downloadRoot: root,
+            opener: opener
+        ) { accepted, error in
+            if let error {
+                NSLog(
+                    "umbilical native handoff open failed: \(error.localizedDescription)"
+                )
+            }
+            self.finish(context, accepted: accepted)
         }
-        return try? ExternalDownload.openURL(for: handoff, downloadRoot: root)
     }
 
     private func finish(_ context: NSExtensionContext, accepted: Bool) {
