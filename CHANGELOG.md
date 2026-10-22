@@ -14,3 +14,4 @@ Safari turned off the umbilical extension after this update. To turn it back on,
 - A YouTube or other video-site handoff uses the video download path.
 - Removing a download cannot clear a different row if the list changed while waiting.
 - An update no longer restores leftover windows from an older multi-window build.
+- Rejection alerts appear once for the app, not once in every window.

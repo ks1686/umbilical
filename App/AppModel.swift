@@ -117,7 +117,7 @@ final class AppModel: ObservableObject {
             handoffError = nil
         } catch {
             stagedHandoff = nil
-            handoffError = DownloadMessage.text(for: error)
+            reportHandoffFailure(DownloadMessage.text(for: error))
         }
         MacActions.activate()
     }
@@ -125,12 +125,12 @@ final class AppModel: ObservableObject {
     func confirmStagedHandoff() async {
         guard let staged = stagedHandoff else { return }
         guard licenseAllowsNewDownloads else {
-            handoffError = LicenseCopy.actionBlocked
+            reportHandoffFailure(LicenseCopy.actionBlocked)
             publish()
             return
         }
         guard let root = downloadDirectory else {
-            handoffError = DownloadMessage.text(for: SessionError.folderMissing)
+            reportHandoffFailure(DownloadMessage.text(for: SessionError.folderMissing))
             return
         }
         do {
@@ -139,7 +139,7 @@ final class AppModel: ObservableObject {
             stagedHandoff = nil
             handoffError = nil
         } catch {
-            handoffError = DownloadMessage.text(for: error)
+            reportHandoffFailure(DownloadMessage.text(for: error))
         }
         publish()
     }
@@ -151,6 +151,16 @@ final class AppModel: ObservableObject {
 
     func clearHandoffError() {
         handoffError = nil
+    }
+
+    private func reportHandoffFailure(_ text: String) {
+        handoffError = text
+        guard stagedHandoff == nil else {
+            return
+        }
+        MacActions.presentRejectedDownload(text) { [weak self] in
+            self?.clearHandoffError()
+        }
     }
 
     func pause(id: String) async {

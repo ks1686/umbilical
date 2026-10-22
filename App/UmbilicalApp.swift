@@ -60,6 +60,7 @@ final class AppTermination: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_: Notification) {
+        MacActions.beginTermination()
         for window in NSApp.windows {
             if let sheet = window.attachedSheet {
                 window.endSheet(sheet)

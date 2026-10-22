@@ -26,6 +26,12 @@ final class AppSceneTests: XCTestCase {
         let banner = try readAppSource("SafariExtensionNoticeBanner.swift")
         XCTAssertTrue(banner.contains("SafariExtensionNotice.message"))
         XCTAssertTrue(banner.contains("SafariExtensionBridge.showPreferences"))
+        let content = try readAppSource("ContentView.swift")
+        XCTAssertFalse(content.contains(".alert("))
+        let actions = try readAppSource("MacActions.swift")
+        XCTAssertTrue(actions.contains("presentRejectedDownload"))
+        XCTAssertTrue(actions.contains("beginTermination"))
+        XCTAssertTrue(source.contains("beginTermination"))
     }
 
     private func readAppSource(_ name: String) throws -> String {
