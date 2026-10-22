@@ -45,14 +45,20 @@ final class VideoDownloadPlanTests: XCTestCase {
         XCTAssertTrue(VideoDownloadPlan.formatSelector.contains("/"))
         XCTAssertFalse(VideoDownloadPlan.formatSelector.contains("bv*"))
         XCTAssertEqual(arguments.last, "https://example.com/watch?v=1")
+        XCTAssertEqual(arguments[arguments.count - 2], "--")
+        XCTAssertEqual(VideoDownloadPlan.outputTemplate, "%(title).150B [%(id)s].%(ext)s")
         assertRequired(arguments)
         XCTAssertEqual(pair("--downloader", in: arguments), "native")
         XCTAssertEqual(pair("--fixup", in: arguments), "never")
         XCTAssertEqual(pair("--format", in: arguments), VideoDownloadPlan.formatSelector)
         XCTAssertEqual(pair("--output", in: arguments), VideoDownloadPlan.outputTemplate)
         XCTAssertEqual(pair("--ffmpeg-location", in: arguments), staging.path)
+        XCTAssertEqual(pair("--trim-filenames", in: arguments), VideoDownloadPlan.trimFilenames)
+        XCTAssertTrue(arguments.contains("--restrict-filenames"))
+        XCTAssertTrue(arguments.contains("--windows-filenames"))
         XCTAssertTrue(arguments.contains("home:\(staging.path)"))
         XCTAssertTrue(arguments.contains("temp:\(staging.path)"))
+        XCTAssertFalse(arguments.contains { $0.hasPrefix("--cookies") })
         let resolved = try DownloadPath.resolveInside(root: root, raw: staging.path)
         XCTAssertEqual(resolved, staging.path)
     }
@@ -174,6 +180,66 @@ final class VideoDownloadPlanTests: XCTestCase {
         XCTAssertEqual(VideoDownloadPlan.failureMessage(from: []), "The video download failed.")
     }
 
+    func testURLIsPassedAfterADoubleDash() throws {
+        let root = try makeVideoRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let staging = try VideoDownloadPlan.makeStagingDirectory(in: root)
+        let target = try VideoDownloadPlan.target(
+            urlText: "https://example.com/watch?v=1",
+            outputName: "",
+            directory: nil,
+            root: root
+        )
+        let arguments = try VideoDownloadPlan.arguments(for: target, stagingDirectory: staging)
+        XCTAssertGreaterThanOrEqual(arguments.count, 2)
+        XCTAssertEqual(arguments[arguments.count - 2], "--")
+        XCTAssertEqual(arguments.last, target.url.absoluteString)
+        XCTAssertEqual(arguments.filter { $0 == target.url.absoluteString }.count, 1)
+        XCTAssertFalse(
+            arguments.dropLast().contains { $0.hasPrefix("-") && $0.contains("example") })
+    }
+
+    func testUntrustedTitlesCannotEscapeTheDownloadFolder() throws {
+        XCTAssertThrowsError(try VideoDownloadPlan.sanitizedFileName("../secret.mp4")) { error in
+            guard case EngineError.outputNameRejected = error else {
+                return XCTFail("\(error)")
+            }
+        }
+        XCTAssertThrowsError(try VideoDownloadPlan.sanitizedFileName("..\\secret.mp4")) { error in
+            guard case EngineError.outputNameRejected = error else {
+                return XCTFail("\(error)")
+            }
+        }
+        XCTAssertEqual(try VideoDownloadPlan.sanitizedFileName("-evil.mp4"), "evil.mp4")
+        XCTAssertEqual(
+            try VideoDownloadPlan.sanitizedFileName("--.Dash_Title [id].webm"),
+            "Dash_Title [id].webm")
+        let longTitle = String(repeating: "A", count: 400) + " [id].mp4"
+        let capped = try VideoDownloadPlan.sanitizedFileName(longTitle)
+        XCTAssertLessThanOrEqual(capped.count, VideoDownloadPlan.maxFileNameLength)
+        XCTAssertTrue(capped.hasSuffix(".mp4"))
+        XCTAssertFalse(capped.hasPrefix("."))
+        XCTAssertFalse(capped.hasPrefix("-"))
+        let token = String(repeating: "ab", count: 16)
+        XCTAssertNil(
+            VideoDownloadPlan.finalFileName(
+                outputName: nil,
+                downloadedName: "../secret.mp4",
+                ext: "mp4",
+                token: token
+            )
+        )
+        XCTAssertEqual(
+            VideoDownloadPlan.finalFileName(
+                outputName: nil,
+                downloadedName: "-Cute_Cat [abc].mp4",
+                ext: "mp4",
+                token: token
+            ),
+            "Cute_Cat [abc].mp4"
+        )
+    }
+
     func testProgressParserReadsTheFixedTemplate() {
         let parsed = VideoProgressParser.parse("UMBPROGRESS 50 100 NA 10.5 5")
         XCTAssertEqual(parsed?.completed, 50)
@@ -198,6 +264,10 @@ final class VideoDownloadPlanTests: XCTestCase {
             "--no-playlist",
             "--no-cache-dir",
             "--no-exec",
+            "--restrict-filenames",
+            "--windows-filenames",
+            "--trim-filenames",
+            "--paths",
             "--"
         ]
         for flag in required {
@@ -261,7 +331,9 @@ final class VideoDownloadFinisherTests: XCTestCase {
         let nested = root.appendingPathComponent("nested", isDirectory: true)
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
         let staging = try VideoDownloadPlan.makeStagingDirectory(in: nested)
-        try Data("payload".utf8).write(to: staging.appendingPathComponent("umb-video.webm"))
+        try Data("payload".utf8).write(
+            to: staging.appendingPathComponent("Cute_Cat_Video [abc123].webm")
+        )
         let file = try VideoDownloadFinisher.adopt(
             staging: staging,
             folder: nested,
@@ -269,10 +341,43 @@ final class VideoDownloadFinisherTests: XCTestCase {
             outputName: nil,
             quarantine: RecordingQuarantine()
         )
-        let pattern = "^umb-video-[0-9a-f]{32}\\.webm$"
-        XCTAssertNotNil(file.lastPathComponent.range(of: pattern, options: .regularExpression))
+        XCTAssertEqual(file.lastPathComponent, "Cute_Cat_Video [abc123].webm")
         XCTAssertEqual(file.deletingLastPathComponent().path, nested.path)
+        let resolved = try DownloadPath.resolveInside(root: root, raw: file.path)
+        XCTAssertEqual(resolved, file.path)
         XCTAssertFalse(FileManager.default.fileExists(atPath: staging.path))
+    }
+
+    func testAdoptedTitleStripsALeadingDashAndCapsLength() throws {
+        let root = try makeVideoRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let dashStaging = try VideoDownloadPlan.makeStagingDirectory(in: root)
+        try Data("dash".utf8).write(to: dashStaging.appendingPathComponent("-evil.mp4"))
+        let dashed = try VideoDownloadFinisher.adopt(
+            staging: dashStaging,
+            folder: root,
+            root: root,
+            outputName: nil,
+            quarantine: RecordingQuarantine()
+        )
+        XCTAssertEqual(dashed.lastPathComponent, "evil.mp4")
+        XCTAssertEqual(try DownloadPath.resolveInside(root: root, raw: dashed.path), dashed.path)
+
+        let longStaging = try VideoDownloadPlan.makeStagingDirectory(in: root)
+        let longName = String(repeating: "A", count: 200) + " [id].mp4"
+        try Data("long".utf8).write(to: longStaging.appendingPathComponent(longName))
+        let capped = try VideoDownloadFinisher.adopt(
+            staging: longStaging,
+            folder: root,
+            root: root,
+            outputName: nil,
+            quarantine: RecordingQuarantine()
+        )
+        XCTAssertLessThanOrEqual(
+            capped.lastPathComponent.count, VideoDownloadPlan.maxFileNameLength)
+        XCTAssertTrue(capped.lastPathComponent.hasSuffix(".mp4"))
+        XCTAssertEqual(capped.deletingLastPathComponent().path, root.path)
+        XCTAssertEqual(try DownloadPath.resolveInside(root: root, raw: capped.path), capped.path)
     }
 
     func testSymlinkAndExistingNamesAreRejected() throws {

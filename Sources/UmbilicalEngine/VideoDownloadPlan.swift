@@ -60,7 +60,9 @@ struct VideoDownloadTarget: Equatable {
 }
 
 enum VideoDownloadPlan {
-    static let outputTemplate = "umb-video.%(ext)s"
+    static let outputTemplate = "%(title).150B [%(id)s].%(ext)s"
+    static let trimFilenames = "180"
+    static let maxFileNameLength = 180
     /// Combined formats only. `/` is fallback. `+` would ask ffmpeg to merge.
     static let formatSelector =
         "b[acodec!=none][vcodec!=none]/best[acodec!=none][vcodec!=none]"
@@ -131,6 +133,9 @@ enum VideoDownloadPlan {
             "--no-exec",
             "--no-colors",
             "--restrict-filenames",
+            "--windows-filenames",
+            "--trim-filenames",
+            trimFilenames,
             "--no-overwrites",
             "--downloader",
             "native",
@@ -199,7 +204,12 @@ enum VideoDownloadPlan {
         return environment
     }
 
-    static func finalFileName(outputName: String?, ext: String, token: String) -> String? {
+    static func finalFileName(
+        outputName: String?,
+        downloadedName: String,
+        ext: String,
+        token: String
+    ) -> String? {
         guard ext.range(of: "^[A-Za-z0-9]{1,8}$", options: .regularExpression) != nil else {
             return nil
         }
@@ -216,7 +226,45 @@ enum VideoDownloadPlan {
             }
             return combined
         }
-        return "\(stagingPrefix)\(token).\(ext)"
+        return try? sanitizedFileName(downloadedName)
+    }
+
+    static func sanitizedFileName(_ raw: String) throws -> String {
+        if raw.contains("/") || raw.contains("\\") || raw.contains("\0") || raw.contains("\n")
+            || raw.contains("\r")
+        {
+            throw EngineError.outputNameRejected(raw)
+        }
+        var name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while name.hasPrefix(".") || name.hasPrefix("-") {
+            name.removeFirst()
+        }
+        if name.isEmpty {
+            throw EngineError.outputNameRejected(raw)
+        }
+        name = cappedFileName(name, maxLength: maxFileNameLength)
+        try DownloadPath.validateOutputName(name)
+        if name.hasPrefix(".") || name.hasPrefix("-") {
+            throw EngineError.outputNameRejected(name)
+        }
+        return name
+    }
+
+    static func cappedFileName(_ name: String, maxLength: Int) -> String {
+        if name.count <= maxLength {
+            return name
+        }
+        let ext: String
+        let stem: String
+        if let dot = name.lastIndex(of: "."), dot > name.startIndex {
+            ext = String(name[dot...])
+            stem = String(name[..<dot])
+        } else {
+            ext = ""
+            stem = name
+        }
+        let budget = max(1, maxLength - ext.count)
+        return String(stem.prefix(budget)) + ext
     }
 
     private static func videoURL(_ urlText: String) throws -> URL {
@@ -302,11 +350,14 @@ enum VideoDownloadPlan {
             "--no-playlist",
             "--no-cache-dir",
             "--no-exec",
+            "--restrict-filenames",
+            "--windows-filenames",
             "--downloader",
             "--fixup",
             "--format",
             "--output",
-            "--paths"
+            "--paths",
+            "--trim-filenames"
         ]
         for flag in required where !arguments.contains(flag) {
             throw EngineError.videoRejected("The video download was rejected.")
@@ -317,6 +368,7 @@ enum VideoDownloadPlan {
         try expectPair("--format", formatSelector, in: arguments)
         try expectPair("--ffmpeg-location", stagingPath, in: arguments)
         try expectPair("--output", outputTemplate, in: arguments)
+        try expectPair("--trim-filenames", trimFilenames, in: arguments)
         if !arguments.contains("home:\(stagingPath)") || !arguments.contains("temp:\(stagingPath)")
         {
             throw EngineError.videoRejected("The video download was rejected.")
@@ -496,6 +548,7 @@ enum VideoDownloadFinisher {
         try unlinkPartials(entries, media: media.name, staging: resolvedStaging)
         let finalName = VideoDownloadPlan.finalFileName(
             outputName: outputName,
+            downloadedName: media.name,
             ext: media.ext,
             token: token
         )
@@ -571,11 +624,16 @@ enum VideoDownloadFinisher {
     }
 
     private static func mediaExtension(_ name: String) -> String? {
-        let pattern = "^umb-video\\.[A-Za-z0-9]{1,8}$"
-        guard name.range(of: pattern, options: .regularExpression) != nil else {
+        if name.contains("/") || name.contains("\\") || name.contains("\0") {
             return nil
         }
-        let ext = String(name.dropFirst("umb-video.".count))
+        if isPartial(name) {
+            return nil
+        }
+        guard let dot = name.lastIndex(of: "."), dot > name.startIndex else {
+            return nil
+        }
+        let ext = String(name[name.index(after: dot)...])
         if ext.range(of: "^[A-Za-z0-9]{1,8}$", options: .regularExpression) == nil {
             return nil
         }
@@ -604,9 +662,6 @@ enum VideoDownloadFinisher {
     }
 
     private static func isPartial(_ name: String) -> Bool {
-        if !name.hasPrefix("umb-video.") {
-            return false
-        }
         if name.hasSuffix(".ytdl") || name.hasSuffix(".temp") {
             return true
         }
