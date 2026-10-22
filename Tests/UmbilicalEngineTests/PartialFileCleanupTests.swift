@@ -6,7 +6,7 @@ import XCTest
 
 final class PartialFileCleanupTests: XCTestCase {
     func testContainedFileAndControlFileAreListed() throws {
-        let root = try makeTemporaryDirectory()
+        let root = try canonicalDirectory(try makeTemporaryDirectory())
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("partial.bin")
         try Data("data".utf8).write(to: file)
