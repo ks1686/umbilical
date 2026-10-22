@@ -20,7 +20,7 @@ final class ExtensionManifestTests: XCTestCase {
         XCTAssertNil(json["content_scripts"])
         let background = try XCTUnwrap(json["background"] as? [String: Any])
         XCTAssertEqual(background["scripts"] as? [String], ["background.js"])
-        XCTAssertEqual(background["persistent"] as? Bool, false)
+        XCTAssertEqual(background["persistent"] as? Bool, true)
         XCTAssertNil(background["service_worker"])
     }
 

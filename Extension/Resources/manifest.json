@@ -5,7 +5,7 @@
   "version": "1.0.1",
   "background": {
     "scripts": ["background.js"],
-    "persistent": false
+    "persistent": true
   },
   "action": {
     "default_title": "umbilical",
