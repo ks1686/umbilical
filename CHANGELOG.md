@@ -12,3 +12,4 @@ Safari turned off the umbilical extension after this update. To turn it back on,
 - Video downloads require a version with sound and fail plainly when none exists.
 - Video files are named after the title and stay inside the download folder.
 - A YouTube or other video-site handoff uses the video download path.
+- Removing a download cannot clear a different row if the list changed while waiting.

@@ -177,6 +177,40 @@ final class DownloadSessionControlTests: XCTestCase {
         XCTAssertTrue(model.snapshot.rows.isEmpty)
     }
 
+    func testRemoveLooksUpTheRowByIdAfterWaiting() async throws {
+        let session = try await running()
+        let model = session.model
+        let client = session.client
+        let root = session.root
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await model.add(
+            urlText: "https://example.com/keep.bin",
+            outputName: "keep.bin",
+            folder: nil
+        )
+        try await model.add(
+            urlText: "https://example.com/drop.bin",
+            outputName: "drop.bin",
+            folder: nil
+        )
+        XCTAssertEqual(model.snapshot.rows.map(\.id), ["g2", "g1"])
+        client.onFiles = {
+            do {
+                try await model.add(
+                    urlText: "https://example.com/new.bin",
+                    outputName: "new.bin",
+                    folder: nil
+                )
+            } catch {
+                XCTFail("insert during files failed: \(error)")
+            }
+        }
+        await model.remove(id: "g2")
+        XCTAssertEqual(client.removed, ["g2"])
+        XCTAssertEqual(model.snapshot.rows.map(\.id), ["g3", "g1"])
+        XCTAssertEqual(model.snapshot.rows.map(\.title), ["new.bin", "keep.bin"])
+    }
+
     func testTwoActiveDownloadsShareTheMenuTitle() async throws {
         let session = try await running()
         let model = session.model

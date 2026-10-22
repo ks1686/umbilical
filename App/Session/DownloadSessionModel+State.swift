@@ -191,6 +191,11 @@ extension DownloadSessionModel {
         tracked.firstIndex { $0.id == id }
     }
 
+    func trackedItem(id: String) -> TrackedDownload? {
+        guard let index = index(of: id) else { return nil }
+        return tracked[index]
+    }
+
     func indexOfLive(_ gid: String) -> Int? {
         tracked.firstIndex { $0.track && $0.engineGID == gid }
     }

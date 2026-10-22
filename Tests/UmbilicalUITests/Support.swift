@@ -36,6 +36,7 @@ final class FakeDownloads: DownloadControlling {
     var statusCalls: [String] = []
     var failRemove = false
     var statusError: Error?
+    var onFiles: (() async -> Void)?
 
     func add(url: URL, options: [String: String]) async throws -> String {
         added.append(RecordedAdd(url: url, options: options))
@@ -53,6 +54,9 @@ final class FakeDownloads: DownloadControlling {
     }
 
     func files(gid: String) async throws -> [URL] {
+        if let onFiles {
+            await onFiles()
+        }
         if let listed = filesByGID[gid] {
             return listed
         }
