@@ -128,6 +128,30 @@ final class DownloadSessionControlTests: XCTestCase {
 
 @MainActor
 final class DownloadSessionRemoveTests: XCTestCase {
+    func testRemoveDeletesAControlFileRewrittenWhenTheGIDIsReleased() async throws {
+        let session = try await running()
+        let model = session.model
+        let client = session.client
+        let root = session.root
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await model.add(
+            urlText: "https://example.com/10Gb.dat",
+            outputName: "10Gb.dat",
+            folder: nil
+        )
+        let partial = root.appendingPathComponent("10Gb.dat")
+        try Data("partial".utf8).write(to: partial)
+        let control = URL(fileURLWithPath: partial.path + ".aria2")
+        client.filesByGID["g1"] = [partial]
+        client.controlPathOnRemovedStatus["g1"] = control
+        await model.remove(id: "g1")
+        XCTAssertEqual(client.removed, ["g1"])
+        XCTAssertNil(client.controlPathOnRemovedStatus["g1"])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: partial.path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: control.path))
+        XCTAssertTrue(model.snapshot.rows.isEmpty)
+    }
+
     func testRemovingAnUnfinishedDownloadDeletesItsPartialFile() async throws {
         let session = try await running()
         let model = session.model

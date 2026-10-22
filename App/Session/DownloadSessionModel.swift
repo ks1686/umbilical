@@ -145,9 +145,13 @@ public final class DownloadSessionModel {
                     rebuild()
                     return
                 }
+                await waitUntilEngineReleased(gid: gid, client: client)
             }
             if let directory, let item = trackedItem(id: id), item.state != .complete {
-                PartialFileCleanup.delete(files: files, downloadDirectory: directory)
+                PartialFileCleanup.delete(
+                    files: cleanupFiles(for: item, listed: files),
+                    downloadDirectory: directory
+                )
             }
         }
         guard let index = index(of: id) else { return }

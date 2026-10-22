@@ -37,6 +37,33 @@ extension DownloadSessionModel {
         }
     }
 
+    /// aria2.remove only requests a halt. The daemon may rewrite the .aria2
+    /// control file after that RPC returns.
+    func waitUntilEngineReleased(gid: String, client: any DownloadControlling) async {
+        for _ in 0..<50 {
+            do {
+                let status = try await client.status(gid: gid)
+                if status.state == .removed {
+                    return
+                }
+            } catch {
+                return
+            }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+        }
+    }
+
+    func cleanupFiles(for item: TrackedDownload, listed: [URL]) -> [URL] {
+        var files = listed
+        if let path = item.filePath, !path.isEmpty {
+            files.append(URL(fileURLWithPath: path))
+        }
+        if let directory, !item.outputName.isEmpty {
+            files.append(directory.appendingPathComponent(item.outputName))
+        }
+        return files
+    }
+
     func change(
         id: String,
         allow: KeyPath<TrackedDownload, Bool>,

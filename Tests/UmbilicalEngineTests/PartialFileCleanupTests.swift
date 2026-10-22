@@ -18,6 +18,19 @@ final class PartialFileCleanupTests: XCTestCase {
         XCTAssertEqual(Set(listed), [file.path, file.path + ".aria2"])
     }
 
+    func testControlFileIsListedAfterThePayloadIsGone() throws {
+        let root = try canonicalDirectory(try makeTemporaryDirectory())
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("10Gb.dat")
+        let control = URL(fileURLWithPath: file.path + ".aria2")
+        try Data("ctrl".utf8).write(to: control)
+        let listed = PartialFileCleanup.deletablePaths(
+            files: [file],
+            downloadDirectory: root
+        )
+        XCTAssertEqual(listed, [control.path])
+    }
+
     func testOutsideSymlinkIsRefused() throws {
         let parent = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: parent) }

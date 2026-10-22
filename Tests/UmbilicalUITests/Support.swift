@@ -37,6 +37,7 @@ final class FakeDownloads: DownloadControlling {
     var failRemove = false
     var statusError: Error?
     var onFiles: (() async -> Void)?
+    var controlPathOnRemovedStatus: [String: URL] = [:]
 
     func add(url: URL, options: [String: String]) async throws -> String {
         added.append(RecordedAdd(url: url, options: options))
@@ -98,8 +99,23 @@ final class FakeDownloads: DownloadControlling {
         if let statusError {
             throw statusError
         }
+        if removed.contains(gid), let control = controlPathOnRemovedStatus.removeValue(forKey: gid)
+        {
+            try? Data("ctrl".utf8).write(to: control)
+        }
         guard let status = statuses[gid] else {
             throw EngineError.transport("missing")
+        }
+        if removed.contains(gid) {
+            return DownloadStatus(
+                gid: status.gid,
+                state: .removed,
+                totalLength: status.totalLength,
+                completedLength: status.completedLength,
+                downloadSpeed: status.downloadSpeed,
+                files: status.files,
+                errorMessage: status.errorMessage
+            )
         }
         return status
     }
