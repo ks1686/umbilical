@@ -14,7 +14,7 @@ final class ExtensionManifestTests: XCTestCase {
             json["permissions"] as? [String],
             ["activeTab", "contextMenus", "nativeMessaging"]
         )
-        XCTAssertNil(json["host_permissions"])
+        XCTAssertEqual(json["host_permissions"] as? [String], ["<all_urls>"])
         XCTAssertNil(json["optional_host_permissions"])
         XCTAssertNil(json["optional_permissions"])
         XCTAssertNil(json["content_scripts"])
