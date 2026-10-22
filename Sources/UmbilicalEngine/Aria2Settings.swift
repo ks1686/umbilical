@@ -19,6 +19,7 @@ enum Aria2Settings {
             "allow-overwrite=false",
             "auto-file-renaming=true",
             "bt-max-peers=\(btMaxPeers)",
+            "bt-save-metadata=false",
             "check-certificate=true",
             "check-integrity=true",
             "console-log-level=warn",
@@ -33,6 +34,7 @@ enum Aria2Settings {
             "rpc-allow-origin-all=false",
             "rpc-listen-all=false",
             "rpc-listen-port=\(port)",
+            "rpc-save-upload-metadata=false",
             "rpc-secret=\(secret)",
             // aria2 treats seed-ratio=0.0 as "seed regardless of ratio".
             // seed-time=0 is what stops seeding when the download completes.

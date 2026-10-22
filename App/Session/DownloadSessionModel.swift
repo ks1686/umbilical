@@ -133,16 +133,28 @@ public final class DownloadSessionModel {
 
     public func remove(id: String) async {
         videoJobs.removeValue(forKey: id)?.cancel()
-        guard let index = index(of: id) else { return }
-        if stopsInEngine(tracked[index]), let gid = tracked[index].engineGID, let client {
-            do {
-                try await client.remove(gid: gid)
-            } catch {
-                setMessage(DownloadMessage.text(for: error))
-                rebuild()
-                return
+        guard let item = trackedItem(id: id) else { return }
+        if item.state != .complete, let gid = item.engineGID, let client {
+            let files = await listedFiles(gid: gid, client: client)
+            guard let item = trackedItem(id: id) else { return }
+            if item.state != .complete, stopsInEngine(item) {
+                do {
+                    try await client.remove(gid: gid)
+                } catch {
+                    setMessage(DownloadMessage.text(for: error))
+                    rebuild()
+                    return
+                }
+                await waitUntilEngineReleased(gid: gid, client: client)
+            }
+            if let directory, let item = trackedItem(id: id), item.state != .complete {
+                PartialFileCleanup.delete(
+                    files: cleanupFiles(for: item, listed: files),
+                    downloadDirectory: directory
+                )
             }
         }
+        guard let index = index(of: id) else { return }
         let historyID = tracked[index].historyID
         tracked.remove(at: index)
         if let historyID {

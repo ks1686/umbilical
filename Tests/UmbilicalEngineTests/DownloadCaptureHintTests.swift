@@ -107,8 +107,7 @@ final class HandoffImportTests: XCTestCase {
         do {
             _ = try await HandoffImport.fetchTorrent(
                 url: url,
-                filename: "from-http.torrent",
-                directory: root
+                filename: "from-http.torrent"
             )
             XCTFail("expected loopback torrent fetch to be rejected")
         } catch let error as EngineError {

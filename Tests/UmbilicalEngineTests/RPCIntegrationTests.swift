@@ -33,6 +33,8 @@ final class RPCIntegrationTests: XCTestCase {
         XCTAssertFalse(settings.contains("seed-ratio"))
         XCTAssertTrue(settings.contains("follow-torrent=false"))
         XCTAssertTrue(settings.contains("follow-metalink=false"))
+        XCTAssertTrue(settings.contains("rpc-save-upload-metadata=false"))
+        XCTAssertTrue(settings.contains("bt-save-metadata=false"))
         XCTAssertTrue(settings.contains("max-upload-limit=1K"))
         let client = try await supervisor.completeLaunch(prepared, probe: LiveRPCProbe())
         XCTAssertFalse(FileManager.default.fileExists(atPath: prepared.settingsFile.path))
@@ -353,18 +355,10 @@ private func listeningAddresses(root: Int32, port: UInt16) throws -> [String] {
     }
 
     private func decodeAddress(_ hex: String) -> String {
-        if hex == "0100007F" {
-            return "127.0.0.1"
-        }
-        if hex == "00000000000000000000000001000000" {
-            return "::1"
-        }
-        if hex == "00000000" {
-            return "0.0.0.0"
-        }
-        if hex == "00000000000000000000000000000000" {
-            return "::"
-        }
+        if hex == "0100007F" { return "127.0.0.1" }
+        if hex == "00000000000000000000000001000000" { return "::1" }
+        if hex == "00000000" { return "0.0.0.0" }
+        if hex == "00000000000000000000000000000000" { return "::" }
         return hex
     }
 #else

@@ -46,6 +46,8 @@ public enum DownloadMessage {
             return missingHelper(path)
         case .videoRejected(let detail):
             return detail
+        case .metalinkRejected:
+            return "That metalink cannot be used."
         case .temporaryDirectoryFailed,
             .settingsWriteFailed,
             .settingsPermissions,

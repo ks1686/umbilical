@@ -18,17 +18,26 @@ struct RecordedTorrent: Equatable {
     var options: [String: String]
 }
 
+struct RecordedMetalink: Equatable {
+    var file: URL
+    var options: [String: String]
+}
+
 final class FakeDownloads: DownloadControlling {
     var nextGID = 1
     var statuses: [String: DownloadStatus] = [:]
     var added: [RecordedAdd] = []
     var torrents: [RecordedTorrent] = []
+    var metalinks: [RecordedMetalink] = []
+    var filesByGID: [String: [URL]] = [:]
     var paused: [String] = []
     var resumed: [String] = []
     var removed: [String] = []
     var statusCalls: [String] = []
     var failRemove = false
     var statusError: Error?
+    var onFiles: (() async -> Void)?
+    var controlPathOnRemovedStatus: [String: URL] = [:]
 
     func add(url: URL, options: [String: String]) async throws -> String {
         added.append(RecordedAdd(url: url, options: options))
@@ -38,6 +47,21 @@ final class FakeDownloads: DownloadControlling {
     func addTorrent(file: URL, options: [String: String]) async throws -> String {
         torrents.append(RecordedTorrent(file: file, options: options))
         return register(url: file)
+    }
+
+    func addMetalink(file: URL, options: [String: String]) async throws -> [String] {
+        metalinks.append(RecordedMetalink(file: file, options: options))
+        return [register(url: file)]
+    }
+
+    func files(gid: String) async throws -> [URL] {
+        if let onFiles {
+            await onFiles()
+        }
+        if let listed = filesByGID[gid] {
+            return listed
+        }
+        return statuses[gid]?.files ?? []
     }
 
     private func register(url: URL) -> String {
@@ -75,8 +99,24 @@ final class FakeDownloads: DownloadControlling {
         if let statusError {
             throw statusError
         }
+        if removed.contains(gid) {
+            if let control = controlPathOnRemovedStatus.removeValue(forKey: gid) {
+                try? Data("ctrl".utf8).write(to: control)
+            }
+        }
         guard let status = statuses[gid] else {
             throw EngineError.transport("missing")
+        }
+        if removed.contains(gid) {
+            return DownloadStatus(
+                gid: status.gid,
+                state: .removed,
+                totalLength: status.totalLength,
+                completedLength: status.completedLength,
+                downloadSpeed: status.downloadSpeed,
+                files: status.files,
+                errorMessage: status.errorMessage
+            )
         }
         return status
     }

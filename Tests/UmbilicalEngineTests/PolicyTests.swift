@@ -19,6 +19,8 @@ final class PolicyTests: XCTestCase {
         XCTAssertFalse(text.contains("seed-ratio"))
         XCTAssertTrue(text.contains("follow-torrent=false"))
         XCTAssertTrue(text.contains("follow-metalink=false"))
+        XCTAssertTrue(text.contains("rpc-save-upload-metadata=false"))
+        XCTAssertTrue(text.contains("bt-save-metadata=false"))
         XCTAssertTrue(text.contains("max-upload-limit=1K"))
         XCTAssertTrue(text.contains("allow-overwrite=false"))
         XCTAssertTrue(text.contains("check-integrity=true"))

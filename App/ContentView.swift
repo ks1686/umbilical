@@ -13,6 +13,7 @@ struct ContentView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 unofficialCaption
+                SafariExtensionNoticeBanner(notice: model.safariNotice)
                 if showsBanner, let message = model.snapshot.message {
                     banner(message)
                 }
@@ -29,19 +30,13 @@ struct ContentView: View {
         .sheet(isPresented: $showingAdd) {
             AddDownloadSheet(model: model)
         }
-        .sheet(item: stagedHandoff) { staged in
-            HandoffConfirmSheet(model: model, staged: staged)
-        }
-        .alert(
-            "Download rejected",
-            isPresented: handoffErrorPresented,
-            actions: {
-                Button("OK", role: .cancel) {
-                    model.clearHandoffError()
-                }
+        .sheet(
+            item: stagedHandoff,
+            onDismiss: {
+                model.presentNextStagedHandoff()
             },
-            message: {
-                Text(model.handoffError ?? "")
+            content: { staged in
+                HandoffConfirmSheet(model: model, staged: staged)
             }
         )
     }
@@ -52,17 +47,6 @@ struct ContentView: View {
             set: { value in
                 if value == nil {
                     model.declineStagedHandoff()
-                }
-            }
-        )
-    }
-
-    private var handoffErrorPresented: Binding<Bool> {
-        Binding(
-            get: { model.handoffError != nil && model.stagedHandoff == nil },
-            set: { isPresented in
-                if !isPresented {
-                    model.clearHandoffError()
                 }
             }
         )

@@ -135,7 +135,6 @@ public enum ExternalDownload {
     }
 
     public static func stage(localFile: URL, downloadRoot: URL) throws -> ExtensionHandoff {
-        _ = downloadRoot
         guard localFile.isFileURL else {
             throw EngineError.schemeRejected(localFile.scheme?.lowercased() ?? "file")
         }
@@ -156,7 +155,7 @@ public enum ExternalDownload {
             )
         }
         if DownloadCaptureHint.metalinkExtensions.contains(ext) {
-            try validateMetalinkFile(localFile)
+            try validateMetalinkFile(localFile, downloadRoot: downloadRoot)
             return ExtensionHandoff(
                 uri: localFile.absoluteString,
                 outputName: name,
@@ -211,7 +210,8 @@ public enum ExternalDownload {
             throw EngineError.handoffRejected("length")
         }
         let again = try stage(openURL: url, downloadRoot: downloadRoot)
-        guard again.uri == handoff.uri, again.outputName == handoff.outputName, again.kind == handoff.kind
+        guard again.uri == handoff.uri, again.outputName == handoff.outputName,
+            again.kind == handoff.kind
         else {
             throw EngineError.handoffRejected("message")
         }
@@ -243,8 +243,17 @@ public enum ExternalDownload {
         guard let parsed = URL(string: trimmed), parsed.scheme != nil else {
             throw EngineError.schemeRejected("unparseable")
         }
-        let accepted = try acceptedURI(parsed, kind: kind)
-        let outputName = try acceptedName(filename)
+        let acceptedKind: ExtensionHandoffKind
+        let acceptedFilename: String?
+        if kind == .download && VideoPagePolicy.prefersVideo(urlText: trimmed) {
+            acceptedKind = .video
+            acceptedFilename = nil
+        } else {
+            acceptedKind = kind
+            acceptedFilename = filename
+        }
+        let accepted = try acceptedURI(parsed, kind: acceptedKind)
+        let outputName = try acceptedName(acceptedFilename)
         var options: [String: String] = [:]
         if let outputName {
             options["out"] = outputName
@@ -257,7 +266,7 @@ public enum ExternalDownload {
             uri: accepted.uri,
             outputName: outputName,
             url: accepted.url,
-            kind: kind
+            kind: acceptedKind
         )
     }
 
@@ -331,20 +340,14 @@ public enum ExternalDownload {
         return name
     }
 
-    private static func validateMetalinkFile(_ url: URL) throws {
-        var info = stat()
-        if stat(url.path, &info) != 0 {
-            throw EngineError.handoffRejected("unreadable")
-        }
-        if (info.st_mode & S_IFMT) != S_IFREG {
-            throw EngineError.handoffRejected("type")
-        }
-        if info.st_size <= 0 || info.st_size > 1_048_576 {
-            throw EngineError.handoffRejected("size")
-        }
+    private static func validateMetalinkFile(_ url: URL, downloadRoot: URL) throws {
+        let data = try MetalinkDocument.readFile(url)
+        _ = try MetalinkDocument.parse(data, downloadRoot: downloadRoot)
     }
 
-    private static func fields(from message: Any) throws -> (url: String, filename: String?, video: Bool) {
+    private static func fields(from message: Any) throws -> (
+        url: String, filename: String?, video: Bool
+    ) {
         let object = try dictionary(message)
         for key in object.keys where !messageKeys.contains(key) {
             throw EngineError.handoffRejected(key)
@@ -408,7 +411,9 @@ public enum ExternalDownload {
         throw EngineError.handoffRejected(key)
     }
 
-    private static func fields(from openURL: URL) throws -> (url: String, filename: String?, video: Bool) {
+    private static func fields(from openURL: URL) throws -> (
+        url: String, filename: String?, video: Bool
+    ) {
         let raw = openURL.absoluteString
         if raw.count > 8192 || raw.contains("\n") || raw.contains("\r") || raw.contains("\0") {
             throw EngineError.handoffRejected("length")

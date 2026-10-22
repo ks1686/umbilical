@@ -30,10 +30,15 @@ extension DownloadSessionModel {
         case .torrentFile:
             try await addLocalTorrent(checked, directory: directory)
         case .metalinkFile:
-            try await importLocalMetalink(checked, directory: directory)
+            try await addLocalMetalink(checked, directory: directory)
         case .download:
             if DownloadCaptureHint.isTorrent(url: checked.url, filename: checked.outputName) {
                 try await addRemoteTorrent(checked, directory: directory)
+            } else if DownloadCaptureHint.isMetalink(
+                url: checked.url,
+                filename: checked.outputName
+            ) {
+                try await addRemoteMetalink(checked, directory: directory)
             } else {
                 try await addRemoteURI(checked, directory: directory)
             }
@@ -51,77 +56,66 @@ extension DownloadSessionModel {
         rebuild()
     }
 
-    func addRemoteTorrent(_ download: ConfirmedExternalDownload, directory: URL) async throws {
+    func addRemoteTorrent(_ download: ConfirmedExternalDownload, directory _: URL) async throws {
         guard let client else {
             throw SessionError.engineNotRunning
         }
-        let destination = try await HandoffImport.fetchTorrent(
+        let staged = try await HandoffImport.fetchTorrent(
             url: download.url,
-            filename: download.outputName,
-            directory: directory
+            filename: download.outputName
         )
-        let gid = try await client.addTorrent(file: destination, options: [:])
+        defer { removePrivateStaging(staged) }
+        let gid = try await client.addTorrent(file: staged, options: [:])
         let prepared = PreparedDownload(url: download.url, options: [:])
         tracked.insert(makeLiveItem(gid: gid, prepared: prepared), at: 0)
         setMessage(nil)
         rebuild()
     }
 
-    func addLocalTorrent(_ download: ConfirmedExternalDownload, directory: URL) async throws {
+    func addLocalTorrent(_ download: ConfirmedExternalDownload, directory _: URL) async throws {
         guard let client else {
             throw SessionError.engineNotRunning
         }
-        let destination = try HandoffImport.copyLocal(
-            url: download.url,
-            filename: download.outputName,
-            directory: directory,
-            torrent: true
-        )
-        let gid = try await client.addTorrent(file: destination, options: [:])
+        let gid = try await client.addTorrent(file: download.url, options: [:])
         let prepared = PreparedDownload(url: download.url, options: download.options)
         tracked.insert(makeLiveItem(gid: gid, prepared: prepared), at: 0)
         setMessage(nil)
         rebuild()
     }
 
-    func importLocalMetalink(_ download: ConfirmedExternalDownload, directory: URL) async throws {
-        let destination = try HandoffImport.copyLocal(
+    func addLocalMetalink(_ download: ConfirmedExternalDownload, directory _: URL) async throws {
+        try await startMetalink(file: download.url, source: download.url)
+    }
+
+    func addRemoteMetalink(_ download: ConfirmedExternalDownload, directory: URL) async throws {
+        let staged = try await HandoffImport.fetchMetalink(
             url: download.url,
             filename: download.outputName,
-            directory: directory,
-            torrent: false
+            downloadRoot: directory
         )
-        try quarantine.markDownloaded(file: destination)
-        let size = fileSize(destination)
-        let name = destination.lastPathComponent
-        let item = TrackedDownload(
-            id: "import-\(UUID().uuidString)",
-            engineGID: nil,
-            track: false,
-            outputName: name,
-            url: download.url,
-            detail: destination.path,
-            state: .complete,
-            totalLength: size,
-            completedLength: size,
-            downloadSpeed: 0,
-            errorMessage: nil,
-            filePath: destination.path,
-            historyID: nil,
-            fixedTitle: name,
-            pausable: false
-        )
-        tracked.insert(item, at: 0)
-        finish(0)
+        defer { removePrivateStaging(staged) }
+        try await startMetalink(file: staged, source: download.url)
+    }
+
+    private func startMetalink(file: URL, source: URL) async throws {
+        guard let client else {
+            throw SessionError.engineNotRunning
+        }
+        let options = ["follow-metalink": "true"]
+        let gids = try await client.addMetalink(file: file, options: options)
+        let name = source.lastPathComponent
+        for gid in gids.reversed() {
+            let prepared = PreparedDownload(
+                url: source,
+                options: name.isEmpty ? [:] : ["out": name]
+            )
+            tracked.insert(makeLiveItem(gid: gid, prepared: prepared), at: 0)
+        }
         setMessage(nil)
         rebuild()
     }
 
-    private func fileSize(_ url: URL) -> Int64 {
-        let values = try? url.resourceValues(forKeys: [.fileSizeKey])
-        if let size = values?.fileSize {
-            return Int64(size)
-        }
-        return 0
+    private func removePrivateStaging(_ file: URL) {
+        try? FileManager.default.removeItem(at: file.deletingLastPathComponent())
     }
 }

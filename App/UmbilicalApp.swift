@@ -4,6 +4,7 @@
 
 import SwiftUI
 import UmbilicalEngine
+import UmbilicalUI
 
 @main
 struct UmbilicalApp: App {
@@ -12,7 +13,7 @@ struct UmbilicalApp: App {
     @NSApplicationDelegateAdaptor(AppTermination.self) private var termination
 
     var body: some Scene {
-        WindowGroup(id: "main") {
+        Window("umbilical", id: "main") {
             ContentView(model: model)
                 .onOpenURL { url in
                     model.receiveExternalURL(url)
@@ -54,8 +55,49 @@ final class AppTermination: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationDidFinishLaunching(_: Notification) {
+        closeRestoredExtraWindows()
+        // Safari's state API can error before the window exists. Retry
+        // after launch without blocking startup.
+        AppTermination.model?.refreshSafariNotice()
+    }
+
     func applicationWillTerminate(_: Notification) {
+        MacActions.beginTermination()
+        for window in NSApp.windows {
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet)
+            }
+        }
         AppTermination.model?.stop()
+    }
+
+    // Torrent and metalink document types would otherwise make AppKit open a
+    // blank untitled window behind the main scene on launch and URL handoff.
+    func applicationShouldOpenUntitledFile(_: NSApplication) -> Bool {
+        false
+    }
+
+    /// Unique `Window(id: "main")` does not drop Saved Application State from
+    /// an older multi-instance window scene. `restorationBehavior` is macOS 15
+    /// or later, so extras are closed here and Resume is off in Info.plist.
+    private func closeRestoredExtraWindows() {
+        let snapshots = NSApp.windows.map { window in
+            RestoredWindowFilter.Snapshot(
+                title: window.title,
+                identifier: window.identifier?.rawValue ?? "",
+                isPanel: window is NSPanel,
+                canBecomeMain: window.canBecomeMain
+            )
+        }
+        let closing = Set(RestoredWindowFilter.indicesToClose(snapshots))
+        for (index, window) in NSApp.windows.enumerated() where closing.contains(index) {
+            window.isRestorable = false
+            if let sheet = window.attachedSheet {
+                window.endSheet(sheet)
+            }
+            window.close()
+        }
     }
 
     func application(_: NSApplication, open urls: [URL]) {

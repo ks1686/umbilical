@@ -82,9 +82,10 @@ ignores `YT_DLP`, `ARIA2C`, and `UMB_WATCH` and uses `Contents/Helpers` only.
 3. Turn Video on and add
    `https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4`
    with no save-as name. The row shows progress. Pause stays disabled. The
-   file lands in the download folder. Its name looks like
-   `umb-video-<32 hex>.mp4`. `xattr -p com.apple.quarantine <file>` contains
-   `umbilical`. No `umb-video-<32 hex>` directory remains in the folder.
+   file lands in the download folder. Its name comes from the video title,
+   not `umb-video-<32 hex>.mp4`, and stays inside that folder.
+   `xattr -p com.apple.quarantine <file>` contains `umbilical`. No
+   `umb-video-<32 hex>` directory remains in the folder.
 4. Add the same URL again with Video on and save-as `clip.mp4`. The finished
    file is `clip.mp4`. Add it once more with save-as `clip`. The finished
    file is `clip.mp4`. A save-as name of `100%` or `../x` is rejected and
@@ -99,8 +100,9 @@ ignores `YT_DLP`, `ARIA2C`, and `UMB_WATCH` and uses `Contents/Helpers` only.
    `--ignore-config`, `--no-config-locations`, `--no-plugin-dirs`,
    `--no-update`, `--no-remote-components`, `--no-js-runtimes`,
    `--no-playlist`, `--downloader`, and `native`. It does not show `--exec`,
-   `--cookies`, `--plugin-dirs`, or `-U`. The output template is
-   `umb-video.%(ext)s`. The URL is the last argument, after `--`.
+   `--cookies`, `--cookies-from-browser`, `--plugin-dirs`, or `-U`. The
+   output template is `%(title).150B [%(id)s].%(ext)s`. `--restrict-filenames`
+   and `--windows-filenames` are set. The URL is the last argument, after `--`.
 8. Quit. `pgrep -x yt-dlp` prints nothing.
 9. Remove `Contents/Helpers/yt-dlp` from the Release app and relaunch. Adding
    a URL with Video on explains that yt-dlp is missing and that Release
@@ -109,8 +111,9 @@ ignores `YT_DLP`, `ARIA2C`, and `UMB_WATCH` and uses `Contents/Helpers` only.
 10. Debug build: set `YT_DLP` to another executable yt-dlp and confirm that
     path is the one launched. Release must not do this.
 11. ffmpeg gap: a page that only offers separate video and audio streams
-    fails. The app does not download ffmpeg, and it does not search `PATH`
-    for ffmpeg. That failure is expected. Do not treat it as a pass.
+    fails with "This site didn't offer a version with sound that umbilical
+    can save without extra tools." The app does not download ffmpeg, and it
+    does not search `PATH` for ffmpeg. A silent video-only file is a fail.
 12. JavaScript gap: the helper is launched with `--no-js-runtimes` and
     `--no-remote-components`. The app does not download deno, node, or
     yt-dlp-ejs. A YouTube page may fail for that reason. The direct media

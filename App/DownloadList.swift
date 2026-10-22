@@ -41,7 +41,10 @@ struct DownloadRowView: View {
                 Button("Cancel", role: .cancel) {}
             },
             message: {
-                Text("An active download stops. A finished download leaves the list.")
+                Text(
+                    "An unfinished download is stopped and its partial file is deleted. "
+                        + "A finished download leaves the list."
+                )
             }
         )
     }
@@ -96,10 +99,12 @@ struct DownloadRowView: View {
 
     private var controls: some View {
         VStack(alignment: .trailing, spacing: 4) {
-            Button(row.canResume ? "Resume" : "Pause") {
-                Task { await toggleRun() }
+            if row.showsPauseResume {
+                Button(row.canResume ? "Resume" : "Pause") {
+                    Task { await toggleRun() }
+                }
+                .disabled(runControlDisabled)
             }
-            .disabled(runControlDisabled)
             Button(row.cancelsLiveVideo ? "Cancel" : "Remove") {
                 if row.cancelsLiveVideo {
                     Task { await model.remove(id: row.id) }

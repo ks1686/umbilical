@@ -130,29 +130,32 @@ final class ExternalDownloadSessionTests: XCTestCase {
         XCTAssertTrue(session.client.torrents.isEmpty)
     }
 
-    func testHTTPMetalinkIsAddedAsAFileDownload() async throws {
+    func testYouTubeHandoffUsesYtDlpNotAria2() async throws {
         let session = try await running()
         defer { try? FileManager.default.removeItem(at: session.root) }
-        let staged = try ExternalDownload.stage(
-            urlText: "https://example.com/pack.metalink",
-            filename: "pack.metalink",
-            downloadRoot: session.root
-        )
+        var components = URLComponents()
+        components.scheme = ExternalDownload.scheme
+        components.host = ExternalDownload.host
+        components.queryItems = [
+            URLQueryItem(name: "url", value: "https://www.youtube.com/watch?v=abcdefghijk")
+        ]
+        let open = try XCTUnwrap(components.url)
+        let staged = try ExternalDownload.stage(openURL: open, downloadRoot: session.root)
+        XCTAssertEqual(staged.kind, .video)
         let confirmed = try ExternalDownload.confirm(staged, downloadRoot: session.root)
-        try await session.model.addExternal(confirmed)
-        XCTAssertEqual(session.client.added.first?.url.scheme?.lowercased(), "https")
-        XCTAssertEqual(session.client.added.first?.options, ["out": "pack.metalink"])
+        XCTAssertEqual(confirmed.kind, .video)
+        do {
+            try await session.model.addExternal(confirmed)
+            XCTFail("expected yt-dlp to be required")
+        } catch let error as EngineError {
+            guard case .executableMissing("yt-dlp") = error else {
+                XCTFail("unexpected \(error)")
+                return
+            }
+        }
+        XCTAssertTrue(session.client.added.isEmpty)
         XCTAssertTrue(session.client.torrents.isEmpty)
-        let meta4 = try ExternalDownload.stage(
-            urlText: "http://mirror.example.com/list.meta4",
-            filename: "list.meta4",
-            downloadRoot: session.root
-        )
-        try await session.model.addExternal(
-            try ExternalDownload.confirm(meta4, downloadRoot: session.root)
-        )
-        XCTAssertEqual(session.client.added.last?.options, ["out": "list.meta4"])
-        XCTAssertTrue(session.client.torrents.isEmpty)
+        XCTAssertTrue(session.model.snapshot.rows.isEmpty)
     }
 
     func testConfirmedFTPIsAdded() async throws {
@@ -197,61 +200,6 @@ final class ExternalDownloadSessionTests: XCTestCase {
         }
         XCTAssertTrue(session.client.added.isEmpty)
         XCTAssertTrue(session.client.torrents.isEmpty)
-    }
-
-    func testLocalTorrentGoesToAddTorrent() async throws {
-        let session = try await running()
-        defer { try? FileManager.default.removeItem(at: session.root) }
-        let source = session.root.deletingLastPathComponent().appendingPathComponent(
-            "umb-src-\(UUID().uuidString).torrent"
-        )
-        try sampleTorrentBytes().write(to: source)
-        defer { try? FileManager.default.removeItem(at: source) }
-        let staged = try ExternalDownload.stage(localFile: source, downloadRoot: session.root)
-        let confirmed = try ExternalDownload.confirm(staged, downloadRoot: session.root)
-        try await session.model.addExternal(confirmed)
-        XCTAssertTrue(session.client.added.isEmpty)
-        let recorded = try XCTUnwrap(session.client.torrents.first)
-        XCTAssertTrue(recorded.file.path.hasPrefix(session.root.path))
-        XCTAssertTrue(recorded.options.isEmpty)
-    }
-
-    func testLocalMetalinkIsCopiedAndNotFollowed() async throws {
-        let session = try await running(quarantine: NoopQuarantine())
-        defer { try? FileManager.default.removeItem(at: session.root) }
-        let source = session.root.deletingLastPathComponent().appendingPathComponent(
-            "umb-src-\(UUID().uuidString).meta4"
-        )
-        try Data("<metalink></metalink>".utf8).write(to: source)
-        defer { try? FileManager.default.removeItem(at: source) }
-        let staged = try ExternalDownload.stage(localFile: source, downloadRoot: session.root)
-        let confirmed = try ExternalDownload.confirm(staged, downloadRoot: session.root)
-        try await session.model.addExternal(confirmed)
-        XCTAssertTrue(session.client.added.isEmpty)
-        XCTAssertTrue(session.client.torrents.isEmpty)
-        XCTAssertEqual(session.model.snapshot.rows.count, 1)
-        XCTAssertEqual(session.model.snapshot.rows.first?.stateText, "Complete")
-        let copied = session.root.appendingPathComponent(source.lastPathComponent)
-        XCTAssertTrue(FileManager.default.fileExists(atPath: copied.path))
-    }
-
-    private func sampleTorrentBytes() throws -> Data {
-        let header =
-            "d8:announce27:http://127.0.0.1:9/announce4:infod6:lengthi4e4:name11:payload.bin"
-            + "12:piece lengthi16e6:pieces20:"
-        var data = Data(header.utf8)
-        let hex = "12dada1fff4d4787ade3333147202c3b443e376f"
-        var hash = Data()
-        var index = hex.startIndex
-        while index < hex.endIndex {
-            let next = hex.index(index, offsetBy: 2)
-            let byte = UInt8(hex[index..<next], radix: 16)!
-            hash.append(byte)
-            index = next
-        }
-        data.append(hash)
-        data.append(Data("ee".utf8))
-        return data
     }
 
     private func running(

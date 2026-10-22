@@ -192,12 +192,57 @@ final class ExternalDownloadTests: XCTestCase {
         XCTAssertThrowsError(try ExternalDownload.openURL(for: staged, downloadRoot: root))
 
         let metalink = root.appendingPathComponent("list.meta4")
-        try Data("<metalink></metalink>".utf8).write(to: metalink)
+        try metalink4(name: "payload.bin", url: "https://example.com/payload.bin").write(
+            to: metalink)
         let meta = try ExternalDownload.stage(localFile: metalink, downloadRoot: root)
         XCTAssertEqual(meta.kind, .metalinkFile)
 
         let random = root.appendingPathComponent("notes.txt")
         try Data("hi".utf8).write(to: random)
         XCTAssertThrowsError(try ExternalDownload.stage(localFile: random, downloadRoot: root))
+    }
+
+    func testYouTubeHandoffTakesTheVideoPath() throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var components = URLComponents()
+        components.scheme = ExternalDownload.scheme
+        components.host = ExternalDownload.host
+        components.queryItems = [
+            URLQueryItem(name: "url", value: "https://www.youtube.com/watch?v=abcdefghijk"),
+            URLQueryItem(name: "filename", value: "watch")
+        ]
+        let open = try XCTUnwrap(components.url)
+        let staged = try ExternalDownload.stage(openURL: open, downloadRoot: root)
+        XCTAssertEqual(staged.kind, .video)
+        XCTAssertNil(staged.outputName)
+        XCTAssertTrue(staged.options.isEmpty)
+        let confirmed = try ExternalDownload.confirm(staged, downloadRoot: root)
+        XCTAssertEqual(confirmed.kind, .video)
+        XCTAssertNil(confirmed.outputName)
+        XCTAssertTrue(confirmed.options.isEmpty)
+        XCTAssertFalse(confirmed.options.keys.contains { $0.lowercased().contains("cookie") })
+
+        let native = try ExternalDownload.stage(
+            nativeMessage: ["url": "https://www.youtube.com/watch?v=1"],
+            downloadRoot: root
+        )
+        XCTAssertEqual(native.kind, .video)
+        XCTAssertNil(native.outputName)
+
+        let short = try XCTUnwrap(URL(string: "https://youtu.be/abcdefghijk"))
+        let direct = try ExternalDownload.stage(openURL: short, downloadRoot: root)
+        XCTAssertEqual(direct.kind, .video)
+
+        let explicit = try ExternalDownload.stage(
+            nativeMessage: [
+                "url": "https://www.youtube.com/watch?v=1",
+                "filename": "clip.mp4",
+                "video": true
+            ] as [String: Any],
+            downloadRoot: root
+        )
+        XCTAssertEqual(explicit.kind, .video)
+        XCTAssertEqual(explicit.outputName, "clip.mp4")
     }
 }

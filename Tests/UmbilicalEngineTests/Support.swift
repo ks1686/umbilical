@@ -131,6 +131,12 @@ final class RecordingTransport: JSONRPCTransport {
             recorded.append(method)
             recordedParameters.append(parameters)
         }
+        if method == "aria2.addMetalink" {
+            return ["gid"]
+        }
+        if method == "aria2.getFiles" {
+            return [] as [[String: Any]]
+        }
         return "gid"
     }
 

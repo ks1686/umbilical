@@ -67,8 +67,7 @@ struct HandoffConfirmSheet: View {
             return "A torrent file was opened. Nothing starts until you confirm. "
                 + "umbilical never seeds."
         case .metalinkFile:
-            return "A metalink file was opened. It will be saved in your download folder. "
-                + "The files it names are not started."
+            return "A metalink file was opened. Nothing starts until you confirm."
         }
     }
 

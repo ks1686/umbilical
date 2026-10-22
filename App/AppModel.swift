@@ -13,6 +13,7 @@ final class AppModel: ObservableObject {
     @Published private(set) var license: LicenseSnapshot
     @Published private(set) var stagedHandoff: StagedHandoff?
     @Published private(set) var handoffError: String?
+    let safariNotice: SafariExtensionNoticeController
 
     private let session: DownloadSessionModel
     private let licensing: LicenseService
@@ -21,6 +22,7 @@ final class AppModel: ObservableObject {
     private var licenseLaunched = false
     private var lastExternalURL = ""
     private var lastExternalAt = Date.distantPast
+    private var handoffQueue = HandoffConfirmQueue<StagedHandoff>()
 
     init() {
         let located = AppHelpers.locate()
@@ -35,7 +37,13 @@ final class AppModel: ObservableObject {
         self.licensing = licensing
         self.snapshot = session.snapshot
         self.license = licensing.snapshot
+        let version =
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? ""
+        let safariNotice = SafariExtensionNoticeController(currentVersion: version)
+        self.safariNotice = safariNotice
         AppTermination.attach(self)
+        SafariExtensionBridge.refresh(safariNotice)
         loop = Task { @MainActor [weak self] in
             await self?.run()
         }
@@ -83,69 +91,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func receiveExternalURL(_ url: URL) {
-        let scheme = url.scheme?.lowercased() ?? ""
-        let allowed =
-            scheme == ExternalDownload.scheme
-            || scheme == "magnet"
-            || scheme == "http"
-            || scheme == "https"
-            || scheme == "ftp"
-            || scheme == "sftp"
-            || url.isFileURL
-        guard allowed else { return }
-        let key = url.absoluteString
-        let now = Date()
-        if key == lastExternalURL, now.timeIntervalSince(lastExternalAt) < 2 {
-            return
-        }
-        lastExternalURL = key
-        lastExternalAt = now
-        let root =
-            downloadDirectory
-            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-        do {
-            let handoff = try ExternalDownload.stage(openURL: url, downloadRoot: root)
-            stagedHandoff = StagedHandoff(handoff: handoff)
-            handoffError = nil
-        } catch {
-            stagedHandoff = nil
-            handoffError = DownloadMessage.text(for: error)
-        }
-        MacActions.activate()
-    }
-
-    func confirmStagedHandoff() async {
-        guard let staged = stagedHandoff else { return }
-        guard licenseAllowsNewDownloads else {
-            handoffError = LicenseCopy.actionBlocked
-            publish()
-            return
-        }
-        guard let root = downloadDirectory else {
-            handoffError = DownloadMessage.text(for: SessionError.folderMissing)
-            return
-        }
-        do {
-            let confirmed = try ExternalDownload.confirm(staged.handoff, downloadRoot: root)
-            try await session.addExternal(confirmed)
-            stagedHandoff = nil
-            handoffError = nil
-        } catch {
-            handoffError = DownloadMessage.text(for: error)
-        }
-        publish()
-    }
-
-    func declineStagedHandoff() {
-        stagedHandoff = nil
-        handoffError = nil
-    }
-
-    func clearHandoffError() {
-        handoffError = nil
-    }
-
     func pause(id: String) async {
         await session.pause(id: id)
         publish()
@@ -160,6 +105,10 @@ final class AppModel: ObservableObject {
     func remove(id: String) async {
         await session.remove(id: id)
         publish()
+    }
+
+    func refreshSafariNotice() {
+        SafariExtensionBridge.refresh(safariNotice)
     }
 
     func start() async {
@@ -239,6 +188,111 @@ final class AppModel: ObservableObject {
         snapshot = session.snapshot
         for notice in session.takeNotices() {
             DownloadNotifier.post(notice)
+        }
+    }
+}
+
+extension AppModel {
+    func receiveExternalURL(_ url: URL) {
+        let scheme = url.scheme?.lowercased() ?? ""
+        let allowed =
+            scheme == ExternalDownload.scheme
+            || scheme == "magnet"
+            || scheme == "http"
+            || scheme == "https"
+            || scheme == "ftp"
+            || scheme == "sftp"
+            || url.isFileURL
+        guard allowed else { return }
+        let key = url.absoluteString
+        let now = Date()
+        if key == lastExternalURL, now.timeIntervalSince(lastExternalAt) < 2 {
+            return
+        }
+        lastExternalURL = key
+        lastExternalAt = now
+        let root =
+            downloadDirectory
+            ?? URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        do {
+            let handoff = try ExternalDownload.stage(openURL: url, downloadRoot: root)
+            let staged = StagedHandoff(handoff: handoff)
+            let showing = stagedHandoff != nil
+            switch handoffQueue.enqueue(staged) {
+            case .accepted:
+                stagedHandoff = handoffQueue.current
+                if !showing {
+                    handoffError = nil
+                }
+            case .overflow:
+                MacActions.presentRejectedDownload(
+                    HandoffConfirmQueue<StagedHandoff>.overflowMessage,
+                    onDismiss: {}
+                )
+            }
+        } catch {
+            let text = DownloadMessage.text(for: error)
+            if stagedHandoff == nil {
+                reportHandoffFailure(text)
+            } else {
+                MacActions.presentRejectedDownload(text) {}
+            }
+        }
+        MacActions.activate()
+    }
+
+    func confirmStagedHandoff() async {
+        guard let staged = stagedHandoff else { return }
+        guard licenseAllowsNewDownloads else {
+            reportHandoffFailure(LicenseCopy.actionBlocked)
+            publish()
+            return
+        }
+        guard let root = downloadDirectory else {
+            reportHandoffFailure(DownloadMessage.text(for: SessionError.folderMissing))
+            return
+        }
+        do {
+            let confirmed = try ExternalDownload.confirm(staged.handoff, downloadRoot: root)
+            try await session.addExternal(confirmed)
+            if stagedHandoff?.id == staged.id {
+                finishCurrentHandoff()
+            }
+        } catch {
+            reportHandoffFailure(DownloadMessage.text(for: error))
+        }
+        publish()
+    }
+
+    func declineStagedHandoff() {
+        finishCurrentHandoff()
+    }
+
+    func presentNextStagedHandoff() {
+        handoffQueue.presentNextIfIdle()
+        stagedHandoff = handoffQueue.current
+        if stagedHandoff != nil {
+            handoffError = nil
+        }
+    }
+
+    func clearHandoffError() {
+        handoffError = nil
+    }
+
+    private func finishCurrentHandoff() {
+        handoffError = nil
+        handoffQueue.clearCurrent()
+        stagedHandoff = nil
+    }
+
+    private func reportHandoffFailure(_ text: String) {
+        handoffError = text
+        guard stagedHandoff == nil else {
+            return
+        }
+        MacActions.presentRejectedDownload(text) { [weak self] in
+            self?.clearHandoffError()
         }
     }
 }

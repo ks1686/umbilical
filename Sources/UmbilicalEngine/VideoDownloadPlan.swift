@@ -60,9 +60,14 @@ struct VideoDownloadTarget: Equatable {
 }
 
 enum VideoDownloadPlan {
-    static let outputTemplate = "umb-video.%(ext)s"
-    /// Single-file selector. `/` is fallback. `+` would ask ffmpeg to merge.
-    static let formatSelector = "b/bv*/ba"
+    static let outputTemplate = "%(title).150B [%(id)s].%(ext)s"
+    static let trimFilenames = "180"
+    static let maxFileNameLength = 180
+    /// Combined formats only. `/` is fallback. `+` would ask ffmpeg to merge.
+    static let formatSelector =
+        "b[acodec!=none][vcodec!=none]/best[acodec!=none][vcodec!=none]"
+    static let unavailableAudioMessage =
+        "This site didn't offer a version with sound that umbilical can save without extra tools."
     static let progressPrefix = "UMBPROGRESS"
     static let progressTemplate =
         "download:\(progressPrefix) %(progress.downloaded_bytes)s "
@@ -108,8 +113,10 @@ enum VideoDownloadPlan {
         return url
     }
 
-    static func arguments(for target: VideoDownloadTarget, stagingDirectory: URL) throws -> [String] {
-        let staging = try resolvedStaging(stagingDirectory, folder: target.folder, root: target.root)
+    static func arguments(for target: VideoDownloadTarget, stagingDirectory: URL) throws -> [String]
+    {
+        let staging = try resolvedStaging(
+            stagingDirectory, folder: target.folder, root: target.root)
         if formatSelector.contains("+") || formatSelector.contains(" ") {
             throw EngineError.videoRejected("The video download was rejected.")
         }
@@ -126,6 +133,9 @@ enum VideoDownloadPlan {
             "--no-exec",
             "--no-colors",
             "--restrict-filenames",
+            "--windows-filenames",
+            "--trim-filenames",
+            trimFilenames,
             "--no-overwrites",
             "--downloader",
             "native",
@@ -152,6 +162,32 @@ enum VideoDownloadPlan {
         return arguments
     }
 
+    static func failureMessage(from lines: [String]) -> String {
+        if describesMissingAudio(lines) {
+            return unavailableAudioMessage
+        }
+        let line = lines.reversed().first { !$0.isEmpty } ?? ""
+        let redacted = line.replacingOccurrences(
+            of: "token:[0-9A-Fa-f]+",
+            with: "token:[redacted]",
+            options: .regularExpression
+        )
+        let cleaned = redacted.filter { character in
+            character == "\t" || (character >= " " && character <= "~")
+        }
+        let clipped = String(cleaned.prefix(180))
+        if clipped.isEmpty {
+            return "The video download failed."
+        }
+        return "The video download failed. \(clipped)"
+    }
+
+    static func describesMissingAudio(_ lines: [String]) -> Bool {
+        let text = lines.joined(separator: "\n").lowercased()
+        return text.contains("requested format is not available")
+            || text.contains("requested format not available")
+    }
+
     static func childEnvironment(home: String) -> [String: String] {
         var environment = [
             "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
@@ -168,7 +204,12 @@ enum VideoDownloadPlan {
         return environment
     }
 
-    static func finalFileName(outputName: String?, ext: String, token: String) -> String? {
+    static func finalFileName(
+        outputName: String?,
+        downloadedName: String,
+        ext: String,
+        token: String
+    ) -> String? {
         guard ext.range(of: "^[A-Za-z0-9]{1,8}$", options: .regularExpression) != nil else {
             return nil
         }
@@ -185,7 +226,45 @@ enum VideoDownloadPlan {
             }
             return combined
         }
-        return "\(stagingPrefix)\(token).\(ext)"
+        return try? sanitizedFileName(downloadedName)
+    }
+
+    static func sanitizedFileName(_ raw: String) throws -> String {
+        if raw.contains("/") || raw.contains("\\") || raw.contains("\0") || raw.contains("\n")
+            || raw.contains("\r")
+        {
+            throw EngineError.outputNameRejected(raw)
+        }
+        var name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while name.hasPrefix(".") || name.hasPrefix("-") {
+            name.removeFirst()
+        }
+        if name.isEmpty {
+            throw EngineError.outputNameRejected(raw)
+        }
+        name = cappedFileName(name, maxLength: maxFileNameLength)
+        try DownloadPath.validateOutputName(name)
+        if name.hasPrefix(".") || name.hasPrefix("-") {
+            throw EngineError.outputNameRejected(name)
+        }
+        return name
+    }
+
+    static func cappedFileName(_ name: String, maxLength: Int) -> String {
+        if name.count <= maxLength {
+            return name
+        }
+        let ext: String
+        let stem: String
+        if let dot = name.lastIndex(of: "."), dot > name.startIndex {
+            ext = String(name[dot...])
+            stem = String(name[..<dot])
+        } else {
+            ext = ""
+            stem = name
+        }
+        let budget = max(1, maxLength - ext.count)
+        return String(stem.prefix(budget)) + ext
     }
 
     private static func videoURL(_ urlText: String) throws -> URL {
@@ -271,11 +350,14 @@ enum VideoDownloadPlan {
             "--no-playlist",
             "--no-cache-dir",
             "--no-exec",
+            "--restrict-filenames",
+            "--windows-filenames",
             "--downloader",
             "--fixup",
             "--format",
             "--output",
-            "--paths"
+            "--paths",
+            "--trim-filenames"
         ]
         for flag in required where !arguments.contains(flag) {
             throw EngineError.videoRejected("The video download was rejected.")
@@ -286,7 +368,9 @@ enum VideoDownloadPlan {
         try expectPair("--format", formatSelector, in: arguments)
         try expectPair("--ffmpeg-location", stagingPath, in: arguments)
         try expectPair("--output", outputTemplate, in: arguments)
-        if !arguments.contains("home:\(stagingPath)") || !arguments.contains("temp:\(stagingPath)") {
+        try expectPair("--trim-filenames", trimFilenames, in: arguments)
+        if !arguments.contains("home:\(stagingPath)") || !arguments.contains("temp:\(stagingPath)")
+        {
             throw EngineError.videoRejected("The video download was rejected.")
         }
         guard arguments.count >= 2, arguments[arguments.count - 2] == "--" else {
@@ -464,6 +548,7 @@ enum VideoDownloadFinisher {
         try unlinkPartials(entries, media: media.name, staging: resolvedStaging)
         let finalName = VideoDownloadPlan.finalFileName(
             outputName: outputName,
+            downloadedName: media.name,
             ext: media.ext,
             token: token
         )
@@ -539,11 +624,16 @@ enum VideoDownloadFinisher {
     }
 
     private static func mediaExtension(_ name: String) -> String? {
-        let pattern = "^umb-video\\.[A-Za-z0-9]{1,8}$"
-        guard name.range(of: pattern, options: .regularExpression) != nil else {
+        if name.contains("/") || name.contains("\\") || name.contains("\0") {
             return nil
         }
-        let ext = String(name.dropFirst("umb-video.".count))
+        if isPartial(name) {
+            return nil
+        }
+        guard let dot = name.lastIndex(of: "."), dot > name.startIndex else {
+            return nil
+        }
+        let ext = String(name[name.index(after: dot)...])
         if ext.range(of: "^[A-Za-z0-9]{1,8}$", options: .regularExpression) == nil {
             return nil
         }
@@ -572,9 +662,6 @@ enum VideoDownloadFinisher {
     }
 
     private static func isPartial(_ name: String) -> Bool {
-        if !name.hasPrefix("umb-video.") {
-            return false
-        }
         if name.hasSuffix(".ytdl") || name.hasSuffix(".temp") {
             return true
         }

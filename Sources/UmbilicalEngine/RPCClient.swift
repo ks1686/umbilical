@@ -109,10 +109,36 @@ public final class RPCClient {
         return gid
     }
 
-    public func addMetalink(file: URL, options: [String: String] = [:]) async throws -> String {
-        _ = file
+    public func addMetalink(file: URL, options: [String: String] = [:]) async throws -> [String] {
         try RPCOptionPolicy.validate(options, downloadRoot: downloadDirectory)
-        throw EngineError.notSupported("metalink")
+        let data = try MetalinkDocument.readFile(file)
+        _ = try MetalinkDocument.parse(data, downloadRoot: downloadDirectory)
+        var merged = options
+        merged["follow-metalink"] = "true"
+        try RPCOptionPolicy.validate(merged, downloadRoot: downloadDirectory)
+        let encoded = data.base64EncodedString()
+        let result = try await transport.call(
+            method: "aria2.addMetalink",
+            parameters: ["token:\(secret)", encoded, merged]
+        )
+        return try Self.gids(from: result, method: "addMetalink")
+    }
+
+    public func files(gid: String) async throws -> [URL] {
+        let result = try await transport.call(
+            method: "aria2.getFiles",
+            parameters: ["token:\(secret)", gid]
+        )
+        guard let entries = result as? [[String: Any]] else {
+            throw EngineError.transport("getFiles")
+        }
+        var files: [URL] = []
+        for entry in entries {
+            if let path = entry["path"] as? String, !path.isEmpty {
+                files.append(URL(fileURLWithPath: path))
+            }
+        }
+        return files
     }
 
     public func status(gid: String) async throws -> DownloadStatus {
@@ -224,6 +250,20 @@ public final class RPCClient {
             errorMessage: (message?.isEmpty == false) ? message : nil
         )
         return StatusRecord(status: record, followedBy: followedGID(object["followedBy"]))
+    }
+
+    private static func gids(from result: Any, method: String) throws -> [String] {
+        if let gid = result as? String, !gid.isEmpty {
+            return [gid]
+        }
+        guard let list = result as? [Any] else {
+            throw EngineError.transport(method)
+        }
+        let found = list.compactMap { $0 as? String }.filter { !$0.isEmpty }
+        if found.isEmpty {
+            throw EngineError.transport(method)
+        }
+        return found
     }
 
     private static func followedGID(_ value: Any?) -> String? {
