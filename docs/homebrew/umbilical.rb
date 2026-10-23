@@ -11,7 +11,7 @@ cask "umbilical" do
   homepage "https://github.com/ks1686/umbilical"
 
   auto_updates true
-  depends_on macos: ">= :sonoma"
+  depends_on macos: :sonoma
 
   app "umbilical.app"
 

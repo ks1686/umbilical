@@ -144,7 +144,7 @@ The residual risk is a same-user process swapping libraries PyInstaller extracts
 
 ## Homebrew cask
 
-`docs/homebrew/umbilical.rb` is a draft for `ks1686/homebrew-tap`. It is `cask "umbilical"`, with a pinned `sha256`, `auto_updates true`, `depends_on macos: ">= :sonoma"` (the app's minimum is macOS 14.0), and a `zap` stanza. The zero sha256 in that file is a placeholder. The Mac script uploads `umbilical.rb` on the GitHub release with the real version and the dmg's SHA-256. Copy that asset into the tap by hand after `brew audit --cask` and `brew style`. Do not push the draft from this repo, and do not expect the script to push it.
+`docs/homebrew/umbilical.rb` is a draft for `ks1686/homebrew-tap`. It is `cask "umbilical"`, with a pinned `sha256`, `auto_updates true`, `depends_on macos: :sonoma` (macOS 14 or newer, the app's minimum), and a `zap` stanza. The zero sha256 in that file is a placeholder. The Mac script uploads `umbilical.rb` on the GitHub release with the real version and the dmg's SHA-256. Copy that asset into the tap by hand after `brew audit --cask` and `brew style`. Do not push the draft from this repo, and do not expect the script to push it.
 
 ## Checklist before a tag
 

@@ -216,13 +216,13 @@ class ReleaseToolsTest(unittest.TestCase):
     def test_source_manifest_matches_marketing_version(self) -> None:
         project = (ROOT / "project.yml").read_text(encoding="utf-8")
         versions = re.findall(r'MARKETING_VERSION:\s*"([^"]+)"', project)
-        self.assertEqual(versions, ["1.0.1", "1.0.1"])
+        self.assertEqual(versions, ["1.0.2", "1.0.2"])
         manifest = json.loads(
             (ROOT / "Extension" / "Resources" / "manifest.json").read_text(
                 encoding="utf-8"
             )
         )
-        self.assertEqual(manifest["version"], "1.0.1")
+        self.assertEqual(manifest["version"], "1.0.2")
         stamp = (ROOT / "scripts" / "stamp-extension-manifest.sh").read_text(
             encoding="utf-8"
         )
@@ -257,13 +257,14 @@ class ReleaseToolsTest(unittest.TestCase):
             'cask "umbilical" do',
             'sha256 "abababababababababababababababababababababababababababababababab"',
             "auto_updates true",
-            'depends_on macos: ">= :sonoma"',
+            "depends_on macos: :sonoma",
             'url "https://github.com/ks1686/umbilical/releases/download/v#{version}/umbilical-#{version}.dmg"',
             'app "umbilical.app"',
             "zap trash: [",
         ):
             self.assertIn(line, release)
         self.assertNotIn("Do not push", release)
+        self.assertNotIn('">=', release)
 
     def test_source_pins(self) -> None:
         info = release_tools.load_plist(ROOT / "App" / "Info.plist")

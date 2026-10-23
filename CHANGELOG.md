@@ -2,7 +2,11 @@
 
 ## Unreleased
 
+## 1.0.2
+
 - Finder and the Dock show the umbilical folder-and-cable app icon.
+- The Homebrew cask uses `depends_on macos: :sonoma`, so `brew install` no longer warns about a deprecated macOS requirement.
+- Bump certifi in the semgrep tooling requirements (requirements/semgrep.txt) for a Dependabot alert.
 
 ## 1.0.1
 
