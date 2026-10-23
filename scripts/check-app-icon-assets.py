@@ -230,7 +230,6 @@ def expected_icon_names() -> set[str]:
     ):
         scale_s = "" if scale == 1 else "@2x"
         names.add(f"appicon_{size_pt}x{size_pt}{scale_s}.png")
-        names.add(f"appicon_{size_pt}x{size_pt}{scale_s}_dark.png")
     return names
 
 
@@ -239,8 +238,12 @@ def check_contents_json(path: Path) -> None:
     compact = text.replace(" ", "").replace("\n", "")
     if '"idiom":"mac"' not in compact:
         fail(path, "AppIcon Contents.json does not declare mac slots")
-    if '"value":"dark"' not in compact:
-        fail(path, "AppIcon Contents.json has no dark appearance slots")
+    if '"value":"dark"' in compact:
+        fail(
+            path,
+            "AppIcon Contents.json still has dark appearance slots; "
+            "actool on macos-26 leaves those unassigned",
+        )
 
 
 def main() -> int:

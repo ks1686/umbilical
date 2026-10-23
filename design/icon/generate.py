@@ -4,9 +4,11 @@
 The source JPEGs are the full composition (folder, cable, light or dark
 fill). This script strips every metadata segment from those JPEGs, then
 draws each one onto Apple's 1024-pt macOS grid: an 824-pt squircle tile
-with a 100-pt transparent margin. Light is the default appearance. Dark
-is the luminosity=dark asset-catalog variant. Icon Composer .icon files
-are not produced; they need the Icon Composer app on a Mac.
+with a 100-pt transparent margin. The AppIcon set ships the light tile.
+Xcode 26.6 actool on macos-26 leaves luminosity=dark mac AppIcon slots
+unassigned, so those PNGs are not in the catalog. The dark source is
+kept, and the docs preview still shows that tile. Icon Composer .icon
+files are not produced; they need the Icon Composer app on a Mac.
 
 Run from the repository root:
 
@@ -153,14 +155,6 @@ def write_catalog_json() -> None:
             "size": f"{size_pt}x{size_pt}",
         }
         images.append(entry)
-        dark: dict[str, object] = {
-            "appearances": [{"appearance": "luminosity", "value": "dark"}],
-            "filename": icon_filename(size_pt, scale, dark=True),
-            "idiom": "mac",
-            "scale": f"{scale}x",
-            "size": f"{size_pt}x{size_pt}",
-        }
-        images.append(dark)
     payload = {
         "images": images,
         "info": {"author": "xcode", "version": 1},
@@ -267,7 +261,6 @@ def main() -> None:
             old.unlink()
     write_catalog_json()
     generate_slots(light_tile, dark=False)
-    generate_slots(dark_tile, dark=True)
 
     DOCS_ASSETS.mkdir(parents=True, exist_ok=True)
     save_png(resize_rgba(light_tile, 512), DOCS_ICON)
