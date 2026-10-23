@@ -110,6 +110,10 @@ def _check_app_icon(app: Path, app_plist: dict) -> None:
         fail("assetutil could not read Assets.car")
     if "AppIcon" not in info:
         fail("Assets.car does not contain AppIcon")
+    # App/AppIcon.icon has a dark specialization. actool records it as
+    # the DarkAqua appearance.
+    if "DarkAqua" not in info:
+        fail("Assets.car has no dark (DarkAqua) app icon")
 
 
 def _check_extension_matches_app(app: Path, app_plist: dict) -> None:

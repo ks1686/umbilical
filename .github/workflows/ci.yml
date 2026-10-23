@@ -28,7 +28,16 @@ jobs:
         run: scripts/ci/install-xcodegen-swiftlint.sh
 
       - name: Generate the Xcode project
-        run: xcodegen generate
+        run: |
+          set -euo pipefail
+          xcodebuild -version
+          xcodegen generate
+          # The Icon Composer bundle must be one resource, not a folder group.
+          grep -F 'AppIcon.icon in Resources' umbilical.xcodeproj/project.pbxproj
+          if grep -F 'icon.json' umbilical.xcodeproj/project.pbxproj; then
+            echo "AppIcon.icon was expanded into its files" >&2
+            exit 1
+          fi
 
       - name: Install GnuPG
         run: |
@@ -111,7 +120,7 @@ jobs:
           python3 scripts/release/release_tools.py check-built-app \
             --app "${RUNNER_TEMP}/release/Build/Products/Release/umbilical.app"
 
-      - name: Confirm Assets.car contains AppIcon
+      - name: Confirm Assets.car contains the light and dark AppIcon
         run: |
           set -euo pipefail
           app="${RUNNER_TEMP}/release/Build/Products/Release/umbilical.app"
@@ -122,6 +131,7 @@ jobs:
           /usr/bin/plutil -extract CFBundleIconName raw "${plist}" | grep -x AppIcon
           assetutil --info "${car}" | tee "${RUNNER_TEMP}/assets-car-info.txt"
           grep AppIcon "${RUNNER_TEMP}/assets-car-info.txt"
+          grep -F DarkAqua "${RUNNER_TEMP}/assets-car-info.txt"
 
       - name: SwiftLint
         run: swiftlint lint --strict --config .swiftlint.yml

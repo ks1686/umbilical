@@ -14,6 +14,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -398,6 +399,32 @@ class ReleaseToolsTest(unittest.TestCase):
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+    def test_app_icon_requires_dark_appearance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            app = Path(tmp) / "umbilical.app"
+            resources = app / "Contents" / "Resources"
+            resources.mkdir(parents=True)
+            (resources / "Assets.car").write_bytes(b"x" * 8192)
+            plist = {"CFBundleIconName": "AppIcon"}
+            light_only = '[{"Name" : "AppIcon", "Appearance" : "NSAppearanceNameSystem"}]'
+            with_dark = (
+                light_only
+                + '\n[{"Name" : "AppIcon", "Appearance" : "NSAppearanceNameDarkAqua"}]'
+            )
+            which = mock.patch.object(
+                release_tools.shutil, "which", return_value="/usr/bin/assetutil"
+            )
+            dark_car = mock.patch.object(
+                release_tools.subprocess, "check_output", return_value=with_dark
+            )
+            light_car = mock.patch.object(
+                release_tools.subprocess, "check_output", return_value=light_only
+            )
+            with which, dark_car:
+                release_tools._check_app_icon(app, plist)
+            with which, light_car, self.assertRaises(SystemExit):
+                release_tools._check_app_icon(app, plist)
 
     def test_prepare_licensing_env_overrides_file(self) -> None:
         saved = self._saved_env(("POLAR_ORGANIZATION_ID",))

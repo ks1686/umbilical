@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """Reject committed icon files that still carry metadata or a full-bleed tile.
 
-Checks the source JPEGs, every AppIcon PNG, and the docs icon. The proof
+Checks the source JPEGs, the Icon Composer App/AppIcon.icon bundle, and
+the docs icon. AppIcon.icon layers are full 1024x1024 art; Icon Composer
+and actool apply the macOS mask, so they are not checked for a margin.
+The bundle must have a light default and a dark specialization. The proof
 preview sheet is a labeled composite, so it may be opaque; it still must
 be an RGBA PNG with no text or EXIF chunks.
 """
 
 from __future__ import annotations
 
+import json
 import struct
 import sys
 import zlib
@@ -15,7 +19,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_DIR = ROOT / "design" / "icon"
-APPICON_SET = ROOT / "App" / "Assets.xcassets" / "AppIcon.appiconset"
+APP_ICON = ROOT / "App" / "AppIcon.icon"
+APP_ICON_JSON = APP_ICON / "icon.json"
+APP_ICON_ASSETS = APP_ICON / "Assets"
+APP_ICON_PIXELS = 1024
+# An appiconset next to the .icon would compete for the AppIcon name.
+LEGACY_APPICON_SET = ROOT / "App" / "Assets.xcassets" / "AppIcon.appiconset"
 DOCS_ICON = ROOT / "docs" / "assets" / "umbilical-icon.png"
 DOCS_PREVIEW = ROOT / "docs" / "assets" / "umbilical-icon-preview.png"
 
@@ -214,36 +223,117 @@ def check_tile_margin(path: Path, width: int, height: int, pixels: bytes) -> Non
         fail(path, "tile interior is transparent; icon may be full-bleed or empty")
 
 
-def expected_icon_names() -> set[str]:
-    names: set[str] = set()
-    for size_pt, scale in (
-        (16, 1),
-        (16, 2),
-        (32, 1),
-        (32, 2),
-        (128, 1),
-        (128, 2),
-        (256, 1),
-        (256, 2),
-        (512, 1),
-        (512, 2),
-    ):
-        scale_s = "" if scale == 1 else "@2x"
-        names.add(f"appicon_{size_pt}x{size_pt}{scale_s}.png")
-    return names
-
-
-def check_contents_json(path: Path) -> None:
-    text = path.read_text(encoding="utf-8")
-    compact = text.replace(" ", "").replace("\n", "")
-    if '"idiom":"mac"' not in compact:
-        fail(path, "AppIcon Contents.json does not declare mac slots")
-    if '"value":"dark"' in compact:
+def check_icon_layer_png(path: Path) -> None:
+    """Icon Composer layer: 1024x1024, 8-bit RGB or RGBA, no ancillary chunks."""
+    try:
+        chunks = iter_png_chunks(path.read_bytes())
+    except CheckError as exc:
+        fail(path, str(exc))
+    ihdr = next((payload for ctype, payload in chunks if ctype == b"IHDR"), None)
+    if ihdr is None or len(ihdr) < 13:
+        fail(path, "PNG has no IHDR")
+    width, height, bit_depth, color_type, _comp, _filt, interlace = struct.unpack(
+        ">IIBBBBB", ihdr[:13]
+    )
+    extra = sorted({ctype for ctype, _ in chunks if ctype not in PNG_ALLOWED})
+    if extra:
+        names = b", ".join(extra).decode("ascii", "replace")
+        fail(path, f"PNG still contains ancillary chunks {names}")
+    if bit_depth != 8 or color_type not in (2, 6) or interlace != 0:
         fail(
             path,
-            "AppIcon Contents.json still has dark appearance slots; "
-            "actool on macos-26 leaves those unassigned",
+            f"PNG must be 8-bit RGB or RGBA, not interlaced (got bit_depth={bit_depth} "
+            f"color_type={color_type} interlace={interlace})",
         )
+    if width != APP_ICON_PIXELS or height != APP_ICON_PIXELS:
+        fail(path, f"is {width}x{height}, expected {APP_ICON_PIXELS}x{APP_ICON_PIXELS}")
+
+
+def icon_layer_images(icon: dict) -> tuple[set[str], set[str]]:
+    """Return (default image names, dark image names) across every layer."""
+    default: set[str] = set()
+    dark: set[str] = set()
+    groups = icon.get("groups")
+    if not isinstance(groups, list) or not groups:
+        raise CheckError("icon.json has no groups")
+    for group in groups:
+        layers = group.get("layers") if isinstance(group, dict) else None
+        if not isinstance(layers, list) or not layers:
+            raise CheckError("icon.json group has no layers")
+        for layer in layers:
+            if not isinstance(layer, dict):
+                raise CheckError("icon.json layer is not an object")
+            name = layer.get("image-name")
+            if isinstance(name, str):
+                default.add(name)
+            specs = layer.get("image-name-specializations", [])
+            if not isinstance(specs, list):
+                raise CheckError("image-name-specializations is not a list")
+            for spec in specs:
+                value = spec.get("value") if isinstance(spec, dict) else None
+                if not isinstance(value, str):
+                    raise CheckError("image-name specialization has no file name")
+                appearance = spec.get("appearance")
+                if appearance is None:
+                    default.add(value)
+                elif appearance == "dark":
+                    dark.add(value)
+    return default, dark
+
+
+def check_app_icon(errors: list[str]) -> None:
+    if LEGACY_APPICON_SET.exists():
+        errors.append(
+            "App/Assets.xcassets/AppIcon.appiconset must not exist; "
+            "App/AppIcon.icon is the app icon"
+        )
+    if not APP_ICON_JSON.is_file():
+        errors.append("App/AppIcon.icon/icon.json is missing")
+        return
+    try:
+        icon = json.loads(APP_ICON_JSON.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        errors.append(f"App/AppIcon.icon/icon.json does not parse: {exc}")
+        return
+    if not isinstance(icon, dict):
+        errors.append("App/AppIcon.icon/icon.json is not an object")
+        return
+    platforms = icon.get("supported-platforms", {})
+    squares = platforms.get("squares") if isinstance(platforms, dict) else None
+    if not (squares == "shared" or (isinstance(squares, list) and "macOS" in squares)):
+        errors.append("App/AppIcon.icon/icon.json does not support macOS")
+    try:
+        default, dark = icon_layer_images(icon)
+    except CheckError as exc:
+        errors.append(f"App/AppIcon.icon/icon.json: {exc}")
+        return
+    if not default:
+        errors.append("App/AppIcon.icon has no default (light) layer image")
+    if not dark:
+        errors.append("App/AppIcon.icon has no dark appearance layer image")
+    if dark and dark <= default:
+        errors.append("App/AppIcon.icon dark layer reuses the light image")
+    referenced = default | dark
+    present = (
+        {p.name for p in APP_ICON_ASSETS.iterdir() if p.is_file()}
+        if APP_ICON_ASSETS.is_dir()
+        else set()
+    )
+    missing = sorted(referenced - present)
+    unused = sorted(present - referenced)
+    if missing:
+        errors.append("App/AppIcon.icon/Assets is missing " + ", ".join(missing))
+    if unused:
+        errors.append("App/AppIcon.icon/Assets has unreferenced files " + ", ".join(unused))
+    for name in sorted(referenced & present):
+        path = APP_ICON_ASSETS / name
+        if path.suffix.lower() != ".png":
+            errors.append(f"{path.relative_to(ROOT)}: expected a PNG layer")
+            continue
+        try:
+            check_icon_layer_png(path)
+        except CheckError as exc:
+            errors.append(str(exc))
 
 
 def main() -> int:
@@ -261,33 +351,7 @@ def main() -> int:
     for jpeg in jpegs:
         run(lambda jpeg=jpeg: check_jpeg(jpeg))
 
-    contents = APPICON_SET / "Contents.json"
-    if not contents.is_file():
-        errors.append("App/Assets.xcassets/AppIcon.appiconset/Contents.json is missing")
-    else:
-        run(lambda: check_contents_json(contents))
-
-    expected = expected_icon_names()
-    present = {p.name for p in APPICON_SET.glob("*.png")}
-    missing = sorted(expected - present)
-    extra = sorted(present - expected)
-    if missing:
-        errors.append("AppIcon is missing " + ", ".join(missing))
-    if extra:
-        errors.append("AppIcon has unexpected files " + ", ".join(extra))
-    for name in sorted(present & expected):
-        path = APPICON_SET / name
-        def _check(path: Path = path) -> None:
-            width, height, pixels = check_png_clean(path)
-            pixels_expected = int(name.split("x")[0].split("_")[1])
-            # filename is point size; @2x doubles pixels.
-            scale = 2 if "@2x" in name else 1
-            want = pixels_expected * scale
-            if width != want or height != want:
-                fail(path, f"is {width}x{height}, expected {want}x{want}")
-            check_tile_margin(path, width, height, pixels)
-
-        run(_check)
+    check_app_icon(errors)
 
     if not DOCS_ICON.is_file():
         errors.append("docs/assets/umbilical-icon.png is missing")
@@ -310,7 +374,7 @@ def main() -> int:
         for item in errors:
             print(item, file=sys.stderr)
         return 1
-    print("app icon assets are RGBA tiles with no metadata")
+    print("app icon assets have no metadata; AppIcon.icon has light and dark layers")
     return 0
 
 

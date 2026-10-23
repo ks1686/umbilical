@@ -6,6 +6,12 @@ options:
   createIntermediateGroups: true
   groupSortPosition: top
   developmentLanguage: en
+  # Xcode 26 Icon Composer bundles. XcodeGen 2.45.1+ knows this type.
+  # The explicit entry keeps App/AppIcon.icon one resource, not a group.
+  fileTypes:
+    icon:
+      file: true
+      buildPhase: resources
 configs:
   Debug: debug
   Release: release
@@ -113,7 +119,8 @@ targets:
         ENABLE_HARDENED_RUNTIME: "YES"
         CODE_SIGNING_ALLOWED: "YES"
         CODE_SIGN_ENTITLEMENTS: App/umbilical.entitlements
-        # Compiled from App/Assets.xcassets/AppIcon.appiconset.
+        # Compiled from App/AppIcon.icon (Icon Composer, Xcode 26+).
+        # actool writes the light, dark, and tinted icon into Assets.car.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_TESTABILITY: "YES"
         # Debug may omit aria2c and yt-dlp. Release fails if either is
