@@ -24,7 +24,10 @@ APP_ICON_JSON = APP_ICON / "icon.json"
 APP_ICON_ASSETS = APP_ICON / "Assets"
 APP_ICON_PIXELS = 1024
 # An appiconset next to the .icon would compete for the AppIcon name.
-LEGACY_APPICON_SET = ROOT / "App" / "Assets.xcassets" / "AppIcon.appiconset"
+ASSETS_CATALOG = ROOT / "App" / "Assets.xcassets"
+LEGACY_APPICON_SET = ASSETS_CATALOG / "AppIcon.appiconset"
+MENU_BAR_SET = ASSETS_CATALOG / "MenuBarIcon.imageset"
+MENU_BAR_JSON = MENU_BAR_SET / "Contents.json"
 DOCS_ICON = ROOT / "docs" / "assets" / "umbilical-icon.png"
 DOCS_PREVIEW = ROOT / "docs" / "assets" / "umbilical-icon-preview.png"
 
@@ -281,11 +284,57 @@ def icon_layer_images(icon: dict) -> tuple[set[str], set[str]]:
     return default, dark
 
 
+def check_menu_bar_icon(errors: list[str]) -> None:
+    catalog_json = ASSETS_CATALOG / "Contents.json"
+    if not catalog_json.is_file():
+        errors.append("App/Assets.xcassets/Contents.json is missing")
+        return
+    if not MENU_BAR_JSON.is_file():
+        errors.append("App/Assets.xcassets/MenuBarIcon.imageset/Contents.json is missing")
+        return
+    try:
+        payload = json.loads(MENU_BAR_JSON.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        errors.append(f"App/Assets.xcassets/MenuBarIcon.imageset/Contents.json does not parse: {exc}")
+        return
+    if not isinstance(payload, dict):
+        errors.append("MenuBarIcon.imageset/Contents.json is not an object")
+        return
+    properties = payload.get("properties")
+    if not isinstance(properties, dict):
+        errors.append("MenuBarIcon.imageset is missing properties")
+        return
+    if properties.get("template-rendering-intent") != "template":
+        errors.append("MenuBarIcon.imageset must set template-rendering-intent to template")
+    if properties.get("preserves-vector-representation") is not True:
+        errors.append("MenuBarIcon.imageset must preserve vector data")
+    images = payload.get("images")
+    if not isinstance(images, list) or not images:
+        errors.append("MenuBarIcon.imageset has no images")
+        return
+    filename = images[0].get("filename") if isinstance(images[0], dict) else None
+    if not isinstance(filename, str):
+        errors.append("MenuBarIcon.imageset does not name a vector file")
+        return
+    asset = MENU_BAR_SET / filename
+    if not asset.is_file():
+        errors.append(f"App/Assets.xcassets/MenuBarIcon.imageset is missing {filename}")
+        return
+    if asset.suffix.lower() not in {".svg", ".pdf"}:
+        errors.append(f"{asset.relative_to(ROOT)}: menu bar icon must be SVG or PDF")
+
+
 def check_app_icon(errors: list[str]) -> None:
-    if LEGACY_APPICON_SET.exists():
+    leftover = (
+        sorted(path.name for path in ASSETS_CATALOG.glob("*.appiconset"))
+        if ASSETS_CATALOG.is_dir()
+        else []
+    )
+    if leftover or LEGACY_APPICON_SET.exists():
+        extra = f" ({', '.join(leftover)})" if leftover else ""
         errors.append(
             "App/Assets.xcassets/AppIcon.appiconset must not exist; "
-            "App/AppIcon.icon is the app icon"
+            "App/AppIcon.icon is the app icon" + extra
         )
     if not APP_ICON_JSON.is_file():
         errors.append("App/AppIcon.icon/icon.json is missing")
@@ -352,6 +401,7 @@ def main() -> int:
         run(lambda jpeg=jpeg: check_jpeg(jpeg))
 
     check_app_icon(errors)
+    check_menu_bar_icon(errors)
 
     if not DOCS_ICON.is_file():
         errors.append("docs/assets/umbilical-icon.png is missing")
@@ -374,7 +424,10 @@ def main() -> int:
         for item in errors:
             print(item, file=sys.stderr)
         return 1
-    print("app icon assets have no metadata; AppIcon.icon has light and dark layers")
+    print(
+        "app icon assets have no metadata; AppIcon.icon has light and dark layers; "
+        "menu bar icon is a template image"
+    )
     return 0
 
 

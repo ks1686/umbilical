@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Karim Smires
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+import AppKit
 import SwiftUI
 import UmbilicalUI
 
@@ -9,8 +10,14 @@ struct MenuBarTitle: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        Text(model.snapshot.menuTitle)
-            .monospacedDigit()
+        HStack(spacing: 4) {
+            Image(nsImage: MenuBarStatusItem.templateImage())
+            if !model.snapshot.menuTitle.isEmpty {
+                Text(model.snapshot.menuTitle)
+                    .monospacedDigit()
+            }
+        }
+        .background(MenuBarStatusItemAnchor().frame(width: 0, height: 0))
     }
 }
 

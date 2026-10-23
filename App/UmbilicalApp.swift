@@ -60,6 +60,10 @@ final class AppTermination: NSObject, NSApplicationDelegate {
         // Safari's state API can error before the window exists. Retry
         // after launch without blocking startup.
         AppTermination.model?.refreshSafariNotice()
+        MenuBarStatusItem.applyToOpenStatusButtons()
+        DispatchQueue.main.async {
+            MenuBarStatusItem.applyToOpenStatusButtons()
+        }
     }
 
     func applicationWillTerminate(_: Notification) {
