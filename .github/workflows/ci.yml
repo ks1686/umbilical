@@ -111,6 +111,18 @@ jobs:
           python3 scripts/release/release_tools.py check-built-app \
             --app "${RUNNER_TEMP}/release/Build/Products/Release/umbilical.app"
 
+      - name: Confirm Assets.car contains AppIcon
+        run: |
+          set -euo pipefail
+          app="${RUNNER_TEMP}/release/Build/Products/Release/umbilical.app"
+          car="${app}/Contents/Resources/Assets.car"
+          plist="${app}/Contents/Info.plist"
+          test -f "${car}"
+          /usr/bin/plutil -p "${plist}"
+          /usr/bin/plutil -extract CFBundleIconName raw "${plist}" | grep -x AppIcon
+          assetutil --info "${car}" | tee "${RUNNER_TEMP}/assets-car-info.txt"
+          grep AppIcon "${RUNNER_TEMP}/assets-car-info.txt"
+
       - name: SwiftLint
         run: swiftlint lint --strict --config .swiftlint.yml
 
@@ -229,4 +241,7 @@ jobs:
           persist-credentials: false
 
       - name: Test release helpers
-        run: python3 scripts/release/test_release_tools.py
+        run: |
+          set -euo pipefail
+          python3 scripts/release/test_release_tools.py
+          python3 scripts/check-app-icon-assets.py

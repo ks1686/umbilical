@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Finder and the Dock show the umbilical folder-and-cable app icon.
+
 ## 1.0.1
 
 Safari turned off the umbilical extension after this update. To turn it back on, open Safari Settings, choose Extensions, and tick umbilical. The notice shows when the extension is off until it is dismissed for this version.

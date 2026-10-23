@@ -113,7 +113,8 @@ targets:
         ENABLE_HARDENED_RUNTIME: "YES"
         CODE_SIGNING_ALLOWED: "YES"
         CODE_SIGN_ENTITLEMENTS: App/umbilical.entitlements
-        ASSETCATALOG_COMPILER_APPICON_NAME: ""
+        # Compiled from App/Assets.xcassets/AppIcon.appiconset.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_TESTABILITY: "YES"
         # Debug may omit aria2c and yt-dlp. Release fails if either is
         # missing. User script sandboxing would skip these copies.
