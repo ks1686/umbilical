@@ -16,7 +16,9 @@ the app shell. Engine tests run through Swift Package Manager.
 
 ## Build the app
 
-Install [XcodeGen](https://github.com/yonaskolb/XcodeGen) 2.46.0, then:
+Use Xcode 26 or later. The app icon, `App/AppIcon.icon`, is an Icon
+Composer file with light and dark layers. Install
+[XcodeGen](https://github.com/yonaskolb/XcodeGen) 2.46.0, then:
 
 ```bash
 xcodegen generate
