@@ -9,8 +9,13 @@ struct MenuBarTitle: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        Text(model.snapshot.menuTitle)
-            .monospacedDigit()
+        HStack(spacing: 4) {
+            Image("MenuBarIcon")
+                .renderingMode(.template)
+            Text(model.snapshot.menuTitle)
+                .monospacedDigit()
+        }
+        .accessibilityLabel("umbilical")
     }
 }
 

@@ -4,6 +4,7 @@
 
 - Finder and the Dock show the umbilical folder-and-cable app icon.
 - The app icon has a dark mode variant. It is built with Icon Composer and needs Xcode 26 or later to build.
+- The menu bar shows an umbilical icon that follows light and dark mode.
 
 ## 1.0.1
 

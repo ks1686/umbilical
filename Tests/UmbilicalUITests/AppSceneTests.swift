@@ -19,6 +19,10 @@ final class AppSceneTests: XCTestCase {
         XCTAssertTrue(source.contains("application(_: NSApplication, open urls:"))
         let menu = try readAppSource("MenuBarMenu.swift")
         XCTAssertTrue(menu.contains("openWindow(id: \"main\")"))
+        XCTAssertTrue(menu.contains("Image(\"MenuBarIcon\")"))
+        XCTAssertTrue(menu.contains("renderingMode(.template)"))
+        XCTAssertTrue(menu.contains("accessibilityLabel(\"umbilical\")"))
+        try assertMenuBarIconIsTemplateAsset()
         let list = try readAppSource("DownloadList.swift")
         XCTAssertTrue(list.contains("if row.showsPauseResume"))
         let bridge = try readAppSource("SafariExtensionBridge.swift")
@@ -45,6 +49,27 @@ final class AppSceneTests: XCTestCase {
         XCTAssertTrue(actions.contains("presentRejectedDownload"))
         XCTAssertTrue(actions.contains("beginTermination"))
         XCTAssertTrue(source.contains("beginTermination"))
+    }
+
+    private func assertMenuBarIconIsTemplateAsset() throws {
+        let app = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("App")
+        let catalog = app.appendingPathComponent("Assets.xcassets")
+        let appIconSet = catalog.appendingPathComponent("AppIcon.appiconset")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: appIconSet.path))
+        let imageset = catalog.appendingPathComponent("MenuBarIcon.imageset")
+        let contents = imageset.appendingPathComponent("Contents.json")
+        let json = try String(contentsOf: contents, encoding: .utf8)
+        XCTAssertTrue(json.contains("\"template-rendering-intent\" : \"template\""))
+        XCTAssertTrue(json.contains("\"preserves-vector-representation\" : true"))
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: imageset.appendingPathComponent("MenuBarIcon.svg").path
+            )
+        )
     }
 
     private func slice(_ source: String, from: String, to: String) -> String {
