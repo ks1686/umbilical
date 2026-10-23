@@ -18,6 +18,9 @@ jobs:
     name: App
     runs-on: macos-26
     timeout-minutes: 45
+    permissions:
+      contents: read
+      actions: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -110,6 +113,25 @@ jobs:
           set -euo pipefail
           python3 scripts/release/release_tools.py check-built-app \
             --app "${RUNNER_TEMP}/release/Build/Products/Release/umbilical.app"
+
+      - name: Confirm Assets.car contains AppIcon
+        run: |
+          set -euo pipefail
+          app="${RUNNER_TEMP}/release/Build/Products/Release/umbilical.app"
+          car="${app}/Contents/Resources/Assets.car"
+          plist="${app}/Contents/Info.plist"
+          test -f "${car}"
+          /usr/bin/plutil -p "${plist}"
+          /usr/bin/plutil -extract CFBundleIconName raw "${plist}" | grep -x AppIcon
+          assetutil --info "${car}" | tee "${RUNNER_TEMP}/assets-car-info.txt"
+          grep AppIcon "${RUNNER_TEMP}/assets-car-info.txt"
+
+      - name: Upload app icon proof
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: app-icon-proof
+          path: docs/assets/umbilical-icon-preview.png
+          if-no-files-found: error
 
       - name: SwiftLint
         run: swiftlint lint --strict --config .swiftlint.yml
@@ -229,4 +251,7 @@ jobs:
           persist-credentials: false
 
       - name: Test release helpers
-        run: python3 scripts/release/test_release_tools.py
+        run: |
+          set -euo pipefail
+          python3 scripts/release/test_release_tools.py
+          python3 scripts/check-app-icon-assets.py

@@ -342,11 +342,26 @@ class ReleaseToolsTest(unittest.TestCase):
                 "CFBundleShortVersionString": "1.2.3",
                 "CFBundleVersion": "1.2.3",
                 "LSMinimumSystemVersion": "14.0",
+                "CFBundleIconName": "AppIcon",
                 "PolarOrganizationID": "$(POLAR_ORGANIZATION_ID)",
             }
+            (contents / "Resources").mkdir()
+            (contents / "Resources" / "Assets.car").write_bytes(b"fake-assets-car")
             with (contents / "Info.plist").open("wb") as handle:
                 plistlib.dump(info, handle)
             release_tools.check_built_app(app, "", signed=False)
+            (contents / "Resources" / "Assets.car").unlink()
+            with self.assertRaises(SystemExit):
+                release_tools.check_built_app(app, "", signed=False)
+            (contents / "Resources" / "Assets.car").write_bytes(b"fake-assets-car")
+            info["CFBundleIconName"] = "OtherIcon"
+            with (contents / "Info.plist").open("wb") as handle:
+                plistlib.dump(info, handle)
+            with self.assertRaises(SystemExit):
+                release_tools.check_built_app(app, "", signed=False)
+            info["CFBundleIconName"] = "AppIcon"
+            with (contents / "Info.plist").open("wb") as handle:
+                plistlib.dump(info, handle)
             (appex / "Contents" / "Resources" / "manifest.json").write_text(
                 '{"manifest_version": 3, "version": "1.1.0"}\n',
                 encoding="utf-8",

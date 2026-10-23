@@ -1,5 +1,7 @@
 # umbilical
 
+<img src="docs/assets/umbilical-icon.png" alt="umbilical icon" width="128" height="128">
+
 umbilical is a native macOS download manager for macOS 14 and later, on
 Apple Silicon and Intel. It never seeds after a download completes. While
 a download is in progress, upload is capped at 1 KiB/s.

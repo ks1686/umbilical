@@ -15,6 +15,7 @@ import json
 import os
 import plistlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -80,6 +81,35 @@ def stamp_extension_manifest(manifest: Path, version: str) -> None:
     if updated.get("version") != version:
         fail("stamped manifest version mismatch")
     manifest.write_text(new_text, encoding="utf-8")
+
+
+def _check_app_icon(app: Path, app_plist: dict) -> None:
+    if plist_string(app_plist, "CFBundleIconName") != "AppIcon":
+        fail("CFBundleIconName is not AppIcon")
+    # Asset catalogs compile into Assets.car. CFBundleIconFile is the older
+    # .icns key and is optional when CFBundleIconName is set.
+    icon_file = app_plist.get("CFBundleIconFile")
+    if icon_file is not None:
+        if not isinstance(icon_file, str) or icon_file.strip() == "":
+            fail("CFBundleIconFile is empty")
+    car = app / "Contents" / "Resources" / "Assets.car"
+    if not car.is_file():
+        fail("built app is missing Assets.car")
+    assetutil = shutil.which("assetutil")
+    if assetutil is None:
+        return
+    try:
+        info = subprocess.check_output(
+            [assetutil, "--info", str(car)],
+            text=True,
+            stderr=subprocess.STDOUT,
+        )
+    except subprocess.CalledProcessError:
+        if car.stat().st_size < 4096:
+            return
+        fail("assetutil could not read Assets.car")
+    if "AppIcon" not in info:
+        fail("Assets.car does not contain AppIcon")
 
 
 def _check_extension_matches_app(app: Path, app_plist: dict) -> None:
@@ -501,6 +531,7 @@ def check_built_app(app: Path, version: str, *, signed: bool) -> None:
         if not path.exists():
             fail(f"built app is missing {path.name}")
     _check_extension_matches_app(app, plist)
+    _check_app_icon(app, plist)
 
 
 _RFC822_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
