@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Build the macOS app icon set from the chosen folder-and-cable art.
+"""Build the docs icon and preview from the chosen folder-and-cable art.
 
 The source JPEGs are the full composition (folder, cable, light or dark
 fill). This script strips every metadata segment from those JPEGs, then
 draws each one onto Apple's 1024-pt macOS grid: an 824-pt squircle tile
-with a 100-pt transparent margin. The AppIcon set ships the light tile.
-Xcode 26.6 actool on macos-26 leaves luminosity=dark mac AppIcon slots
-unassigned, so those PNGs are not in the catalog. The dark source is
-kept, and the docs preview still shows that tile. Icon Composer .icon
-files are not produced; they need the Icon Composer app on a Mac.
+with a 100-pt transparent margin, for the README icon and the light and
+dark preview sheet.
+
+The app icon itself is App/AppIcon.icon. It is authored in Icon Composer
+on a Mac (light default layer, dark specialization) and is not written
+by this script. scripts/check-app-icon-assets.py validates it.
 
 Run from the repository root:
 
@@ -19,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import io
-import json
 import struct
 import sys
 from pathlib import Path
@@ -30,8 +30,6 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE_LIGHT = Path(__file__).resolve().parent / "umbilical-icon-light-source.jpg"
 SOURCE_DARK = Path(__file__).resolve().parent / "umbilical-icon-dark-source.jpg"
-ASSET_CATALOG = ROOT / "App" / "Assets.xcassets"
-APPICON_SET = ASSET_CATALOG / "AppIcon.appiconset"
 DOCS_ASSETS = ROOT / "docs" / "assets"
 DOCS_ICON = DOCS_ASSETS / "umbilical-icon.png"
 DOCS_PREVIEW = DOCS_ASSETS / "umbilical-icon-preview.png"
@@ -42,28 +40,8 @@ MARGIN = (CANVAS - TILE) // 2
 SQUIRCLE_N = 5.0
 SUPERSAMPLE = 4
 
-# Point size, scale, pixel size. Every macOS AppIcon slot.
-MAC_SLOTS: list[tuple[int, int, int]] = [
-    (16, 1, 16),
-    (16, 2, 32),
-    (32, 1, 32),
-    (32, 2, 64),
-    (128, 1, 128),
-    (128, 2, 256),
-    (256, 1, 256),
-    (256, 2, 512),
-    (512, 1, 512),
-    (512, 2, 1024),
-]
-
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 PNG_KEEP = {b"IHDR", b"IDAT", b"IEND"}
-
-
-def icon_filename(size_pt: int, scale: int, *, dark: bool) -> str:
-    scale_s = "" if scale == 1 else "@2x"
-    appearance = "_dark" if dark else ""
-    return f"appicon_{size_pt}x{size_pt}{scale_s}{appearance}.png"
 
 
 def png_keep_essential_chunks(data: bytes) -> bytes:
@@ -145,31 +123,6 @@ def compose_tile(source: Image.Image) -> Image.Image:
     return canvas
 
 
-def write_catalog_json() -> None:
-    images: list[dict[str, object]] = []
-    for size_pt, scale, _pixels in MAC_SLOTS:
-        entry: dict[str, object] = {
-            "filename": icon_filename(size_pt, scale, dark=False),
-            "idiom": "mac",
-            "scale": f"{scale}x",
-            "size": f"{size_pt}x{size_pt}",
-        }
-        images.append(entry)
-    payload = {
-        "images": images,
-        "info": {"author": "xcode", "version": 1},
-    }
-    APPICON_SET.mkdir(parents=True, exist_ok=True)
-    (APPICON_SET / "Contents.json").write_text(
-        json.dumps(payload, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    (ASSET_CATALOG / "Contents.json").write_text(
-        json.dumps({"info": {"author": "xcode", "version": 1}}, indent=2) + "\n",
-        encoding="utf-8",
-    )
-
-
 def load_font(size: int) -> ImageFont.ImageFont:
     path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
     if path.is_file():
@@ -226,12 +179,6 @@ def compose_preview(light: Image.Image, dark: Image.Image) -> Image.Image:
     return sheet.convert("RGBA")
 
 
-def generate_slots(master: Image.Image, *, dark: bool) -> None:
-    for size_pt, scale, pixels in MAC_SLOTS:
-        icon = master if pixels == CANVAS else resize_rgba(master, pixels)
-        save_png(icon, APPICON_SET / icon_filename(size_pt, scale, dark=dark))
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -256,18 +203,11 @@ def main() -> None:
     light_tile = compose_tile(light_source)
     dark_tile = compose_tile(dark_source)
 
-    if APPICON_SET.exists():
-        for old in APPICON_SET.glob("*.png"):
-            old.unlink()
-    write_catalog_json()
-    generate_slots(light_tile, dark=False)
-
     DOCS_ASSETS.mkdir(parents=True, exist_ok=True)
     save_png(resize_rgba(light_tile, 512), DOCS_ICON)
     preview = compose_preview(light_tile, dark_tile)
     # The proof sheet is a labeled RGB composite, still saved without text chunks.
     save_png(preview, DOCS_PREVIEW)
-    print(f"wrote {APPICON_SET.relative_to(ROOT)}", file=sys.stderr)
     print(f"wrote {DOCS_ICON.relative_to(ROOT)}", file=sys.stderr)
     print(f"wrote {DOCS_PREVIEW.relative_to(ROOT)}", file=sys.stderr)
 
