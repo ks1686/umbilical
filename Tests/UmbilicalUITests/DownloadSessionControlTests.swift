@@ -22,7 +22,7 @@ final class DownloadSessionControlTests: XCTestCase {
         XCTAssertEqual(model.snapshot.rows.first?.stateText, "Paused")
         XCTAssertEqual(model.snapshot.rows.first?.canResume, true)
         XCTAssertEqual(model.snapshot.rows.first?.showsPauseResume, true)
-        XCTAssertEqual(model.snapshot.menuTitle, "umb")
+        XCTAssertEqual(model.snapshot.menuTitle, "")
         XCTAssertEqual(model.snapshot.menuRows.first?.label, "a.bin Paused")
         await model.resume(id: "g1")
         XCTAssertEqual(client.resumed, ["g1"])
