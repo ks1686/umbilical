@@ -5,7 +5,7 @@
 import Foundation
 
 enum MenuBarSummary {
-    static let idleTitle = "umb"
+    static let idleTitle = ""
 
     static func title(for rows: [DownloadRow]) -> String {
         let active = rows.filter(\.isActive)

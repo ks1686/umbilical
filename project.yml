@@ -121,6 +121,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/umbilical.entitlements
         # Compiled from App/AppIcon.icon (Icon Composer, Xcode 26+).
         # actool writes the light, dark, and tinted icon into Assets.car.
+        # App/Assets.xcassets holds MenuBarIcon only. Do not add an AppIcon set.
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_TESTABILITY: "YES"
         # Debug may omit aria2c and yt-dlp. Release fails if either is

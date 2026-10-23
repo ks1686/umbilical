@@ -73,7 +73,7 @@ final class DownloadSessionRefreshTests: XCTestCase {
         await model.refresh()
         XCTAssertTrue(model.takeNotices().isEmpty)
         XCTAssertEqual(client.statusCalls.count, 1)
-        XCTAssertEqual(model.snapshot.menuTitle, "umb")
+        XCTAssertEqual(model.snapshot.menuTitle, "")
         XCTAssertEqual(store.history.count, 1)
 
         let revivedFixture = makeSession(store: store)

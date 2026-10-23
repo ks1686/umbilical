@@ -15,7 +15,7 @@ final class DownloadSessionModelTests: XCTestCase {
         let model = fixture.model
         let engine = fixture.engine
         XCTAssertEqual(model.snapshot.phase, .needsFolder)
-        XCTAssertEqual(model.snapshot.menuTitle, "umb")
+        XCTAssertEqual(model.snapshot.menuTitle, "")
         XCTAssertFalse(model.snapshot.canAdd)
         await model.start()
         XCTAssertTrue(engine.directories.isEmpty)

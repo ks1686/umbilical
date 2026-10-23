@@ -34,6 +34,8 @@ jobs:
           xcodegen generate
           # The Icon Composer bundle must be one resource, not a folder group.
           grep -F 'AppIcon.icon in Resources' umbilical.xcodeproj/project.pbxproj
+          # MenuBarIcon lives in this catalog. The app icon does not.
+          grep -F 'Assets.xcassets in Resources' umbilical.xcodeproj/project.pbxproj
           if grep -F 'icon.json' umbilical.xcodeproj/project.pbxproj; then
             echo "AppIcon.icon was expanded into its files" >&2
             exit 1
