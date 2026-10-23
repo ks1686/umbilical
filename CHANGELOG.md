@@ -2,9 +2,13 @@
 
 ## Unreleased
 
+## 1.0.2
+
 - Finder and the Dock show the umbilical folder-and-cable app icon.
-- The app icon has a dark mode variant. It is built with Icon Composer and needs Xcode 26 or later to build.
+- The app icon has a light and a dark mode variant, built with Icon Composer. Building from source needs Xcode 26 or later.
 - The menu bar shows an umbilical folder icon that follows light and dark mode. Idle shows only the icon.
+- The Homebrew cask uses `depends_on macos: :sonoma`, so `brew install` no longer warns about a deprecated macOS requirement.
+- Bump certifi in the semgrep tooling requirements (requirements/semgrep.txt) for a Dependabot alert.
 
 ## 1.0.1
 

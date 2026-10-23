@@ -442,7 +442,7 @@ def render_cask(version: str, sha256: str, *, draft_header: bool) -> str:
         '  homepage "https://github.com/ks1686/umbilical"\n'
         "\n"
         "  auto_updates true\n"
-        '  depends_on macos: ">= :sonoma"\n'
+        "  depends_on macos: :sonoma\n"
         "\n"
         '  app "umbilical.app"\n'
         "\n"

@@ -34,7 +34,7 @@ final class ExtensionManifestTests: XCTestCase {
 
     func testManifestVersionMatchesAppMarketingVersion() throws {
         let version = try marketingVersion()
-        XCTAssertEqual(version, "1.0.1")
+        XCTAssertEqual(version, "1.0.2")
         let json = try readJSON("manifest.json")
         XCTAssertEqual(json["version"] as? String, version)
     }

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "umbilical",
   "description": "Send a link to the umbilical download manager. Only the URL and an optional file name are sent.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "background": {
     "scripts": ["website-access.js", "background.js"],
     "persistent": false
