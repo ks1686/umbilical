@@ -1,1 +1,10 @@
-semgrep==1.181.0
+--find-links requirements/wheels
+semgrep==1.181.0+umbilical.1
+# No release through semgrep 1.184.0 allows these. The local wheel's
+# metadata allows them; its code is semgrep 1.181.0.
+mcp==1.30.0
+opentelemetry-api==1.45.1
+opentelemetry-sdk==1.45.1
+opentelemetry-exporter-otlp-proto-http==1.45.1
+opentelemetry-instrumentation-requests==0.66b1
+opentelemetry-instrumentation-threading==0.66b1
