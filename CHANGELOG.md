@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bump mcp and opentelemetry-api in the semgrep tooling requirements (requirements/semgrep.txt) for Dependabot alerts.
+
 ## 1.0.2
 
 - Finder and the Dock show the umbilical folder-and-cable app icon.

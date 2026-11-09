@@ -61,6 +61,9 @@ jobs:
       - name: Install Semgrep
         run: |
           set -euo pipefail
+          # The PyPI wheel pins vulnerable mcp and OpenTelemetry. Rebuild the
+          # local metadata copy before the hash-checked install.
+          python3 scripts/ci/prepare-semgrep-wheel.py
           python3 -m pip install --user --disable-pip-version-check \
             --require-hashes -r requirements/semgrep.txt
           echo "${HOME}/.local/bin" >>"${GITHUB_PATH}"

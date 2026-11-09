@@ -18,6 +18,9 @@ Config/Licensing.local.xcconfig
 # Developer ID profiles are machine-local and expire. The release script embeds one.
 *.provisionprofile
 
+# Patched Semgrep wheel. scripts/ci/prepare-semgrep-wheel.py rebuilds it.
+requirements/wheels/
+
 # Helper build products. Lock files and the yt-dlp public key stay tracked.
 helpers/bin/
 helpers/src/
