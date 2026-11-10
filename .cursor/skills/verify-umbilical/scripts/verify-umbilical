@@ -1,0 +1,1167 @@
+#!/usr/bin/env bash
+# Drive a built umbilical.app the way a user does.
+# Launch, UI, and a passing doctor need macOS. Argument checks, bundle
+# inspection, payload HTTP, and doctor failures also run on Linux.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+UI_SCRIPT="$SCRIPT_DIR/ui.applescript"
+BUNDLE_ID="me.peapod.umbilical"
+UNOFFICIAL_TEXT="Unofficial build. License checks are off."
+URL_FIELD="https://example.com/file"
+PAYLOAD_NAME="verify-payload.txt"
+PAYLOAD_BODY="umbilical-verify-payload"
+
+STATE="${UMB_VERIFY_STATE:-/tmp/umbilical-verify/state.env}"
+EVIDENCE="${UMB_VERIFY_EVIDENCE:-}"
+
+APP=""
+URL=""
+NAME=""
+VALUE=""
+TEXT=""
+TARGET=""
+TIMEOUT=""
+DIRECTORY=""
+PID_ARG=""
+BODY=""
+
+usage() {
+  cat >&2 <<'EOF'
+usage:
+  verify-umbilical launch --app PATH [--state PATH] [--evidence PATH]
+  verify-umbilical relaunch [--state PATH] [--evidence PATH]
+  verify-umbilical doctor [--state PATH] [--evidence PATH]
+  verify-umbilical inspect-app --app PATH
+  verify-umbilical drive add-download [--url URL] [--state PATH] [--evidence PATH]
+  verify-umbilical ui click --name NAME
+  verify-umbilical ui fill --name NAME --value VALUE
+  verify-umbilical ui value --name NAME
+  verify-umbilical ui checkbox --name NAME
+  verify-umbilical ui enabled --name NAME
+  verify-umbilical ui wait-text --text TEXT [--timeout SECONDS]
+  verify-umbilical ui wait-enabled --name NAME [--timeout SECONDS]
+  verify-umbilical ui choose-folder --path PATH
+  verify-umbilical ui dump --path PATH
+  verify-umbilical ui screenshot --path PATH
+  verify-umbilical ui menu --name NAME
+  verify-umbilical ui status
+  verify-umbilical ui open-url --url URL
+  verify-umbilical ui quit
+  verify-umbilical payload start --directory DIR --name NAME --body TEXT
+  verify-umbilical payload stop --pid PID
+  verify-umbilical cleanup [--state PATH] [--evidence PATH]
+
+Exit 0 means the command finished. Exit 1 means the instance or bundle is not usable.
+Exit 2 means the arguments are wrong. Exit 3 means this host is not macOS.
+Exit 4 means process identity matched but the UI was not checked because this host is not macOS.
+Only doctor exit 0 means the instance is worth driving.
+EOF
+}
+
+log_line() {
+  if [[ -n "${EVIDENCE:-}" && -d "$EVIDENCE" ]]; then
+    printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >>"$EVIDENCE/commands.log" || true
+  fi
+}
+
+die() {
+  local code="$1"
+  shift
+  echo "verify-umbilical: $*" >&2
+  log_line "exit=$code $*"
+  exit "$code"
+}
+
+require_value() {
+  local flag="$1"
+  local value="${2:-}"
+  if [[ -z "$value" || "$value" == --* ]]; then
+    die 2 "missing value for $flag"
+  fi
+}
+
+resolve_evidence() {
+  if [[ -n "$EVIDENCE" ]]; then
+    return
+  fi
+  if [[ -n "${UMB_VERIFY_EVIDENCE:-}" ]]; then
+    EVIDENCE="$UMB_VERIFY_EVIDENCE"
+  elif [[ -d /opt/cursor/artifacts ]]; then
+    EVIDENCE="/opt/cursor/artifacts/verify-umbilical"
+  else
+    EVIDENCE="/tmp/umbilical-verify-evidence"
+  fi
+}
+
+prepare_evidence() {
+  resolve_evidence
+  mkdir -p "$EVIDENCE"
+}
+
+parse_common() {
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --app)
+        require_value "$1" "${2:-}"
+        APP="$2"
+        shift 2
+        ;;
+      --url)
+        require_value "$1" "${2:-}"
+        URL="$2"
+        shift 2
+        ;;
+      --name)
+        require_value "$1" "${2:-}"
+        NAME="$2"
+        shift 2
+        ;;
+      --value)
+        require_value "$1" "${2:-}"
+        VALUE="$2"
+        shift 2
+        ;;
+      --text)
+        require_value "$1" "${2:-}"
+        TEXT="$2"
+        shift 2
+        ;;
+      --path)
+        require_value "$1" "${2:-}"
+        TARGET="$2"
+        shift 2
+        ;;
+      --timeout)
+        require_value "$1" "${2:-}"
+        TIMEOUT="$2"
+        shift 2
+        ;;
+      --state)
+        require_value "$1" "${2:-}"
+        STATE="$2"
+        shift 2
+        ;;
+      --evidence)
+        require_value "$1" "${2:-}"
+        EVIDENCE="$2"
+        shift 2
+        ;;
+      --directory)
+        require_value "$1" "${2:-}"
+        DIRECTORY="$2"
+        shift 2
+        ;;
+      --pid)
+        require_value "$1" "${2:-}"
+        PID_ARG="$2"
+        shift 2
+        ;;
+      --body)
+        require_value "$1" "${2:-}"
+        BODY="$2"
+        shift 2
+        ;;
+      -h | --help)
+        usage
+        exit 2
+        ;;
+      *)
+        die 2 "unknown argument $1"
+        ;;
+    esac
+  done
+}
+
+inspect_plist() {
+  local plist="$1"
+  local out="$2"
+  python3 - "$plist" >"$out" <<'PY'
+import plistlib
+import re
+import sys
+
+path = sys.argv[1]
+with open(path, "rb") as handle:
+    info = plistlib.load(handle)
+
+def text(key):
+    value = info.get(key, "")
+    if not isinstance(value, str):
+        return ""
+    return value.strip()
+
+polar_raw = text("PolarOrganizationID")
+if polar_raw == "" or "$(" in polar_raw:
+    polar = "absent"
+elif re.fullmatch(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+    polar_raw,
+):
+    polar = "present"
+else:
+    polar = "invalid"
+
+sys.stdout.write("bundle_id=%s\n" % text("CFBundleIdentifier"))
+sys.stdout.write("executable_name=%s\n" % text("CFBundleExecutable"))
+sys.stdout.write("version=%s\n" % text("CFBundleShortVersionString"))
+sys.stdout.write("polar=%s\n" % polar)
+PY
+}
+
+load_inspect() {
+  local app="$1"
+  if [[ ! -d "$app" || "${app##*/}" != *.app ]]; then
+    die 1 "$app is not an application bundle"
+  fi
+  app="$(cd "$app" && pwd -P)"
+  local plist="$app/Contents/Info.plist"
+  local out
+  out="$(mktemp)"
+  if [[ ! -f "$plist" ]]; then
+    die 1 "$plist is missing"
+  fi
+  inspect_plist "$plist" "$out" || die 1 "could not read $plist"
+  bundle_id=""
+  executable_name=""
+  version=""
+  polar=""
+  local line key value
+  while IFS= read -r line; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      bundle_id) bundle_id="$value" ;;
+      executable_name) executable_name="$value" ;;
+      version) version="$value" ;;
+      polar) polar="$value" ;;
+      *) die 1 "unexpected inspect field" ;;
+    esac
+  done <"$out"
+  rm -f "$out"
+  if [[ "$bundle_id" != "$BUNDLE_ID" ]]; then
+    die 1 "bundle id is $bundle_id, expected $BUNDLE_ID"
+  fi
+  if [[ "$executable_name" != "umbilical" ]]; then
+    die 1 "CFBundleExecutable is not umbilical"
+  fi
+  if [[ ! "$version" =~ ^[0-9A-Za-z._-]+$ ]]; then
+    die 1 "CFBundleShortVersionString is missing"
+  fi
+  case "$polar" in
+    absent | present | invalid) ;;
+    *) die 1 "could not classify PolarOrganizationID" ;;
+  esac
+  inspected_app="$app"
+  executable="$app/Contents/MacOS/umbilical"
+  if [[ ! -x "$executable" || -d "$executable" ]]; then
+    die 1 "$executable is not an executable file"
+  fi
+  case "$polar" in
+    absent) launch_gate="ok" ;;
+    present) launch_gate="needs-debug-signature" ;;
+    invalid) launch_gate="refused" ;;
+  esac
+}
+
+named_pids() {
+  mapfile -t NAMED_PIDS < <(pgrep -x umbilical || true)
+  if [[ ${#NAMED_PIDS[@]} -eq 1 && -z "${NAMED_PIDS[0]}" ]]; then
+    NAMED_PIDS=()
+  fi
+}
+
+assert_no_named_process() {
+  named_pids
+  if [[ ${#NAMED_PIDS[@]} -gt 0 ]]; then
+    die 1 "a process named umbilical is already running (${NAMED_PIDS[*]}). Refusing to start another instance."
+  fi
+}
+
+assert_only_recorded_process() {
+  local self="$1"
+  named_pids
+  local found
+  for found in "${NAMED_PIDS[@]}"; do
+    if [[ "$found" != "$self" ]]; then
+      die 1 "another process named umbilical is running ($found). Refusing to drive a shared instance."
+    fi
+  done
+}
+
+process_alive() {
+  local pid="$1"
+  kill -0 "$pid" 2>/dev/null
+}
+
+process_exe() {
+  local pid="$1"
+  if [[ -e "/proc/$pid/exe" ]]; then
+    readlink -f "/proc/$pid/exe"
+    return
+  fi
+  if command -v lsof >/dev/null 2>&1; then
+    lsof -a -p "$pid" -d txt -Fn 2>/dev/null | sed -n 's/^n//p' | head -1
+    return
+  fi
+  return 1
+}
+
+process_home() {
+  local pid="$1"
+  if [[ -r "/proc/$pid/environ" ]]; then
+    tr '\0' '\n' <"/proc/$pid/environ" | sed -n 's/^HOME=//p' | head -1
+    return
+  fi
+  ps -Eww -p "$pid" -o command= 2>/dev/null | tr ' ' '\n' | sed -n 's/^HOME=//p' | head -1
+}
+
+process_args() {
+  local pid="$1"
+  if [[ -r "/proc/$pid/cmdline" ]]; then
+    tr '\0' ' ' <"/proc/$pid/cmdline"
+    return
+  fi
+  ps -p "$pid" -o args= 2>/dev/null || true
+}
+
+valid_run_id() {
+  [[ "$1" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$ ]]
+}
+
+load_state() {
+  if [[ ! -f "$STATE" ]]; then
+    die 1 "no verification instance. State file $STATE is missing."
+  fi
+  run_id=""
+  pid=""
+  app_path=""
+  executable=""
+  home=""
+  scratch=""
+  downloads=""
+  state_evidence=""
+  version=""
+  server_pid=""
+  local line key value
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    [[ -z "$line" || "$line" == \#* ]] && continue
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      run_id) run_id="$value" ;;
+      pid) pid="$value" ;;
+      app_path) app_path="$value" ;;
+      executable) executable="$value" ;;
+      home) home="$value" ;;
+      scratch) scratch="$value" ;;
+      downloads) downloads="$value" ;;
+      evidence) state_evidence="$value" ;;
+      version) version="$value" ;;
+      server_pid) server_pid="$value" ;;
+      *) die 1 "unknown state field $key" ;;
+    esac
+  done <"$STATE"
+  valid_run_id "$run_id" || die 1 "state run_id is not usable"
+  [[ "$pid" =~ ^[0-9]+$ ]] || die 1 "state pid is not usable"
+  [[ "$scratch" == "/tmp/umbilical-verify/scratch-$run_id" ]] || die 1 "state scratch is outside /tmp/umbilical-verify"
+  [[ "$home" == "$scratch/home" ]] || die 1 "state home is not inside the scratch directory"
+  [[ "$downloads" == "$scratch/umbilical-verify-downloads" ]] || die 1 "state downloads directory is not inside the scratch directory"
+  [[ "$app_path" == *.app && "$app_path" != *..* && "$app_path" == /* ]] || die 1 "state app_path is not a bundle path"
+  [[ "$executable" == "$app_path/Contents/MacOS/umbilical" ]] || die 1 "state executable does not match the bundle"
+  [[ "$version" =~ ^[0-9A-Za-z._-]+$ ]] || die 1 "state version is not usable"
+  [[ -n "$state_evidence" && "$state_evidence" == /* && "$state_evidence" != *..* ]] || die 1 "state evidence path is not usable"
+  [[ "$state_evidence" != "$scratch" && "$state_evidence" != "$scratch"/* ]] || die 1 "evidence path is inside the scratch directory"
+  if [[ -n "$server_pid" && ! "$server_pid" =~ ^[0-9]+$ ]]; then
+    die 1 "state server_pid is not usable"
+  fi
+  if [[ -n "$EVIDENCE" && "$EVIDENCE" != "$state_evidence" ]]; then
+    die 1 "evidence flag $EVIDENCE does not match the state evidence $state_evidence"
+  fi
+  EVIDENCE="$state_evidence"
+  mkdir -p "$EVIDENCE"
+}
+
+write_state() {
+  local tmp="$STATE.tmp"
+  mkdir -p "$(dirname "$STATE")"
+  cat >"$tmp" <<EOF
+run_id=$run_id
+pid=$pid
+app_path=$app_path
+executable=$executable
+home=$home
+scratch=$scratch
+downloads=$downloads
+evidence=$EVIDENCE
+version=$version
+server_pid=${server_pid:-}
+EOF
+  mv "$tmp" "$STATE"
+}
+
+ui_raw() {
+  osascript "$UI_SCRIPT" "$@"
+}
+
+require_macos() {
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    die 3 "this command needs macOS. This host is $(uname -s)."
+  fi
+}
+
+read_ui() {
+  require_macos
+  local out err status message
+  out="$(mktemp)"
+  err="$(mktemp)"
+  set +e
+  ui_raw read-text >"$out" 2>"$err"
+  status=$?
+  set -e
+  message="$(cat "$err")"
+  if [[ $status -ne 0 ]]; then
+    rm -f "$out" "$err"
+    if [[ "$message" == *[Nn]ot\ authorized* || "$message" == *assistive* || "$message" == *1002* ]]; then
+      die 1 "Accessibility permission is missing for the process that runs verify-umbilical. Grant it in System Settings, Privacy & Security, Accessibility. $message"
+    fi
+    die 1 "could not read the umbilical UI. $message"
+  fi
+  UI_TEXT="$(cat "$out")"
+  rm -f "$out" "$err"
+  printf '%s\n' "$UI_TEXT"
+}
+
+fail_launch() {
+  local message="$1"
+  if [[ -n "${pid:-}" && "$pid" =~ ^[0-9]+$ ]] && process_alive "$pid"; then
+    signal_pid "$pid"
+  fi
+  if [[ -n "${run_id:-}" && -n "${scratch:-}" && "$scratch" == "/tmp/umbilical-verify/scratch-$run_id" && -d "$scratch" && ! -L "$scratch" ]]; then
+    if [[ -z "${EVIDENCE:-}" || ( "$EVIDENCE" != "$scratch" && "$EVIDENCE" != "$scratch"/* ) ]]; then
+      rm -rf "$scratch"
+    fi
+  fi
+  rm -f "$STATE"
+  die 1 "$message"
+}
+
+spawn_detached() {
+  local stdout_log="$1"
+  local stderr_log="$2"
+  nohup env -u ARIA2C -u UMB_WATCH -u YT_DLP \
+    HOME="$home" \
+    TMPDIR="$scratch/tmp" \
+    "$executable" >>"$stdout_log" 2>>"$stderr_log" </dev/null &
+  pid="$!"
+  disown "$pid" || true
+}
+
+read_ui_soft() {
+  UI_TEXT=""
+  UI_ERROR=""
+  local out err status message
+  out="$(mktemp)"
+  err="$(mktemp)"
+  set +e
+  ui_raw read-text >"$out" 2>"$err"
+  status=$?
+  set -e
+  message="$(cat "$err")"
+  rm -f "$err"
+  if [[ $status -ne 0 ]]; then
+    rm -f "$out"
+    if [[ "$message" == *[Nn]ot\ authorized* || "$message" == *assistive* || "$message" == *1002* ]]; then
+      UI_ERROR="$message"
+    fi
+    return 0
+  fi
+  UI_TEXT="$(cat "$out")"
+  rm -f "$out"
+}
+
+ui_call() {
+  require_macos
+  local err status
+  err="$(mktemp)"
+  set +e
+  UI_CALL_OUT="$(ui_raw "$@" 2>"$err")"
+  status=$?
+  set -e
+  if [[ $status -ne 0 ]]; then
+    local message
+    message="$(cat "$err")"
+    rm -f "$err"
+    die 1 "UI command failed. $message"
+  fi
+  rm -f "$err"
+  printf '%s\n' "$UI_CALL_OUT"
+}
+
+has_get_task_allow() {
+  local app="$1"
+  local entitlements
+  if ! command -v codesign >/dev/null 2>&1; then
+    die 1 "codesign is not available. Refusing to launch a bundle whose Polar organization id is set."
+  fi
+  entitlements="$(codesign -d --entitlements :- "$app" 2>/dev/null || true)"
+  if [[ -z "$entitlements" ]]; then
+    die 1 "could not read the signature entitlements for $app"
+  fi
+  [[ "$entitlements" == *com.apple.security.get-task-allow* ]]
+}
+
+reject_enforcing_release() {
+  local app="$1"
+  if [[ "$polar" != "present" ]]; then
+    return
+  fi
+  if has_get_task_allow "$app"; then
+    return
+  fi
+  die 1 "this Release bundle has a Polar organization id and no get-task-allow entitlement. Launch would read the shared login keychain. Verification does not start it and does not activate a key."
+}
+
+safe_type_path() {
+  local path="$1"
+  [[ "$path" == /* && "$path" != *..* ]] || die 1 "folder path must be absolute"
+  [[ "$path" =~ ^[A-Za-z0-9._/-]+$ ]] || die 1 "folder path has characters the open panel keystroke path cannot carry"
+  [[ -d "$path" && ! -L "$path" ]] || die 1 "folder path is not a directory: $path"
+}
+
+validate_http_url() {
+  local url="$1"
+  if [[ -z "$url" ]]; then
+    die 2 "Enter an http or https URL."
+  fi
+  if [[ "$url" == *$'\n'* || "$url" == *$'\r'* || "$url" == *" "* || "$url" == *$'\t'* ]]; then
+    die 2 "URL contains whitespace"
+  fi
+  if [[ "$url" == -* ]]; then
+    die 2 "That URL cannot be used as a command option."
+  fi
+  local rest=""
+  case "$url" in
+    http://*) rest="${url#http://}" ;;
+    https://*) rest="${url#https://}" ;;
+    *) die 2 "That URL scheme is not allowed (${url%%:*})." ;;
+  esac
+  local host="${rest%%/*}"
+  if [[ -z "$host" ]]; then
+    die 2 "URL has no host"
+  fi
+  if [[ "$host" == *"@"* ]]; then
+    die 2 "URLs that include a username or password are rejected."
+  fi
+}
+
+payload_is_ours() {
+  local pid="$1"
+  local args
+  args="$(process_args "$pid")"
+  [[ "$args" == *verify-umbilical-payload.py* ]]
+}
+
+cmd_payload() {
+  local action="${1:-}"
+  if [[ -z "$action" ]]; then
+    die 2 "usage: verify-umbilical payload start|stop"
+  fi
+  shift
+  parse_common "$@"
+  prepare_evidence
+  case "$action" in
+    start)
+      [[ -n "$DIRECTORY" && -n "$NAME" && -n "$BODY" ]] || die 2 "payload start needs --directory, --name, and --body"
+      [[ "$DIRECTORY" == /tmp/* && "$DIRECTORY" != *..* && "$DIRECTORY" != /tmp && "$DIRECTORY" != /tmp/ ]] || die 1 "payload directory must be a subdirectory of /tmp"
+      [[ "$NAME" =~ ^[A-Za-z0-9._-]+$ ]] || die 2 "payload name is not a single file name"
+      mkdir -p "$DIRECTORY/www"
+      printf '%s' "$BODY" >"$DIRECTORY/www/$NAME"
+      cat >"$DIRECTORY/verify-umbilical-payload.py" <<'PY'
+import sys
+from http.server import SimpleHTTPRequestHandler
+from socketserver import TCPServer
+
+directory = sys.argv[1]
+port_path = sys.argv[2]
+
+class Handler(SimpleHTTPRequestHandler):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=directory, **kwargs)
+
+    def log_message(self, fmt, *args):
+        sys.stderr.write("%s\n" % (fmt % args))
+
+class Server(TCPServer):
+    allow_reuse_address = True
+
+server = Server(("127.0.0.1", 0), Handler)
+with open(port_path, "w", encoding="utf-8") as handle:
+    handle.write("%s\n" % server.server_address[1])
+server.serve_forever()
+PY
+      local port_file="$DIRECTORY/port"
+      rm -f "$port_file"
+      nohup python3 "$DIRECTORY/verify-umbilical-payload.py" "$DIRECTORY/www" "$port_file" >"$DIRECTORY/server.log" 2>&1 &
+      local server_pid="$!"
+      disown "$server_pid" || true
+      local port=""
+      for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        if [[ -s "$port_file" ]]; then
+          port="$(tr -d '[:space:]' <"$port_file")"
+          break
+        fi
+        if ! process_alive "$server_pid"; then
+          die 1 "payload server exited before it bound a port"
+        fi
+        sleep 0.1
+      done
+      [[ "$port" =~ ^[0-9]+$ ]] || die 1 "payload server did not write a port"
+      log_line "payload pid=$server_pid port=$port name=$NAME"
+      PAYLOAD_REPORT="$(printf 'url=http://127.0.0.1:%s/%s\npid=%s\ndirectory=%s' "$port" "$NAME" "$server_pid" "$DIRECTORY/www")"
+      printf '%s\n' "$PAYLOAD_REPORT"
+      ;;
+    stop)
+      [[ "$PID_ARG" =~ ^[0-9]+$ ]] || die 2 "payload stop needs --pid"
+      if ! process_alive "$PID_ARG"; then
+        log_line "payload stop pid=$PID_ARG already exited"
+        exit 0
+      fi
+      if ! payload_is_ours "$PID_ARG"; then
+        die 1 "pid $PID_ARG is not a verify-umbilical payload server. Not killing it."
+      fi
+      signal_pid "$PID_ARG"
+      log_line "payload stop pid=$PID_ARG"
+      ;;
+    *)
+      die 2 "unknown payload action $action"
+      ;;
+  esac
+}
+
+signal_pid() {
+  local target="$1"
+  if ! process_alive "$target"; then
+    return 0
+  fi
+  kill -TERM "$target" 2>/dev/null || true
+  for _ in 1 2 3 4 5 6 7 8 9 10; do
+    process_alive "$target" || return 0
+    sleep 0.2
+  done
+  if process_alive "$target"; then
+    kill -KILL "$target" 2>/dev/null || true
+  fi
+}
+
+descendant_pids() {
+  local root="$1"
+  local child
+  local -a kids=()
+  mapfile -t kids < <(pgrep -P "$root" || true)
+  for child in "${kids[@]}"; do
+    [[ -z "$child" ]] && continue
+    printf '%s\n' "$child"
+    descendant_pids "$child"
+  done
+}
+
+cmd_inspect() {
+  parse_common "$@"
+  [[ -n "$APP" ]] || die 2 "inspect-app needs --app"
+  load_inspect "$APP"
+  printf 'bundle_id=%s\n' "$bundle_id"
+  printf 'executable_name=%s\n' "$executable_name"
+  printf 'version=%s\n' "$version"
+  printf 'polar=%s\n' "$polar"
+  printf 'launch=%s\n' "$launch_gate"
+  if [[ "$launch_gate" == "refused" ]]; then
+    exit 1
+  fi
+}
+
+cmd_launch() {
+  parse_common "$@"
+  prepare_evidence
+  [[ -n "$APP" ]] || die 2 "launch needs --app"
+  if [[ -f "$STATE" ]]; then
+    die 1 "state already exists at $STATE. Run verify-umbilical cleanup before launch."
+  fi
+  load_inspect "$APP"
+  if [[ "$launch_gate" == "refused" ]]; then
+    die 1 "PolarOrganizationID is present but not a UUID. Verification does not launch this bundle and does not edit Polar config."
+  fi
+  assert_no_named_process
+  require_macos
+  reject_enforcing_release "$inspected_app"
+  run_id="$(date -u +%Y%m%dT%H%M%SZ)-$(od -An -N4 -tx1 /dev/urandom | tr '[:upper:]' '[:lower:]' | tr -d ' \n')"
+  valid_run_id "$run_id" || die 1 "could not mint a run id"
+  scratch="/tmp/umbilical-verify/scratch-$run_id"
+  home="$scratch/home"
+  downloads="$scratch/umbilical-verify-downloads"
+  app_path="$inspected_app"
+  server_pid=""
+  mkdir -p "$home" "$downloads" "$scratch/tmp" "$scratch/logs"
+  chmod 700 "$home" "$downloads" "$scratch"
+  spawn_detached "$scratch/logs/stdout.log" "$scratch/logs/stderr.log"
+  write_state
+  log_line "launch pid=$pid app=$app_path version=$version polar=$polar"
+  local start now
+  start="$(date +%s)"
+  while true; do
+    if ! process_alive "$pid"; then
+      cp "$scratch/logs/stdout.log" "$EVIDENCE/launch-stdout.log" 2>/dev/null || true
+      cp "$scratch/logs/stderr.log" "$EVIDENCE/launch-stderr.log" 2>/dev/null || true
+      fail_launch "umbilical exited before the window was ready. Logs were copied to $EVIDENCE."
+    fi
+    read_ui_soft
+    if [[ -n "$UI_ERROR" ]]; then
+      fail_launch "Accessibility permission is missing for the process that runs verify-umbilical. Grant it in System Settings, Privacy & Security, Accessibility. $UI_ERROR"
+    fi
+    if [[ "$UI_TEXT" == *"Engine stopped"* || "$UI_TEXT" == *"Missing helper"* ]]; then
+      printf '%s\n' "$UI_TEXT" >"$EVIDENCE/launch-not-ready.txt"
+      fail_launch "umbilical reached Engine stopped before it was ready. See $EVIDENCE/launch-not-ready.txt."
+    fi
+    if [[ "$UI_TEXT" == *"Choose a download folder"* || "$UI_TEXT" == *"No downloads"* ]]; then
+      mkdir -p "$EVIDENCE/launch"
+      printf '%s\n' "$UI_TEXT" >"$EVIDENCE/launch/ready.txt"
+      printf 'pid=%s\nversion=%s\npolar=%s\n' "$pid" "$version" "$polar" >>"$EVIDENCE/launch/ready.txt"
+      log_line "launch ready pid=$pid"
+      return 0
+    fi
+    now="$(date +%s)"
+    if ((now - start >= 45)); then
+      printf '%s\n' "$UI_TEXT" >"$EVIDENCE/launch-not-ready.txt"
+      fail_launch "timed out waiting for Choose a download folder or No downloads. See $EVIDENCE/launch-not-ready.txt."
+    fi
+    sleep 1
+  done
+}
+
+cmd_relaunch() {
+  parse_common "$@"
+  prepare_evidence
+  load_state
+  if process_alive "$pid"; then
+    die 1 "pid $pid is still running. Quit it before relaunch."
+  fi
+  assert_no_named_process
+  require_macos
+  local expected="$version"
+  load_inspect "$app_path"
+  if [[ "$version" != "$expected" ]]; then
+    die 1 "bundle version is $version, state recorded $expected"
+  fi
+  version="$expected"
+  reject_enforcing_release "$app_path"
+  mkdir -p "$scratch/logs" "$scratch/tmp"
+  spawn_detached "$scratch/logs/stdout.log" "$scratch/logs/stderr.log"
+  server_pid=""
+  write_state
+  local start now
+  start="$(date +%s)"
+  while true; do
+    if ! process_alive "$pid"; then
+      die 1 "relaunch exited before the window was ready. State still records pid $pid so cleanup can remove the scratch directory."
+    fi
+    read_ui_soft
+    if [[ -n "$UI_ERROR" ]]; then
+      die 1 "Accessibility permission is missing. State was kept so cleanup can stop pid $pid. $UI_ERROR"
+    fi
+    if [[ "$UI_TEXT" == *"No downloads"* || "$UI_TEXT" == *"Choose a download folder"* || "$UI_TEXT" == *"umbilical-verify-downloads"* ]]; then
+      if [[ "$UI_TEXT" != *"Starting the download engine"* ]]; then
+        mkdir -p "$EVIDENCE/relaunch"
+        printf '%s\n' "$UI_TEXT" >"$EVIDENCE/relaunch/ready.txt"
+        log_line "relaunch ready pid=$pid"
+        return 0
+      fi
+    fi
+    now="$(date +%s)"
+    if ((now - start >= 45)); then
+      die 1 "timed out waiting for the relaunched window. Run cleanup for pid $pid."
+    fi
+    sleep 1
+  done
+}
+
+doctor_identity() {
+  load_state
+  if ! process_alive "$pid"; then
+    die 1 "pid $pid is not running"
+  fi
+  local actual_exe actual_home
+  actual_exe="$(process_exe "$pid" || true)"
+  if [[ "$actual_exe" != "$executable" ]]; then
+    die 1 "pid $pid executable is ${actual_exe:-unknown}, expected $executable"
+  fi
+  actual_home="$(process_home "$pid" || true)"
+  if [[ "$actual_home" != "$home" ]]; then
+    die 1 "pid $pid HOME is ${actual_home:-unknown}, expected $home"
+  fi
+  local state_version="$version"
+  load_inspect "$app_path"
+  if [[ "$version" != "$state_version" ]]; then
+    die 1 "bundle version is $version, state recorded $state_version"
+  fi
+  version="$state_version"
+  if [[ ! -d "$downloads" ]]; then
+    die 1 "download folder $downloads is missing"
+  fi
+  assert_only_recorded_process "$pid"
+}
+
+cmd_doctor() {
+  parse_common "$@"
+  prepare_evidence
+  doctor_identity
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    die 4 "process identity matches but UI readiness needs macOS. Not worth driving."
+  fi
+  read_ui >/dev/null
+  local text="$UI_TEXT"
+  mkdir -p "$EVIDENCE/doctor"
+  printf '%s\n' "$text" >"$EVIDENCE/doctor/ui.txt"
+  if [[ "$text" == *"Engine stopped"* || "$text" == *"Missing helper"* ]]; then
+    die 1 "engine is stopped. Not worth driving. See $EVIDENCE/doctor/ui.txt."
+  fi
+  if [[ "$text" == *"Starting the download engine"* && "$text" != *"No downloads"* && "$text" != *"Choose a download folder"* ]]; then
+    die 1 "engine is still starting. Not worth driving."
+  fi
+  if [[ "$text" != *"Choose a download folder"* && "$text" != *"No downloads"* && "$text" != *"Add Download"* ]]; then
+    die 1 "main window is not ready. Not worth driving. See $EVIDENCE/doctor/ui.txt."
+  fi
+  log_line "doctor ok pid=$pid version=$version polar=$polar"
+}
+
+require_helpers() {
+  local missing=()
+  local name path
+  for name in aria2c umb-watch; do
+    path="$app_path/Contents/Helpers/$name"
+    if [[ ! -x "$path" ]]; then
+      missing+=("$path")
+    fi
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    die 1 "missing helper ${missing[*]}. Build with scripts/build-aria2.sh and an app build that copies Contents/Helpers. This harness does not set ARIA2C or UMB_WATCH."
+  fi
+}
+
+wait_for_ui() {
+  local needle="$1"
+  local seconds="$2"
+  local strict="${3:-loose}"
+  local start now text
+  start="$(date +%s)"
+  while true; do
+    read_ui >/dev/null
+    text="$UI_TEXT"
+    printf '%s\n' "$text" >"$EVIDENCE/last-ui.txt"
+    if [[ "$text" == *"$needle"* ]]; then
+      printf '%s\n' "$text"
+      return 0
+    fi
+    if [[ "$strict" == "strict" ]]; then
+      if [[ "$text" == *"Failed"* || "$text" == *"Engine stopped"* || "$text" == *"Missing helper"* ]]; then
+        die 1 "umbilical showed a failure while waiting for $needle. See $EVIDENCE/last-ui.txt."
+      fi
+    fi
+    now="$(date +%s)"
+    if ((now - start >= seconds)); then
+      die 1 "timed out waiting for $needle. See $EVIDENCE/last-ui.txt."
+    fi
+    sleep 1
+  done
+}
+
+cmd_drive() {
+  local feature="${1:-}"
+  if [[ -z "$feature" ]]; then
+    die 2 "usage: verify-umbilical drive add-download [--url URL]"
+  fi
+  shift
+  if [[ "$feature" != "add-download" ]]; then
+    die 2 "unknown feature $feature"
+  fi
+  parse_common "$@"
+  prepare_evidence
+  if [[ -n "$URL" ]]; then
+    validate_http_url "$URL"
+  fi
+  cmd_doctor
+  require_helpers
+  read_ui >/dev/null
+  local text="$UI_TEXT"
+  if [[ "$text" != *"$UNOFFICIAL_TEXT"* ]]; then
+    die 1 "the window does not say license checks are off. Verification does not type a license key."
+  fi
+  if [[ "$text" == *"Choose a download folder"* ]]; then
+    safe_type_path "$downloads"
+    ui_call choose-folder "$downloads"
+    wait_for_ui "No downloads" 30 strict >/dev/null
+  fi
+  local started_payload=0
+  if [[ -z "$URL" ]]; then
+    DIRECTORY="$scratch/payload"
+    NAME="$PAYLOAD_NAME"
+    BODY="$PAYLOAD_BODY"
+    cmd_payload start
+    URL="$(sed -n 's/^url=//p' <<<"$PAYLOAD_REPORT")"
+    server_pid="$(sed -n 's/^pid=//p' <<<"$PAYLOAD_REPORT")"
+    [[ "$URL" == http://127.0.0.1:*"/$PAYLOAD_NAME" ]] || die 1 "payload server did not return a loopback URL"
+    [[ "$server_pid" =~ ^[0-9]+$ ]] || die 1 "payload server did not return a pid"
+    started_payload=1
+    write_state
+  fi
+  mkdir -p "$EVIDENCE/add-http-download"
+  printf 'click Add Download\nfill %s\nurl %s\n' "$URL_FIELD" "$URL" >"$EVIDENCE/add-http-download/action.txt"
+  ui_call click "Add Download"
+  ui_call fill "$URL_FIELD" "$URL"
+  ui_call value "$URL_FIELD"
+  local shown="$UI_CALL_OUT"
+  if [[ "$shown" != "$URL" ]]; then
+    die 1 "URL field shows ${shown:-empty}, expected $URL"
+  fi
+  ui_call checkbox "Video"
+  local video="$UI_CALL_OUT"
+  if [[ "$video" != "0" && "$video" != "false" ]]; then
+    die 1 "Video is on ($video). The HTTP journey does not start yt-dlp."
+  fi
+  ui_call click "Add"
+  wait_for_ui "Complete" 60 strict >/dev/null
+  local saved_name="${URL%%\?*}"
+  saved_name="${saved_name%/}"
+  saved_name="${saved_name##*/}"
+  [[ "$saved_name" =~ ^[A-Za-z0-9._-]+$ ]] || die 1 "download name is not a single file name"
+  local saved="$downloads/$saved_name"
+  if [[ ! -f "$saved" ]]; then
+    die 1 "completed row did not leave $saved"
+  fi
+  local got expected quarantine
+  got="$(sha256sum "$saved" | awk '{print $1}')"
+  if [[ "$started_payload" != 1 ]]; then
+    printf '%s\n' "$got" >"$EVIDENCE/add-http-download/file.sha256"
+  else
+    expected="$(sha256sum "$scratch/payload/www/$PAYLOAD_NAME" | awk '{print $1}')"
+    if [[ "$got" != "$expected" ]]; then
+      die 1 "downloaded sha256 $got does not match payload $expected"
+    fi
+    printf 'sha256=%s\n' "$got" >"$EVIDENCE/add-http-download/file.sha256"
+  fi
+  quarantine="$(xattr -p com.apple.quarantine "$saved" 2>/dev/null || true)"
+  printf '%s\n' "$quarantine" >"$EVIDENCE/add-http-download/quarantine.txt"
+  if [[ "$quarantine" != *umbilical* ]]; then
+    die 1 "quarantine attribute does not contain umbilical. See $EVIDENCE/add-http-download/quarantine.txt."
+  fi
+  ui_call read-text >"$EVIDENCE/add-http-download/ui.txt" || die 1 "could not save the accessibility dump"
+  cmd_ui_screenshot "$EVIDENCE/add-http-download/window.png"
+  log_line "drive add-download sha256=$got"
+}
+
+cmd_ui_screenshot() {
+  local path="$1"
+  require_macos
+  ui_call frame >/dev/null
+  local frame="$UI_CALL_OUT"
+  [[ "$frame" =~ ^[0-9]+,[0-9]+,[0-9]+,[0-9]+$ ]] || die 1 "window frame is not usable: $frame"
+  mkdir -p "$(dirname "$path")"
+  screencapture -x -R "$frame" "$path"
+  [[ -s "$path" ]] || die 1 "screenshot was not written to $path"
+}
+
+cmd_ui() {
+  local action="${1:-}"
+  if [[ -z "$action" ]]; then
+    die 2 "usage: verify-umbilical ui click|fill|value|checkbox|enabled|wait-text|wait-enabled|choose-folder|dump|screenshot|menu|status|open-url|quit"
+  fi
+  shift
+  parse_common "$@"
+  prepare_evidence
+  case "$action" in
+    click)
+      [[ -n "$NAME" ]] || die 2 "ui click needs --name"
+      cmd_doctor
+      ui_call click "$NAME"
+      ;;
+    fill)
+      [[ -n "$NAME" && -n "$VALUE" ]] || die 2 "ui fill needs --name and --value"
+      cmd_doctor
+      ui_call fill "$NAME" "$VALUE"
+      ;;
+    value)
+      [[ -n "$NAME" ]] || die 2 "ui value needs --name"
+      cmd_doctor
+      ui_call value "$NAME"
+      ;;
+    checkbox)
+      [[ -n "$NAME" ]] || die 2 "ui checkbox needs --name"
+      cmd_doctor
+      ui_call checkbox "$NAME"
+      ;;
+    enabled)
+      [[ -n "$NAME" ]] || die 2 "ui enabled needs --name"
+      cmd_doctor
+      ui_call enabled "$NAME"
+      ;;
+    wait-text)
+      [[ -n "$TEXT" ]] || die 2 "ui wait-text needs --text"
+      [[ -z "$TIMEOUT" || "$TIMEOUT" =~ ^[0-9]+$ ]] || die 2 "timeout must be a number of seconds"
+      cmd_doctor
+      wait_for_ui "$TEXT" "${TIMEOUT:-30}" loose
+      ;;
+    wait-enabled)
+      [[ -n "$NAME" ]] || die 2 "ui wait-enabled needs --name"
+      [[ -z "$TIMEOUT" || "$TIMEOUT" =~ ^[0-9]+$ ]] || die 2 "timeout must be a number of seconds"
+      cmd_doctor
+      local start now enabled
+      start="$(date +%s)"
+      while true; do
+        ui_call enabled "$NAME" >/dev/null
+        enabled="$UI_CALL_OUT"
+        if [[ "$enabled" == "true" ]]; then
+          printf 'enabled %s\n' "$NAME"
+          return 0
+        fi
+        now="$(date +%s)"
+        if ((now - start >= ${TIMEOUT:-15})); then
+          die 1 "timed out waiting for $NAME to become enabled"
+        fi
+        sleep 0.2
+      done
+      ;;
+    choose-folder)
+      [[ -n "$TARGET" ]] || die 2 "ui choose-folder needs --path"
+      cmd_doctor
+      safe_type_path "$TARGET"
+      ui_call choose-folder "$TARGET"
+      ;;
+    dump)
+      [[ -n "$TARGET" ]] || die 2 "ui dump needs --path"
+      cmd_doctor
+      mkdir -p "$(dirname "$TARGET")"
+      read_ui >"$TARGET"
+      ;;
+    screenshot)
+      [[ -n "$TARGET" ]] || die 2 "ui screenshot needs --path"
+      cmd_doctor
+      cmd_ui_screenshot "$TARGET"
+      ;;
+    menu)
+      [[ -n "$NAME" ]] || die 2 "ui menu needs --name"
+      cmd_doctor
+      ui_call menu "$NAME"
+      ;;
+    status)
+      cmd_doctor
+      ui_call status
+      ;;
+    open-url)
+      [[ -n "$URL" ]] || die 2 "ui open-url needs --url"
+      cmd_doctor
+      local before after extra
+      named_pids
+      before="${NAMED_PIDS[*]}"
+      open -a "$app_path" "$URL"
+      sleep 0.5
+      named_pids
+      after="${NAMED_PIDS[*]}"
+      for extra in "${NAMED_PIDS[@]}"; do
+        if [[ "$extra" != "$pid" ]]; then
+          signal_pid "$extra"
+          die 1 "open started another umbilical pid $extra. That pid was stopped. The verification pid is $pid. Before: $before After: $after"
+        fi
+      done
+      ;;
+    quit)
+      cmd_doctor
+      ui_call menu "Quit umbilical"
+      ;;
+    *)
+      die 2 "unknown ui action $action"
+      ;;
+  esac
+}
+
+remove_scratch() {
+  if [[ ! -d "$scratch" ]]; then
+    return 0
+  fi
+  if [[ -L "$scratch" ]]; then
+    die 1 "refusing to delete scratch because it is a symlink: $scratch"
+  fi
+  if [[ "$scratch" != "/tmp/umbilical-verify/scratch-$run_id" ]]; then
+    die 1 "refusing to delete scratch outside the verification prefix: $scratch"
+  fi
+  if [[ "$EVIDENCE" == "$scratch" || "$EVIDENCE" == "$scratch"/* ]]; then
+    die 1 "refusing to delete scratch because evidence is inside it"
+  fi
+  rm -rf "$scratch"
+}
+
+cmd_cleanup() {
+  parse_common "$@"
+  prepare_evidence
+  if [[ ! -f "$STATE" ]]; then
+    log_line "cleanup nothing to clean"
+    echo "nothing to clean"
+    exit 0
+  fi
+  load_state
+  local kids=()
+  if process_alive "$pid"; then
+    mapfile -t kids < <(descendant_pids "$pid" || true)
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+      set +e
+      ui_raw menu "Quit umbilical" >/dev/null 2>&1
+      set -e
+      for _ in 1 2 3 4 5 6 7 8 9 10; do
+        process_alive "$pid" || break
+        sleep 0.3
+      done
+    fi
+    if process_alive "$pid"; then
+      signal_pid "$pid"
+    fi
+  fi
+  local child
+  for child in "${kids[@]}"; do
+    [[ -z "$child" ]] && continue
+    if process_alive "$child"; then
+      signal_pid "$child"
+    fi
+  done
+  if [[ -n "$server_pid" ]]; then
+    if process_alive "$server_pid"; then
+      if ! payload_is_ours "$server_pid"; then
+        die 1 "server_pid $server_pid is not a payload server. State left in place. Scratch was not deleted."
+      fi
+      signal_pid "$server_pid"
+    fi
+  fi
+  remove_scratch
+  rm -f "$STATE"
+  log_line "cleanup removed scratch and state. Evidence remains at $EVIDENCE"
+  echo "cleaned $EVIDENCE"
+}
+
+main() {
+  local cmd="${1:-}"
+  if [[ -z "$cmd" || "$cmd" == "-h" || "$cmd" == "--help" ]]; then
+    usage
+    exit 2
+  fi
+  shift
+  case "$cmd" in
+    launch) cmd_launch "$@" ;;
+    relaunch) cmd_relaunch "$@" ;;
+    doctor) cmd_doctor "$@" ;;
+    inspect-app) cmd_inspect "$@" ;;
+    drive) cmd_drive "$@" ;;
+    ui) cmd_ui "$@" ;;
+    payload) cmd_payload "$@" ;;
+    cleanup) cmd_cleanup "$@" ;;
+    *) die 2 "unknown command $cmd" ;;
+  esac
+}
+
+main "$@"
