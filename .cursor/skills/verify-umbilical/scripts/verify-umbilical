@@ -14,12 +14,15 @@ URL_FIELD="https://example.com/file"
 PAYLOAD_NAME="verify-payload.txt"
 PAYLOAD_BODY="umbilical-verify-payload"
 PAYLOAD_MARKER="verify-umbilical-payload-marker"
-# Scratch and the account snapshot live in a private directory per run.
-# There is no shared /tmp/umbilical-verify parent.
+# Scratch, the account snapshot, and the default state file live in one
+# private directory per run. There is no shared parent and no shared state
+# directory. An explicit state path must sit in a directory this user owns,
+# mode 700, with no symlink in the path and no symlink inside that directory.
 VERIFY_PARENT="${UMB_VERIFY_PARENT:-}"
 CREATED_PARENT=0
+CLEAN_PARENT_ON_DIE=0
 
-STATE="${UMB_VERIFY_STATE:-/tmp/umbilical-verify-state/state.env}"
+STATE="${UMB_VERIFY_STATE:-}"
 EVIDENCE="${UMB_VERIFY_EVIDENCE:-}"
 evidence_is_explicit=0
 if [[ -n "$EVIDENCE" ]]; then
@@ -76,9 +79,13 @@ usage:
   verify-umbilical cleanup [--discard] [--state PATH] [--evidence PATH]
   verify-umbilical freeze-account [--state PATH] RUN_ID
 
-freeze-account records the account home for a run id. It reads --state wherever
+freeze-account records the account home for a run id into an existing
+UMB_VERIFY_PARENT. It does not create a directory. It reads --state wherever
 it appears and refuses when that state file exists, so it cannot re-baseline
-a live run.
+a live run. The default state file is that parent's state.env. An explicit
+state directory must already exist, mode 700, owned by this user, and not be
+a symlink. Launch refuses when umbilical:// already opens the build being
+launched.
 cleanup --discard removes the run even when the handler or the account home
 does not match. It writes that evidence, exits nonzero, and prints what still
 has to be fixed by hand. --discard is valid only on cleanup.
@@ -103,6 +110,16 @@ die() {
   if [[ -n "${INSPECT_TMP:-}" ]]; then
     rm -f "$INSPECT_TMP"
     INSPECT_TMP=""
+  fi
+  if [[ "${CLEAN_PARENT_ON_DIE:-0}" == "1" ]]; then
+    CLEAN_PARENT_ON_DIE=0
+    if [[ -n "${scratch:-}" && ! -L "$scratch" && -d "$scratch" ]]; then
+      rm -rf "$scratch"
+    fi
+    if [[ -n "${run_id:-}" && -n "${VERIFY_PARENT:-}" && ! -L "$VERIFY_PARENT" && -d "$VERIFY_PARENT" ]]; then
+      rm -f "$VERIFY_PARENT/account-$run_id.snap"
+    fi
+    remove_created_parent
   fi
   echo "verify-umbilical: $*" >&2
   log_line "exit=$code $*"
@@ -708,13 +725,77 @@ remove_created_parent() {
   VERIFY_PARENT=""
 }
 
-refuse_state_symlink() {
+path_has_disallowed_symlink() {
+  local path="$1"
+  local acc="" part rest target
+  [[ "$path" == /* ]] || return 0
+  rest="${path#/}"
+  while [[ -n "$rest" ]]; do
+    part="${rest%%/*}"
+    if [[ "$rest" == */* ]]; then
+      rest="${rest#*/}"
+    else
+      rest=""
+    fi
+    [[ -z "$part" || "$part" == "." || "$part" == ".." ]] && return 0
+    if [[ -z "$acc" ]]; then
+      acc="/$part"
+    else
+      acc="$acc/$part"
+    fi
+    if [[ -L "$acc" ]]; then
+      target="$(readlink "$acc" || true)"
+      # /tmp itself is a symlink to /private/tmp on macOS. Any other symlink is planted.
+      if [[ "$acc" == "/tmp" && ( "$target" == "/private/tmp" || "$target" == "private/tmp" ) ]]; then
+        continue
+      fi
+      return 0
+    fi
+  done
+  return 1
+}
+
+validate_state_dir() {
+  local dir owner mode base nullglob_was=0
+  [[ -n "$STATE" && "$STATE" == /* && "$STATE" != *..* ]] || die 1 "state file must be an absolute path"
+  if path_has_disallowed_symlink "$STATE"; then
+    die 1 "refusing state path because it contains a symlink: $STATE"
+  fi
   if [[ -L "$STATE" ]]; then
     die 1 "refusing state file because it is a symlink: $STATE"
   fi
+  dir="$(dirname "$STATE")"
+  if [[ "$dir" == "/" || -L "$dir" || ! -d "$dir" ]]; then
+    die 1 "state directory must be a real directory this user owns: $dir"
+  fi
+  owner="$(file_owner "$dir")"
+  mode="$(file_mode "$dir")"
+  [[ "$owner" == "$(id -u)" ]] || die 1 "state directory is owned by uid $owner, expected $(id -u)"
+  [[ "$mode" == "700" ]] || die 1 "state directory mode is $mode, expected 700"
+  if shopt -q nullglob; then
+    nullglob_was=1
+  fi
+  shopt -s nullglob
+  # set inside this function only. An empty directory must not become `for x in ;`.
+  set -- "$dir"/* "$dir"/.[!.]* "$dir"/..?*
+  if [[ "$nullglob_was" == "0" ]]; then
+    shopt -u nullglob
+  fi
+  for base in "$@"; do
+    if [[ -L "$base" ]]; then
+      die 1 "refusing state directory because it contains a symlink: $base"
+    fi
+  done
+}
+
+refuse_state_symlink() {
+  validate_state_dir
 }
 
 load_state() {
+  if [[ -z "$STATE" ]]; then
+    die 1 "no verification instance. Pass --state or set UMB_VERIFY_STATE."
+  fi
   refuse_state_symlink
   if [[ ! -f "$STATE" ]]; then
     die 1 "no verification instance. State file $STATE is missing."
@@ -812,12 +893,11 @@ load_state() {
 }
 
 write_state() {
-  refuse_state_symlink
-  local tmp="$STATE.tmp.$$"
-  local state_dir
-  state_dir="$(dirname "$STATE")"
-  mkdir -p "$state_dir"
-  cat >"$tmp" <<EOF
+  validate_state_dir
+  local tmp dir py_status=0
+  dir="$(dirname "$STATE")"
+  tmp="$(mktemp "$dir/state.XXXXXX")" || die 1 "could not create a state temp file in $dir"
+  STATE_BODY="$(cat <<EOF
 run_id=$run_id
 pid=$pid
 app_path=$app_path
@@ -835,9 +915,43 @@ settings_written=$settings_written
 handler_path=$handler_path
 verify_parent=$VERIFY_PARENT
 EOF
-  chmod 600 "$tmp"
-  mv "$tmp" "$STATE"
-  chmod 600 "$STATE"
+)"
+  STATE_BODY="$STATE_BODY" python3 - "$tmp" "$STATE" <<'PY' || py_status=$?
+import os
+import sys
+
+tmp, dest = sys.argv[1], sys.argv[2]
+body = os.environ.get("STATE_BODY", "")
+if not body.endswith("\n"):
+    body += "\n"
+if os.path.islink(tmp) or os.path.islink(dest):
+    sys.exit(3)
+parent = os.path.dirname(dest)
+for name in os.listdir(parent):
+    if os.path.islink(os.path.join(parent, name)):
+        sys.exit(3)
+flags = os.O_WRONLY | os.O_NOFOLLOW
+if hasattr(os, "O_CLOEXEC"):
+    flags |= os.O_CLOEXEC
+fd = os.open(tmp, flags)
+try:
+    payload = body.encode("utf-8")
+    os.ftruncate(fd, 0)
+    written = os.write(fd, payload)
+    if written != len(payload):
+        sys.exit(3)
+    os.fchmod(fd, 0o600)
+finally:
+    os.close(fd)
+os.rename(tmp, dest)
+PY
+  if [[ "$py_status" -ne 0 ]]; then
+    if [[ -e "$tmp" || -L "$tmp" ]]; then
+      rm -f "$tmp"
+    fi
+    die 1 "refusing to write the state file through a symlink: $STATE"
+  fi
+  unset STATE_BODY
 }
 
 account_snap_file() {
@@ -1054,60 +1168,78 @@ write_account_records() {
     return 1
   fi
   # Size and mtime for files and symlinks. Directory names are recorded without
-  # their mtime, so a Finder .DS_Store touch does not fail the run. File bytes are not read.
-  local names name
-  names="$(python3 - "$folder" 2>/dev/null <<'PY'
-import os, sys
+  # their mtime, so a Finder .DS_Store touch does not fail the run. A regular
+  # file also stores a sha256 of its first 64KiB and, when it is longer, its
+  # last 64KiB, so a same-size overwrite is visible even if mtime is restored.
+  # The walk stops at 100000 entries. Rows are appended here so a large folder
+  # is not copied through the shell.
+  local py_status=0
+  python3 - "$folder" "$dest" 2>/dev/null <<'PY' || py_status=$?
+import hashlib
+import os
+import sys
+
+CAP = 100000
+SAMPLE = 65536
 root = sys.argv[1]
-
-def raise_walk_error(err):
-    raise err
-
+dest = sys.argv[2]
 rows = []
+count = 0
+
+def sample_hash(path, size):
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        head = handle.read(SAMPLE)
+        digest.update(head)
+        if size > SAMPLE:
+            start = size - SAMPLE
+            if start < SAMPLE:
+                start = SAMPLE
+            if start < size:
+                handle.seek(start)
+                digest.update(handle.read(SAMPLE))
+    return digest.hexdigest()
+
+def walk(dirpath, rel_dir):
+    global count
+    entries = list(os.scandir(dirpath))
+    entries.sort(key=lambda entry: entry.name)
+    for entry in entries:
+        if entry.name == ".DS_Store":
+            continue
+        count += 1
+        if count > CAP:
+            sys.exit(2)
+        rel = os.path.join(rel_dir, entry.name) if rel_dir else entry.name
+        if entry.is_symlink():
+            st = entry.stat(follow_symlinks=False)
+            rows.append("link\t%s\t%s\t%s\t%s\t%s" % (rel, st.st_size, int(st.st_mtime_ns), os.readlink(entry.path), entry.path))
+            continue
+        if entry.is_dir(follow_symlinks=False):
+            rows.append("dir\t%s\t%s" % (rel, entry.path))
+            walk(entry.path, rel)
+            continue
+        st = entry.stat(follow_symlinks=False)
+        digest = sample_hash(entry.path, st.st_size)
+        rows.append("file\t%s\t%s\t%s\t%s\t%s" % (rel, st.st_size, int(st.st_mtime_ns), digest, entry.path))
+
 try:
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=raise_walk_error):
-        dirnames.sort()
-        filenames.sort()
-        rel_dir = os.path.relpath(dirpath, root)
-        if rel_dir == ".":
-            rel_dir = ""
-        kept = []
-        for name in dirnames:
-            if name == ".DS_Store":
-                continue
-            path = os.path.join(dirpath, name)
-            rel = os.path.join(rel_dir, name) if rel_dir else name
-            if os.path.islink(path):
-                st = os.lstat(path)
-                rows.append("link\t%s\t%s\t%s\t%s\t%s" % (rel, st.st_size, int(st.st_mtime_ns), os.readlink(path), path))
-            else:
-                rows.append("dir\t%s\t%s" % (rel, path))
-                kept.append(name)
-        dirnames[:] = kept
-        for name in filenames:
-            if name == ".DS_Store":
-                continue
-            path = os.path.join(dirpath, name)
-            rel = os.path.join(rel_dir, name) if rel_dir else name
-            st = os.lstat(path)
-            if os.path.islink(path):
-                rows.append("link\t%s\t%s\t%s\t%s\t%s" % (rel, st.st_size, int(st.st_mtime_ns), os.readlink(path), path))
-            else:
-                rows.append("file\t%s\t%s\t%s\t%s" % (rel, st.st_size, int(st.st_mtime_ns), path))
+    walk(root, "")
 except OSError:
     sys.exit(1)
-for row in sorted(rows):
-    sys.stdout.write(row + "\n")
+with open(dest, "ab") as handle:
+    handle.write(("download\tfolder\t%s\n" % root).encode("utf-8", "surrogateescape"))
+    for row in sorted(rows):
+        handle.write(("download\t%s\n" % row).encode("utf-8", "surrogateescape"))
 PY
-)" || {
-    PREFS_ERROR="could not list download folder $folder. Verification does not change it and does not launch."
+  if [[ "$py_status" -ne 0 ]]; then
+    if [[ "$py_status" -eq 2 ]]; then
+      PREFS_ERROR="download folder $folder has more than 100000 entries. Verification stops and does not launch."
+    else
+      PREFS_ERROR="could not list download folder $folder. Verification does not change it and does not launch."
+    fi
     return 1
-  }
-  printf 'download\tfolder\t%s\n' "$folder" >>"$dest"
-  while IFS= read -r name; do
-    [[ -z "$name" ]] && continue
-    printf 'download\t%s\n' "$name" >>"$dest"
-  done <<<"$names"
+  fi
 }
 
 apply_prefs_fields_from_snap() {
@@ -1174,23 +1306,31 @@ snapshot_real_prefs() {
 report_snapshot_diff() {
   local snap="$1"
   local current="$2"
-  local line path
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    if ! grep -F -x -q -- "$line" "$snap"; then
-      path="${line##*$'\t'}"
-      PREFS_ERROR="account home path changed: ${path}. Verification does not change it."
-      return 1
-    fi
-  done <"$current"
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    if ! grep -F -x -q -- "$line" "$current"; then
-      path="${line##*$'\t'}"
-      PREFS_ERROR="account home path changed: ${path}. Verification does not change it."
-      return 1
-    fi
-  done <"$snap"
+  local path py_status=0
+  path="$(python3 - "$snap" "$current" 2>/dev/null <<'PY'
+import sys
+def load(path):
+    with open(path, "rb") as handle:
+        return [line for line in handle.read().split(b"\n") if line]
+old = load(sys.argv[1])
+new = load(sys.argv[2])
+old_set = set(old)
+new_set = set(new)
+for line in new:
+    if line not in old_set:
+        sys.stdout.buffer.write(line.rsplit(b"\t", 1)[-1])
+        sys.exit(0)
+for line in old:
+    if line not in new_set:
+        sys.stdout.buffer.write(line.rsplit(b"\t", 1)[-1])
+        sys.exit(0)
+sys.exit(2)
+PY
+)" || py_status=$?
+  if [[ "$py_status" -eq 0 && -n "$path" ]]; then
+    PREFS_ERROR="account home path changed: ${path}. Verification does not change it."
+    return 1
+  fi
   PREFS_ERROR="account home path changed during verification. Verification does not change it."
   return 1
 }
@@ -1801,16 +1941,16 @@ mint_run_id() {
 
 make_scratch() {
   create_verify_parent
-  scratch="$(mktemp -d "$VERIFY_PARENT/scratch-${run_id}-XXXXXX")"
+  scratch="$(mktemp -d "$VERIFY_PARENT/scratch-${run_id}-XXXXXX")" || die 1 "could not create the scratch directory"
   valid_scratch_path "$scratch" || die 1 "mktemp returned an unexpected scratch path"
-  chmod 700 "$scratch"
+  chmod 700 "$scratch" || die 1 "could not create the scratch directory"
   if [[ -L "$scratch" ]]; then
     die 1 "scratch path is a symlink"
   fi
   home="$scratch/home"
   downloads="$scratch/umbilical-verify-downloads"
-  mkdir -p "$home" "$downloads" "$scratch/tmp" "$scratch/logs"
-  chmod 700 "$home" "$downloads" "$scratch/tmp" "$scratch/logs"
+  mkdir -p "$home" "$downloads" "$scratch/tmp" "$scratch/logs" || die 1 "could not create the scratch directory"
+  chmod 700 "$home" "$downloads" "$scratch/tmp" "$scratch/logs" || die 1 "could not create the scratch directory"
 }
 
 capture_lstart() {
@@ -1847,7 +1987,7 @@ wait_until_ready() {
       fi
       die 1 "relaunch exited before the window was ready. State still records pid $pid so cleanup can remove the scratch directory."
     fi
-    # Download entries are lstat size and mtime. This loop does not read file bytes.
+    # Download entries include a head and tail sample hash. This loop does not read a whole large file.
     set +e
     assert_account_unchanged
     local acct_status=$?
@@ -1939,9 +2079,9 @@ record_launch_evidence() {
   fi
 }
 
-outermost_app_bundle() {
+nearest_app_bundle() {
   local exe="$1"
-  local acc="" part rest
+  local acc="" part rest found=""
   [[ "$exe" == /* ]] || return 1
   rest="${exe#/}"
   while [[ -n "$rest" ]]; do
@@ -1958,17 +2098,20 @@ outermost_app_bundle() {
       acc="$acc/$part"
     fi
     if [[ "$part" == *.app ]]; then
-      printf '%s\n' "$acc"
-      return 0
+      found="$acc"
     fi
   done
+  if [[ -n "$found" ]]; then
+    printf '%s\n' "$found"
+    return 0
+  fi
   return 1
 }
 
 write_accessibility_host() {
   local dest="$1"
-  local current="$$" exe="" comm="" guard=0 parent="" bundle="" tail=""
-  local best_bundle="" best_pid="" best_direct=0 direct=0
+  local current="$$" exe="" comm="" guard=0 parent="" bundle=""
+  local chosen_bundle="" chosen_pid=""
   {
     printf 'harness_pid=%s\n' "$$"
     comm="$(ps -o comm= -p $$ 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
@@ -1977,20 +2120,11 @@ write_accessibility_host() {
       comm="$(ps -o comm= -p "$current" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
       exe="$(process_exe "$current" || true)"
       printf 'pid=%s comm=%s exe=%s\n' "$current" "${comm:-unknown}" "${exe:-unknown}"
-      bundle="$(outermost_app_bundle "$exe" || true)"
-      if [[ -n "$bundle" ]]; then
-        direct=0
-        tail="${exe#"$bundle"/}"
-        if [[ "$exe" == "$bundle" || ( "$tail" != *.app && "$tail" != *.app/* ) ]]; then
-          direct=1
-        fi
-        if [[ -z "$best_bundle" || ${#bundle} -lt ${#best_bundle} ]]; then
-          best_bundle="$bundle"
-          best_pid="$current"
-          best_direct=$direct
-        elif [[ "$bundle" == "$best_bundle" && "$direct" == "1" && "$best_direct" != "1" ]]; then
-          best_pid="$current"
-          best_direct=1
+      if [[ -z "$chosen_bundle" ]]; then
+        bundle="$(nearest_app_bundle "$exe" || true)"
+        if [[ -n "$bundle" ]]; then
+          chosen_bundle="$bundle"
+          chosen_pid="$current"
         fi
       fi
       parent="$(ps -o ppid= -p "$current" 2>/dev/null | tr -d '[:space:]' || true)"
@@ -2001,8 +2135,8 @@ write_accessibility_host() {
       current="$parent"
       guard=$((guard + 1))
     done
-    if [[ -n "$best_bundle" ]]; then
-      printf 'app_pid=%s\napp_bundle=%s\napp_exe=%s\n' "$best_pid" "$best_bundle" "$best_bundle"
+    if [[ -n "$chosen_bundle" ]]; then
+      printf 'app_pid=%s\napp_bundle=%s\napp_exe=%s\n' "$chosen_pid" "$chosen_bundle" "$chosen_bundle"
     else
       printf 'app=absent\n'
     fi
@@ -2025,7 +2159,17 @@ record_handler_before_spawn() {
       rm -f "$(account_snap_file)"
       remove_scratch_dir || true
       remove_created_parent
+      CLEAN_PARENT_ON_DIE=0
       die 1 "could not record the umbilical:// handler before launch. The app was not started."
+    fi
+    if [[ "$handler_path" == "$inspected_app" || "$handler_path" == "$app_path" ]]; then
+      printf '%s\n' "$handler_path" >"$EVIDENCE/launch/handler-before.txt"
+      private_file "$EVIDENCE/launch/handler-before.txt"
+      rm -f "$(account_snap_file)"
+      remove_scratch_dir || true
+      remove_created_parent
+      CLEAN_PARENT_ON_DIE=0
+      die 1 "umbilical:// already opens this verification build ($handler_path). A discarded run must not become the next baseline. Point the handler at the previous app, then launch again. The app was not started."
     fi
   fi
   printf '%s\n' "$handler_path" >"$EVIDENCE/launch/handler-before.txt"
@@ -2038,9 +2182,11 @@ cmd_launch() {
   [[ -n "$APP" ]] || die 2 "launch needs --app"
   fill_default_evidence
   check_evidence_path
-  refuse_state_symlink
-  if [[ -f "$STATE" ]]; then
-    die 1 "state already exists at $STATE. Run verify-umbilical cleanup before launch."
+  if [[ -n "$STATE" ]]; then
+    validate_state_dir
+    if [[ -e "$STATE" || -L "$STATE" ]]; then
+      die 1 "state already exists at $STATE. Run verify-umbilical cleanup before launch."
+    fi
   fi
   load_inspect "$APP"
   if [[ "$launch_gate" == "refused" ]]; then
@@ -2056,10 +2202,14 @@ cmd_launch() {
   fi
   require_macos
   ensure_evidence_dir
+  CLEAN_PARENT_ON_DIE=1
   create_verify_parent
   mint_run_id
   settings_written=0
   make_scratch
+  if [[ -z "$STATE" ]]; then
+    STATE="$VERIFY_PARENT/state.env"
+  fi
   app_path="$inspected_app"
   server_pid=""
   # Hash failures are checked explicitly. set -e does not see them inside a conditional.
@@ -2080,6 +2230,7 @@ cmd_launch() {
     fail_launch "could not record the process start time"
   fi
   write_state
+  CLEAN_PARENT_ON_DIE=0
   record_launch_evidence
   log_line "launch pid=$pid app=$app_path version=$version polar=$polar"
   wait_until_ready launch
@@ -2594,7 +2745,15 @@ assert_handler_restored() {
     return 1
   fi
   if ! handler_set "$handler_path"; then
-    PREFS_ERROR="could not restore the umbilical:// handler from $after to $handler_path."
+    status=0
+    restored="$(handler_get 2>/dev/null)" || status=$?
+    if [[ $status -eq 0 && -n "$restored" && "$restored" == "$handler_path" ]]; then
+      if [[ -n "$evidence_dir" ]]; then
+        printf '%s\n' "$handler_path" >"$evidence_dir/handler-restored.txt"
+      fi
+      return 0
+    fi
+    PREFS_ERROR="could not restore the umbilical:// handler from $after to $handler_path. It is ${restored:-unread}."
     return 1
   fi
   status=0
@@ -2626,9 +2785,8 @@ function run() {
 JS
 }
 
-handler_set() {
+handler_set_jxa() {
   local ident="$1"
-  [[ "$ident" == /* && "$ident" != *$'\n'* && "$ident" != *..* ]] || return 1
   # The macOS 12 NSWorkspace call is asynchronous and may ask for consent before completion.
   osascript -l JavaScript - "$ident" <<'JS' || return 1
 function run(argv) {
@@ -2656,6 +2814,40 @@ function run(argv) {
   return "restored";
 }
 JS
+}
+
+handler_set_swift() {
+  local ident="$1"
+  local dir bin status=0
+  [[ -d /System/Library/Frameworks/AppKit.framework ]] || return 1
+  [[ -f "$SCRIPT_DIR/restore-handler.swift" ]] || return 1
+  dir="$(mktemp -d /tmp/umbilical-verify-handler.XXXXXX)" || return 1
+  bin="$dir/restore-handler"
+  if command -v xcrun >/dev/null 2>&1; then
+    xcrun swiftc -framework AppKit "$SCRIPT_DIR/restore-handler.swift" -o "$bin" || status=$?
+  else
+    swiftc -framework AppKit "$SCRIPT_DIR/restore-handler.swift" -o "$bin" || status=$?
+  fi
+  if [[ "$status" -ne 0 || ! -x "$bin" ]]; then
+    rm -rf "$dir"
+    return 1
+  fi
+  "$bin" "$ident" umbilical || status=$?
+  rm -rf "$dir"
+  [[ "$status" -eq 0 ]]
+}
+
+handler_set() {
+  local ident="$1"
+  [[ "$ident" == /* && "$ident" != *$'\n'* && "$ident" != *..* ]] || return 1
+  if handler_set_jxa "$ident"; then
+    return 0
+  fi
+  if [[ -d /System/Library/Frameworks/AppKit.framework ]]; then
+    handler_set_swift "$ident"
+    return $?
+  fi
+  return 1
 }
 
 deliver_url_to_pid() {
@@ -2760,14 +2952,10 @@ cmd_freeze_account() {
   if [[ -e "$STATE" || -L "$STATE" ]]; then
     die 1 "freeze-account refuses while $STATE exists. It does not re-baseline a live run."
   fi
-  if [[ -n "$VERIFY_PARENT" ]]; then
-    validate_verify_parent "$VERIFY_PARENT"
-  else
-    VERIFY_PARENT="$(mktemp -d /tmp/umbilical-verify.XXXXXX)" || die 1 "could not create a verification parent"
-    CREATED_PARENT=1
-    chmod 700 "$VERIFY_PARENT" || true
-    validate_verify_parent "$VERIFY_PARENT"
+  if [[ -z "$VERIFY_PARENT" ]]; then
+    die 2 "freeze-account needs UMB_VERIFY_PARENT and does not create a directory"
   fi
+  validate_verify_parent "$VERIFY_PARENT"
   snap="$VERIFY_PARENT/account-$run_id.snap"
   if [[ -e "$snap" || -L "$snap" ]]; then
     die 1 "freeze-account refuses because $snap already exists. It does not re-baseline a run."
@@ -2782,6 +2970,10 @@ cmd_freeze_account() {
 
 cmd_cleanup() {
   parse_common "$@"
+  if [[ -z "$STATE" ]]; then
+    echo "nothing to clean"
+    exit 0
+  fi
   if [[ ! -e "$STATE" && ! -L "$STATE" ]]; then
     fill_default_evidence
     validate_evidence_location
