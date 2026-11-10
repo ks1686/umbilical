@@ -2,7 +2,7 @@
 -- Usage: osascript ui.applescript <command> [args...]
 
 on run argv
-	if (count of argv) is 0 then error "usage: ui.applescript read-text|click|fill|value|checkbox|enabled|choose-folder|menu|status|frame"
+	if (count of argv) is 0 then error "usage: ui.applescript read-text|click|fill|value|checkbox|enabled|choose-folder|menu|status|frame|quit-pid"
 	set command to item 1 of argv
 	if command is "read-text" then
 		return describeProcess()
@@ -28,10 +28,42 @@ on run argv
 		return statusMenuText()
 	else if command is "frame" then
 		return windowFrame()
+	else if command is "quit-pid" then
+		quitByPid(item 2 of argv)
+		return "quit pid " & item 2 of argv
 	else
 		error "unknown ui command: " & command
 	end if
 end run
+
+on quitByPid(pidText)
+	set pidNum to pidText as integer
+	tell application "System Events"
+		set matches to every process whose unix id is pidNum
+		if (count of matches) is 0 then error "process pid not found: " & pidText
+		tell item 1 of matches
+			set frontmost to true
+			set targetItem to missing value
+			repeat with bar in menu bars
+				repeat with itemRef in menu bar items of bar
+					set descText to ""
+					set nameText to ""
+					try
+						set descText to description of itemRef
+					end try
+					try
+						set nameText to name of itemRef
+					end try
+					if descText is "umbilical" or nameText is "umbilical" then set targetItem to itemRef
+				end repeat
+			end repeat
+			if targetItem is missing value then error "menu bar item umbilical was not found for pid " & pidText
+			click targetItem
+			delay 0.3
+			click menu item "Quit umbilical" of menu 1 of targetItem
+		end tell
+	end tell
+end quitByPid
 
 on describeProcess()
 	tell application "System Events"

@@ -34,6 +34,7 @@ Preconditions:
 
 ## Gotchas
 
+- `App/DownloadList.swift` sets `.accessibilityElement(children: .combine)` on the row that contains Pause, Resume, and Remove. System Events may see one combined element instead of those buttons. That can only be checked on a Mac. If `ui click --name "Pause"` reports that the button is missing, record that result. Do not change the app, and do not treat a click on the combined row as proof of Pause.
 - `Pause` and `Resume` are the same button with a changing title. Read the title before clicking.
 - Confirming removal clicks a second button that is also named `Remove`. The first click only opens the dialog. `Cancel` in that dialog keeps the row.
 - A video row's button is `Cancel` and does not ask. Do not use that row to prove the confirmation dialog.

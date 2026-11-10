@@ -40,4 +40,4 @@ Preconditions:
 - `Settings…` uses an ellipsis. `Check for Updates` does not.
 - Choosing `Check for Updates` starts a Sparkle check. Verification does not choose it. Launch itself may already contact the appcast.
 - `ui menu` clicks the status item and then the named menu item. A missing description `umbilical` fails the command.
-- Quit is also what cleanup tries first. After a successful `ui quit`, the pid is dead and a later cleanup only removes scratch state.
+- Quit is also what cleanup tries first, and both address the recorded pid. After a successful `ui quit`, the pid is dead and a later cleanup only removes scratch state. A pid whose executable, HOME, or start time does not match is left running.

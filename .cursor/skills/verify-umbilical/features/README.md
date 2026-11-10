@@ -5,8 +5,8 @@ This directory is the maintained source for verifying the user-facing behavior o
 ## Baseline preconditions
 
 - Build `umbilical.app` with Xcode and launch it through `verify-umbilical launch --app`.
-- The scratch `HOME` is `/tmp/umbilical-verify/scratch-<run-id>/home`. Download files go in `umbilical-verify-downloads` under that scratch directory.
-- `verify-umbilical doctor` exits 0. The recorded pid, bundle id `me.peapod.umbilical`, version, and scratch `HOME` match.
+- The scratch directory is created with `mktemp -d` under `/tmp/umbilical-verify`. `HOME` and `CFFIXED_USER_HOME` are `<scratch>/home`. Download files go in `umbilical-verify-downloads` under that scratch directory.
+- `verify-umbilical doctor` exits 0. The recorded pid, bundle id `me.peapod.umbilical`, version, scratch `HOME`, `CFFIXED_USER_HOME`, start time, and preferences snapshot match. The account preferences plist is unchanged.
 - The window says `Unofficial build. License checks are off.` A build that enforces Polar is not a verification instance.
 - `Contents/Helpers/aria2c` and `Contents/Helpers/umb-watch` are executable before a download journey. `yt-dlp` is required only for a video download.
 - Never drive an `umbilical` process this run did not start.
@@ -43,6 +43,6 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 
 - [Choose a download folder](./choose-download-folder.md) covers the first-launch folder choice, the Settings path, and the same folder after relaunch.
 - [Add an HTTP download](./add-http-download.md) covers the add sheet, a finished file, rejection of unsafe inputs, and quarantine.
-- [Pause, resume, and remove](./pause-resume-remove.md) covers the row buttons, the confirmation dialog, and what remains on disk.
+- [Pause, resume, and remove](./pause-resume-remove.md) covers the row buttons, the confirmation dialog, and what remains on disk. A Mac run must check `App/DownloadList.swift` line 32. `.accessibilityElement(children: .combine)` on that row may hide Pause, Resume, and Remove from System Events. Do not change the app.
 - [Menu bar](./menu-bar.md) covers the idle status item, an active summary, Open umbilical, Settings, and Quit.
 - [Confirm a handoff](./confirm-handoff.md) covers the sheet Safari and Finder reach, the one-second arming delay, and Cancel.
