@@ -34,7 +34,7 @@ Preconditions:
 
 ## Gotchas
 
-- Opening `umbilical://` without `-a` on the verification bundle can deliver the URL to some other umbilical. `ui open-url` uses the state file's app path. A second pid whose executable is that bundle is stopped. `open -a` can also make Launch Services treat the verification bundle as the `umbilical://` handler. Cleanup does not edit that database. After the run, point the handler back at the app you use if the verification build took it.
+- `ui open-url` sends `umbilical://` to the recorded pid and does not call `open`. It records the current handler and restores it when the handler changes. A second pid is recorded with its environment. That pid is signaled only when its executable is the verification bundle. If the original handler was absent, the harness does not invent one to clear a handler that appeared during the run. Read `open-url/handler-restored.txt` after the run.
 - The Safari context menu is a separate entry point. Proving the sheet with `ui open-url` does not prove the Safari click or the extension's website-access switch.
 - Finder document handoff is a separate entry point. The sheet copy for a torrent says a torrent file was opened and that umbilical never seeds. Do not substitute the HTTP sheet for that sentence.
 - `Download` is ignored for one second (`HandoffConfirmationGate.armDelay`). Clicking earlier is not a failure of the button. Wait until it is enabled.

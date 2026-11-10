@@ -38,6 +38,9 @@ NAMED_PIDS=()
 IDENTITY_REASON=""
 PREFS_ERROR=""
 ENTITLEMENTS_TEXT=""
+ENTITLEMENTS_KEYCHAIN=""
+ENTITLEMENTS_TASK_ALLOW=""
+settings_written=0
 
 usage() {
   cat >&2 <<'EOF'
@@ -64,6 +67,7 @@ usage:
   verify-umbilical payload start --directory DIR --name NAME --body TEXT
   verify-umbilical payload stop --pid PID
   verify-umbilical cleanup [--state PATH] [--evidence PATH]
+  verify-umbilical freeze-account RUN_ID
 
 Exit 0 means the command finished. Exit 1 means the instance or bundle is not usable.
 Exit 2 means the arguments are wrong. Exit 3 means this host is not macOS.
@@ -179,60 +183,146 @@ fill_default_evidence() {
   fi
 }
 
-validate_evidence_location() {
+# Resolve every symlink. Missing tail components stay literal. ".." is refused.
+canonical_path() {
+  local input="$1"
+  local guard=0
+  local part rest acc target restarted
+  while [[ $guard -lt 40 ]]; do
+    guard=$((guard + 1))
+    [[ "$input" == /* ]] || return 1
+    acc=""
+    rest="${input#/}"
+    restarted=0
+    while [[ -n "$rest" ]]; do
+      part="${rest%%/*}"
+      if [[ "$rest" == */* ]]; then
+        rest="${rest#*/}"
+      else
+        rest=""
+      fi
+      [[ -z "$part" || "$part" == "." ]] && continue
+      [[ "$part" == ".." ]] && return 1
+      if [[ -z "$acc" ]]; then
+        acc="/$part"
+      else
+        acc="$acc/$part"
+      fi
+      if [[ -L "$acc" ]]; then
+        target="$(readlink "$acc")" || return 1
+        if [[ "$target" != /* ]]; then
+          target="$(dirname "$acc")/$target"
+        fi
+        if [[ -n "$rest" ]]; then
+          input="$target/$rest"
+        else
+          input="$target"
+        fi
+        restarted=1
+        break
+      fi
+      if [[ ! -e "$acc" ]]; then
+        if [[ -n "$rest" ]]; then
+          acc="$acc/$rest"
+        fi
+        printf '%s\n' "$acc"
+        return 0
+      fi
+    done
+    if [[ "$restarted" == "0" ]]; then
+      [[ -n "$acc" ]] || acc="/"
+      printf '%s\n' "$acc"
+      return 0
+    fi
+  done
+  return 1
+}
+
+path_is_under() {
+  local path="$1"
+  local root="$2"
+  [[ -n "$root" && "$path" == "$root"/* ]]
+}
+
+check_evidence_path() {
+  local canon root ok parent_canon artifacts_root
   [[ -n "$EVIDENCE" ]] || die 1 "evidence directory is not set"
   [[ "$EVIDENCE" == /* && "$EVIDENCE" != *..* ]] || die 1 "evidence directory must be an absolute path"
-  case "$EVIDENCE" in
-    /tmp/*|/opt/cursor/artifacts/*) ;;
-    *) die 1 "evidence directory must be under /tmp or /opt/cursor/artifacts" ;;
-  esac
-  case "$EVIDENCE" in
-    "$VERIFY_PARENT"|"$VERIFY_PARENT"/*)
-      die 1 "evidence directory must stay outside $VERIFY_PARENT"
-      ;;
-  esac
   if [[ -L "$EVIDENCE" ]]; then
     die 1 "refusing evidence directory because it is a symlink: $EVIDENCE"
+  fi
+  canon="$(canonical_path "$EVIDENCE")" || die 1 "could not resolve evidence path $EVIDENCE"
+  ok=0
+  root="$(canonical_path /tmp)" || root=""
+  if path_is_under "$canon" "$root" || path_is_under "$canon" "/private/tmp"; then
+    ok=1
+  fi
+  if [[ -d /private/tmp || -L /private/tmp ]]; then
+    root="$(canonical_path /private/tmp)" || root=""
+    if path_is_under "$canon" "$root"; then
+      ok=1
+    fi
+  fi
+  if [[ -d /opt/cursor/artifacts || -L /opt/cursor/artifacts ]]; then
+    artifacts_root="$(canonical_path /opt/cursor/artifacts)" || artifacts_root=""
+    if path_is_under "$canon" "$artifacts_root"; then
+      ok=1
+    fi
+  fi
+  [[ "$ok" == "1" ]] || die 1 "evidence directory must stay under /tmp or /opt/cursor/artifacts"
+  parent_canon="$(canonical_path "$VERIFY_PARENT")" || parent_canon="$VERIFY_PARENT"
+  if [[ "$canon" == "$parent_canon" || "$canon" == "$parent_canon"/* ]]; then
+    die 1 "evidence directory must stay outside $VERIFY_PARENT"
   fi
   if [[ -e "$EVIDENCE" && ! -d "$EVIDENCE" ]]; then
     die 1 "evidence path is not a directory: $EVIDENCE"
   fi
+  EVIDENCE_CANON="$canon"
+}
+
+ensure_evidence_dir() {
+  check_evidence_path
   mkdir -p "$EVIDENCE"
-  chmod 700 "$EVIDENCE" || die 1 "could not restrict the evidence directory"
   if [[ -L "$EVIDENCE" ]]; then
     die 1 "refusing evidence directory because it is a symlink: $EVIDENCE"
   fi
+  chmod 700 "$EVIDENCE" || die 1 "could not restrict the evidence directory"
+  local now
+  now="$(canonical_path "$EVIDENCE")" || die 1 "could not resolve evidence path $EVIDENCE"
+  [[ "$now" == "$EVIDENCE_CANON" ]] || die 1 "evidence path changed while it was created"
+}
+
+validate_evidence_location() {
+  ensure_evidence_dir
 }
 
 require_output_path() {
   local path="$1"
+  local canon evidence_canon parent base
   [[ -n "$EVIDENCE" ]] || die 1 "evidence directory is not set"
   [[ "$path" == /* && "$path" != *..* ]] || die 1 "output path must be absolute and must not contain .."
-  case "$path" in
-    "$EVIDENCE"/*) ;;
-    *) die 1 "output path must stay inside the evidence directory $EVIDENCE" ;;
-  esac
-  local parent base cursor
-  parent="$(dirname "$path")"
-  base="$(basename "$path")"
-  [[ -n "$base" && "$base" != "." && "$base" != ".." ]] || die 1 "output path is not a file"
   if [[ -L "$path" ]]; then
     die 1 "refusing output path because it is a symlink: $path"
   fi
+  canon="$(canonical_path "$path")" || die 1 "could not resolve output path $path"
+  evidence_canon="$(canonical_path "$EVIDENCE")" || die 1 "could not resolve evidence path $EVIDENCE"
+  if ! path_is_under "$canon" "$evidence_canon"; then
+    die 1 "output path must stay inside the evidence directory $EVIDENCE"
+  fi
+  parent="$(dirname "$path")"
+  base="$(basename "$path")"
+  [[ -n "$base" && "$base" != "." && "$base" != ".." ]] || die 1 "output path is not a file"
   if [[ -e "$parent" && ! -d "$parent" ]]; then
     die 1 "output directory is not a directory: $parent"
   fi
   mkdir -p "$parent"
   chmod 700 "$parent" || true
-  cursor="$parent"
-  while [[ "$cursor" != "$EVIDENCE" && "$cursor" != "/" ]]; do
-    if [[ -L "$cursor" ]]; then
-      die 1 "refusing output path because $cursor is a symlink"
-    fi
-    cursor="$(dirname "$cursor")"
-  done
-  if [[ "$cursor" != "$EVIDENCE" ]]; then
-    die 1 "output path is outside the evidence directory"
+  if [[ -L "$path" ]]; then
+    die 1 "refusing output path because it is a symlink: $path"
+  fi
+  canon="$(canonical_path "$path")" || die 1 "could not resolve output path $path"
+  if ! path_is_under "$canon" "$evidence_canon"; then
+    die 1 "output path must stay inside the evidence directory $EVIDENCE"
   fi
 }
 
@@ -491,7 +581,8 @@ process_env() {
 
 process_lstart() {
   local pid="$1"
-  LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+  # UTC0 is POSIX and does not depend on the caller's TZ or on zoneinfo.
+  TZ=UTC0 LC_ALL=C ps -o lstart= -p "$pid" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
 }
 
 process_args_exact() {
@@ -516,7 +607,19 @@ valid_run_id() {
 
 valid_scratch_path() {
   local path="$1"
-  [[ "$path" =~ ^/tmp/umbilical-verify/scratch-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-[A-Za-z0-9]{6}$ ]]
+  # mktemp on macOS returns the /private/tmp real path because /tmp is a symlink.
+  [[ "$path" =~ ^(/tmp|/private/tmp)/umbilical-verify/scratch-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-[A-Za-z0-9]{6}$ ]]
+}
+
+scratch_matches_run() {
+  local path="$1"
+  local run="$2"
+  case "$path" in
+    /tmp/umbilical-verify/scratch-"$run"-*|/private/tmp/umbilical-verify/scratch-"$run"-*)
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 verify_parent() {
@@ -545,6 +648,19 @@ create_verify_parent() {
   verify_parent
 }
 
+refuse_parent_if_present() {
+  local parent="$VERIFY_PARENT"
+  if [[ -L "$parent" ]]; then
+    die 1 "refusing $parent because it is a symlink"
+  fi
+  if [[ -e "$parent" && ! -d "$parent" ]]; then
+    die 1 "$parent is not a directory"
+  fi
+  if [[ -d "$parent" ]]; then
+    verify_parent
+  fi
+}
+
 refuse_state_symlink() {
   if [[ -L "$STATE" ]]; then
     die 1 "refusing state file because it is a symlink: $STATE"
@@ -569,6 +685,7 @@ load_state() {
   lstart=""
   prefs_sha=""
   prefs_mtime=""
+  settings_written=""
   local line key value
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" || "$line" == \#* ]] && continue
@@ -588,13 +705,14 @@ load_state() {
       lstart) lstart="$value" ;;
       prefs_sha) prefs_sha="$value" ;;
       prefs_mtime) prefs_mtime="$value" ;;
+      settings_written) settings_written="$value" ;;
       *) die 1 "unknown state field $key" ;;
     esac
   done <"$STATE"
   valid_run_id "$run_id" || die 1 "state run_id is not usable"
   [[ "$pid" =~ ^[0-9]+$ ]] || die 1 "state pid is not usable"
   valid_scratch_path "$scratch" || die 1 "state scratch is outside $VERIFY_PARENT"
-  [[ "$scratch" == "$VERIFY_PARENT/scratch-$run_id-"* ]] || die 1 "state scratch does not match run_id"
+  scratch_matches_run "$scratch" "$run_id" || die 1 "state scratch does not match run_id"
   [[ "$home" == "$scratch/home" ]] || die 1 "state home is not inside the scratch directory"
   [[ "$downloads" == "$scratch/umbilical-verify-downloads" ]] || die 1 "state downloads directory is not inside the scratch directory"
   [[ "$app_path" == *.app && "$app_path" != *..* && "$app_path" == /* ]] || die 1 "state app_path is not a bundle path"
@@ -613,6 +731,15 @@ load_state() {
   fi
   if [[ -n "$server_pid" && ! "$server_pid" =~ ^[0-9]+$ ]]; then
     die 1 "state server_pid is not usable"
+  fi
+  [[ "$settings_written" == "0" || "$settings_written" == "1" ]] || die 1 "state settings_written is not usable"
+  local snap
+  snap="$(account_snap_file)"
+  if [[ -L "$snap" ]]; then
+    die 1 "refusing account snapshot because it is a symlink: $snap"
+  fi
+  if [[ ! -f "$snap" ]]; then
+    die 1 "account snapshot is missing for run $run_id"
   fi
   if [[ -L "$scratch" ]]; then
     die 1 "refusing scratch because it is a symlink: $scratch"
@@ -647,60 +774,340 @@ server_pid=${server_pid:-}
 lstart=$lstart
 prefs_sha=$prefs_sha
 prefs_mtime=$prefs_mtime
+settings_written=$settings_written
 EOF
   chmod 600 "$tmp"
   mv "$tmp" "$STATE"
   chmod 600 "$STATE"
 }
 
-snapshot_real_prefs() {
-  PREFS_ERROR=""
-  local path
-  path="$(real_prefs_path)"
+account_snap_file() {
+  printf '%s\n' "$VERIFY_PARENT/account-$run_id.snap"
+}
+
+account_paths() {
+  local root dir base name
+  root="$(real_user_home)"
+  printf '%s\n' \
+    "$root/Library/Preferences/${BUNDLE_ID}.plist" \
+    "$root/Library/Saved Application State/${BUNDLE_ID}.savedState" \
+    "$root/Library/Containers/${BUNDLE_ID}" \
+    "$root/Library/Group Containers/${BUNDLE_ID}" \
+    "$root/Library/Application Support/${BUNDLE_ID}"
+  dir="$root/Library/Preferences/ByHost"
+  if [[ -L "$dir" ]]; then
+    PREFS_ERROR="ByHost preferences directory is a symlink. Verification does not follow it."
+    return 1
+  fi
+  if [[ -d "$dir" ]]; then
+    shopt -s nullglob
+    for base in "$dir/${BUNDLE_ID}"*; do
+      printf '%s\n' "$base"
+    done
+    shopt -u nullglob
+  fi
+  dir="$root/Library/Group Containers"
+  if [[ -L "$dir" ]]; then
+    PREFS_ERROR="Group Containers directory is a symlink. Verification does not follow it."
+    return 1
+  fi
+  if [[ -d "$dir" ]]; then
+    shopt -s nullglob
+    for base in "$dir"/*; do
+      name="$(basename "$base")"
+      if [[ "$name" == *"${BUNDLE_ID}"* && "$name" != "${BUNDLE_ID}" ]]; then
+        printf '%s\n' "$base"
+      fi
+    done
+    shopt -u nullglob
+  fi
+}
+
+fingerprint_dir() {
+  local dir="$1"
+  local sha
+  sha="$(python3 - "$dir" <<'PY'
+import hashlib, os, sys
+root = sys.argv[1]
+lines = []
+for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+    dirnames.sort()
+    filenames.sort()
+    rel_dir = os.path.relpath(dirpath, root)
+    if rel_dir == ".":
+        rel_dir = ""
+    st = os.lstat(dirpath)
+    lines.append("dir\t%s\t%s" % (rel_dir, int(st.st_mtime_ns)))
+    for name in filenames:
+        path = os.path.join(dirpath, name)
+        rel = os.path.join(rel_dir, name) if rel_dir else name
+        st = os.lstat(path)
+        if os.path.islink(path):
+            lines.append("link\t%s\t%s" % (rel, os.readlink(path)))
+        elif os.path.isfile(path):
+            digest = hashlib.sha256()
+            with open(path, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            lines.append("file\t%s\t%s\t%s" % (rel, digest.hexdigest(), int(st.st_mtime_ns)))
+        else:
+            lines.append("other\t%s\t%s" % (rel, st.st_mode))
+text = ("\n".join(lines) + "\n").encode()
+sys.stdout.write(hashlib.sha256(text).hexdigest())
+PY
+)" || return 1
+  [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s\n' "$sha"
+}
+
+fingerprint_path() {
+  local path="$1"
+  local sha mtime
+  FINGERPRINT_LINE=""
   if [[ -L "$path" ]]; then
-    PREFS_ERROR="account preferences plist is a symlink. Verification does not follow it and does not change it."
+    PREFS_ERROR="account path is a symlink: $path. Verification does not follow it."
     return 1
   fi
   if [[ ! -e "$path" ]]; then
-    prefs_sha="absent"
-    prefs_mtime="absent"
+    printf -v FINGERPRINT_LINE 'absent\t-\t-\t%s' "$path"
+    return 0
+  fi
+  if [[ -d "$path" ]]; then
+    sha="$(fingerprint_dir "$path")" || {
+      PREFS_ERROR="could not hash account directory $path. Verification does not change it and does not launch."
+      return 1
+    }
+    mtime="$(file_mtime "$path" 2>/dev/null)" || mtime=""
+    if [[ ! "$mtime" =~ ^[0-9]+$ ]]; then
+      PREFS_ERROR="could not read mtime for account directory $path."
+      return 1
+    fi
+    printf -v FINGERPRINT_LINE 'dir\t%s\t%s\t%s' "$sha" "$mtime" "$path"
     return 0
   fi
   if [[ ! -f "$path" ]]; then
-    PREFS_ERROR="account preferences plist is not a regular file. Verification does not change it."
+    PREFS_ERROR="account path is not a file or directory: $path"
     return 1
   fi
-  prefs_sha="$(file_sha256 "$path")"
-  prefs_mtime="$(file_mtime "$path")"
-  prefs_sha="$(printf '%s' "$prefs_sha" | tr '[:upper:]' '[:lower:]')"
+  sha="$(file_sha256 "$path" 2>/dev/null)" || sha=""
+  sha="$(printf '%s' "$sha" | tr '[:upper:]' '[:lower:]')"
+  if [[ ! "$sha" =~ ^[0-9a-f]{64}$ ]]; then
+    PREFS_ERROR="could not hash account path $path. Verification does not change it and does not launch."
+    return 1
+  fi
+  mtime="$(file_mtime "$path" 2>/dev/null)" || mtime=""
+  if [[ ! "$mtime" =~ ^[0-9]+$ ]]; then
+    PREFS_ERROR="could not read mtime for account path $path."
+    return 1
+  fi
+  printf -v FINGERPRINT_LINE 'file\t%s\t%s\t%s' "$sha" "$mtime" "$path"
+}
+
+download_folder_from_plist() {
+  python3 - "$1" <<'PY'
+import json, plistlib, sys
+path = sys.argv[1]
+with open(path, "rb") as handle:
+    data = plistlib.load(handle)
+raw = data.get("umb.settings") if isinstance(data, dict) else None
+folder = ""
+if isinstance(raw, bytes):
+    folder = json.loads(raw.decode("utf-8")).get("downloadDirectoryPath") or ""
+elif isinstance(raw, str):
+    folder = json.loads(raw).get("downloadDirectoryPath") or ""
+if folder and (not str(folder).startswith("/") or ".." in str(folder).split("/")):
+    sys.exit(3)
+sys.stdout.write("" if not folder else str(folder))
+PY
+}
+
+write_account_records() {
+  local dest="$1"
+  local path folder plist status paths_file sorted failed
+  : >"$dest"
+  paths_file="$(mktemp)" || return 1
+  sorted="$(mktemp)" || {
+    rm -f "$paths_file"
+    return 1
+  }
+  # Call these in the current shell. A command substitution would drop PREFS_ERROR.
+  if ! account_paths >"$paths_file"; then
+    rm -f "$paths_file" "$sorted"
+    return 1
+  fi
+  LC_ALL=C sort "$paths_file" >"$sorted"
+  failed=0
+  while IFS= read -r path; do
+    [[ -z "$path" ]] && continue
+    if ! fingerprint_path "$path"; then
+      failed=1
+      break
+    fi
+    printf '%s\n' "$FINGERPRINT_LINE" >>"$dest"
+  done <"$sorted"
+  rm -f "$paths_file" "$sorted"
+  [[ "$failed" == "0" ]] || return 1
+  plist="$(real_prefs_path)"
+  folder=""
+  if [[ -e "$plist" || -L "$plist" ]]; then
+    if [[ -L "$plist" || ! -f "$plist" ]]; then
+      PREFS_ERROR="account preferences plist is not a regular file. Verification does not change it."
+      return 1
+    fi
+    status=0
+    folder="$(download_folder_from_plist "$plist" 2>/dev/null)" || status=$?
+    if [[ $status -ne 0 ]]; then
+      PREFS_ERROR="could not read the account preferences plist $plist. Verification does not change it and does not launch."
+      return 1
+    fi
+  fi
+  if [[ -z "$folder" ]]; then
+    printf 'download\tabsent\n' >>"$dest"
+  else
+    if ! fingerprint_path "$folder"; then
+      return 1
+    fi
+    printf 'download\t%s\n' "$FINGERPRINT_LINE" >>"$dest"
+  fi
+}
+
+apply_prefs_fields_from_snap() {
+  local snap kind sha mtime path plist found
+  snap="$(account_snap_file)"
+  plist="$(real_prefs_path)"
+  found=0
+  prefs_sha="absent"
+  prefs_mtime="absent"
+  while IFS=$'\t' read -r kind sha mtime path; do
+    [[ "$path" == "$plist" ]] || continue
+    found=1
+    if [[ "$kind" == "absent" ]]; then
+      prefs_sha="absent"
+      prefs_mtime="absent"
+    else
+      prefs_sha="$sha"
+      prefs_mtime="$mtime"
+    fi
+  done <"$snap"
+  [[ "$found" == "1" ]] || {
+    PREFS_ERROR="account snapshot has no preferences plist record"
+    return 1
+  }
+  [[ "$prefs_sha" == "absent" || "$prefs_sha" =~ ^[0-9a-f]{64}$ ]] || {
+    PREFS_ERROR="account preferences snapshot is empty. Refusing to launch."
+    return 1
+  }
+}
+
+snapshot_account() {
+  local snap tmp
+  PREFS_ERROR=""
+  [[ -n "$run_id" ]] || {
+    PREFS_ERROR="run id is missing"
+    return 1
+  }
+  snap="$(account_snap_file)"
+  if [[ -L "$snap" ]]; then
+    PREFS_ERROR="account snapshot path is a symlink"
+    return 1
+  fi
+  tmp="$(mktemp "$VERIFY_PARENT/account-tmp.XXXXXX")" || {
+    PREFS_ERROR="could not create the account snapshot"
+    return 1
+  }
+  if ! write_account_records "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  chmod 600 "$tmp"
+  mv "$tmp" "$snap"
+  chmod 600 "$snap"
+  apply_prefs_fields_from_snap
+}
+
+snapshot_real_prefs() {
+  snapshot_account
+}
+
+report_snapshot_diff() {
+  local snap="$1"
+  local current="$2"
+  local line path
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if ! grep -F -x -q -- "$line" "$snap"; then
+      path="${line##*$'\t'}"
+      PREFS_ERROR="account home path changed: ${path}. Verification does not change it."
+      return 1
+    fi
+  done <"$current"
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    if ! grep -F -x -q -- "$line" "$current"; then
+      path="${line##*$'\t'}"
+      PREFS_ERROR="account home path changed: ${path}. Verification does not change it."
+      return 1
+    fi
+  done <"$snap"
+  PREFS_ERROR="account home path changed during verification. Verification does not change it."
+  return 1
+}
+
+assert_account_unchanged() {
+  local snap tmp
+  PREFS_ERROR=""
+  snap="$(account_snap_file)"
+  if [[ -L "$snap" || ! -f "$snap" ]]; then
+    PREFS_ERROR="account snapshot is missing. Refusing to continue."
+    return 1
+  fi
+  if ! apply_prefs_fields_from_snap; then
+    return 1
+  fi
+  local state_sha state_mtime
+  state_sha="$prefs_sha"
+  state_mtime="$prefs_mtime"
+  # Re-read the state fields from the file so a forged hash cannot pass.
+  local line key value file_sha file_mtime
+  file_sha=""
+  file_mtime=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    key="${line%%=*}"
+    value="${line#*=}"
+    case "$key" in
+      prefs_sha) file_sha="$value" ;;
+      prefs_mtime) file_mtime="$value" ;;
+    esac
+  done <"$STATE"
+  if [[ "$file_sha" != "$state_sha" || "$file_mtime" != "$state_mtime" ]]; then
+    PREFS_ERROR="account preferences plist snapshot does not match the state file. Verification does not change it."
+    return 1
+  fi
+  tmp="$(mktemp)"
+  if ! write_account_records "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if [[ -n "${1:-}" ]]; then
+    cp "$tmp" "$1"
+    chmod 600 "$1" || true
+  fi
+  if ! cmp -s "$tmp" "$snap"; then
+    report_snapshot_diff "$snap" "$tmp" || true
+    rm -f "$tmp"
+    return 1
+  fi
+  rm -f "$tmp"
 }
 
 assert_real_prefs_unchanged() {
-  PREFS_ERROR=""
-  local path now_sha now_mtime
-  path="$(real_prefs_path)"
-  if [[ -L "$path" ]]; then
-    PREFS_ERROR="account preferences plist is a symlink. Verification does not follow it and does not change it."
-    return 1
-  fi
-  if [[ "$prefs_sha" == "absent" ]]; then
-    if [[ -e "$path" ]]; then
-      PREFS_ERROR="account preferences plist appeared during verification. Verification does not change it."
-      return 1
-    fi
-    return 0
-  fi
-  if [[ ! -f "$path" ]]; then
-    PREFS_ERROR="account preferences plist disappeared during verification. Verification does not change it."
-    return 1
-  fi
-  now_sha="$(file_sha256 "$path")"
-  now_sha="$(printf '%s' "$now_sha" | tr '[:upper:]' '[:lower:]')"
-  now_mtime="$(file_mtime "$path")"
-  if [[ "$now_sha" != "$prefs_sha" || "$now_mtime" != "$prefs_mtime" ]]; then
-    PREFS_ERROR="account preferences plist changed during verification. Verification does not change it."
-    return 1
-  fi
+  assert_account_unchanged
+}
+
+settle_preferences() {
+  # A lazy cfprefsd flush must land before the second snapshot.
+  # Do not run defaults and do not signal cfprefsd.
+  sleep 1
 }
 
 assert_scratch_prefs() {
@@ -787,7 +1194,10 @@ require_macos() {
 
 read_entitlements() {
   local app="$1"
+  local parsed
   ENTITLEMENTS_TEXT=""
+  ENTITLEMENTS_KEYCHAIN=""
+  ENTITLEMENTS_TASK_ALLOW=""
   if ! command -v codesign >/dev/null 2>&1; then
     if [[ "$(uname -s)" != "Darwin" ]]; then
       return 0
@@ -798,7 +1208,34 @@ read_entitlements() {
   if [[ -z "$ENTITLEMENTS_TEXT" ]]; then
     die 1 "could not read the signature entitlements for $app"
   fi
-  if [[ "$ENTITLEMENTS_TEXT" == *keychain-access-groups* ]]; then
+  parsed="$(printf '%s' "$ENTITLEMENTS_TEXT" | python3 -c '
+import plistlib, sys
+raw = sys.stdin.buffer.read()
+start = raw.find(b"<?xml")
+if start < 0:
+    start = raw.find(b"<plist")
+if start < 0:
+    start = raw.find(b"bplist00")
+if start < 0:
+    sys.stderr.write("entitlements are not a plist\n")
+    sys.exit(2)
+raw = raw[start:]
+try:
+    data = plistlib.loads(raw)
+except Exception:
+    sys.stderr.write("could not parse entitlements plist\n")
+    sys.exit(2)
+if not isinstance(data, dict):
+    sys.stderr.write("entitlements plist is not a dictionary\n")
+    sys.exit(2)
+keychain = "yes" if "keychain-access-groups" in data else "no"
+allow = data.get("com.apple.security.get-task-allow", False)
+task = "yes" if allow is True else "no"
+sys.stdout.write("keychain=%s\ntask_allow=%s\n" % (keychain, task))
+')" || die 1 "could not parse the signature entitlements for $app. Verification does not launch this bundle."
+  ENTITLEMENTS_KEYCHAIN="$(printf '%s\n' "$parsed" | sed -n 's/^keychain=//p')"
+  ENTITLEMENTS_TASK_ALLOW="$(printf '%s\n' "$parsed" | sed -n 's/^task_allow=//p')"
+  if [[ "$ENTITLEMENTS_KEYCHAIN" == "yes" ]]; then
     die 1 "entitlements include keychain-access-groups. Verification does not launch this bundle and does not touch the keychain."
   fi
 }
@@ -807,7 +1244,7 @@ reject_enforcing_release() {
   if [[ "$polar" != "present" ]]; then
     return 0
   fi
-  if [[ "$ENTITLEMENTS_TEXT" == *com.apple.security.get-task-allow* ]]; then
+  if [[ "$ENTITLEMENTS_TASK_ALLOW" == "yes" ]]; then
     return 0
   fi
   die 1 "this Release bundle has a Polar organization id and no get-task-allow entitlement. Launch would read the shared login keychain. Verification does not start it and does not activate a key."
@@ -1003,9 +1440,17 @@ cmd_payload() {
   case "$action" in
     start)
       [[ -n "$DIRECTORY" && -n "$NAME" && -n "$BODY" ]] || die 2 "payload start needs --directory, --name, and --body"
-      [[ "$DIRECTORY" == /tmp/* && "$DIRECTORY" != *..* && "$DIRECTORY" != /tmp && "$DIRECTORY" != /tmp/ ]] || die 1 "payload directory must be a subdirectory of /tmp"
+      [[ "$DIRECTORY" == /* && "$DIRECTORY" != *..* ]] || die 1 "payload directory must be an absolute path"
       [[ "$NAME" =~ ^[A-Za-z0-9._-]+$ ]] || die 2 "payload name is not a single file name"
-      local parent script_path
+      local parent script_path payload_canon
+      payload_canon="$(canonical_path "$DIRECTORY")" || die 1 "could not resolve payload directory $DIRECTORY"
+      case "$payload_canon" in
+        /tmp/*|/private/tmp/*) ;;
+        *) die 1 "payload directory must stay under /tmp" ;;
+      esac
+      case "$payload_canon" in
+        /tmp|/private/tmp|/tmp/|/private/tmp/) die 1 "payload directory must be a subdirectory of /tmp" ;;
+      esac
       parent="$(dirname "$DIRECTORY")"
       if [[ ! -d "$parent" || -L "$parent" ]]; then
         die 1 "payload directory parent must be a real directory"
@@ -1017,6 +1462,11 @@ cmd_payload() {
         die 1 "payload directory is not a directory"
       fi
       mkdir -p "$DIRECTORY"
+      payload_canon="$(canonical_path "$DIRECTORY")" || die 1 "could not resolve payload directory $DIRECTORY"
+      case "$payload_canon" in
+        /tmp/*|/private/tmp/*) ;;
+        *) die 1 "payload directory must stay under /tmp" ;;
+      esac
       chmod 700 "$DIRECTORY" || true
       if [[ -L "$DIRECTORY" ]]; then
         die 1 "payload directory is a symlink"
@@ -1247,11 +1697,15 @@ wait_until_ready() {
       fi
       die 1 "relaunch exited before the window was ready. State still records pid $pid so cleanup can remove the scratch directory."
     fi
-    if ! assert_real_prefs_unchanged; then
+    set +e
+    assert_account_unchanged
+    local acct_status=$?
+    set -e
+    if [[ $acct_status -ne 0 ]]; then
       if [[ "$label" == "launch" ]]; then
-        fail_launch "$PREFS_ERROR"
+        fail_launch "${PREFS_ERROR:-account home changed during launch.}"
       fi
-      die 1 "$PREFS_ERROR State was kept so cleanup can stop pid $pid."
+      die 1 "${PREFS_ERROR:-account home changed.} State was kept so cleanup can stop pid $pid."
     fi
     read_ui_soft
     if [[ -n "$UI_ERROR" ]]; then
@@ -1275,7 +1729,16 @@ wait_until_ready() {
     if [[ "$label" == "relaunch" && "$UI_TEXT" == *"umbilical-verify-downloads"* && "$UI_TEXT" != *"Starting the download engine"* ]]; then
       window_ready=1
     fi
-    if [[ "$window_ready" == "1" ]] && assert_scratch_prefs; then
+    if [[ "$window_ready" == "1" ]]; then
+      if [[ "$UI_TEXT" == *"No downloads"* || ( "$label" == "relaunch" && "$UI_TEXT" == *"umbilical-verify-downloads"* ) ]]; then
+        settings_written=1
+        if ! assert_scratch_prefs; then
+          if [[ "$label" == "launch" ]]; then
+            fail_launch "${PREFS_ERROR:-scratch preferences plist is missing after the download folder was chosen.}"
+          fi
+          die 1 "${PREFS_ERROR:-scratch preferences plist is missing after the download folder was chosen.}"
+        fi
+      fi
       mkdir -p "$EVIDENCE/$label"
       chmod 700 "$EVIDENCE/$label" || true
       {
@@ -1290,12 +1753,6 @@ wait_until_ready() {
     if ((now - start >= 45)); then
       printf '%s\n' "$UI_TEXT" >"$EVIDENCE/${label}-not-ready.txt"
       private_file "$EVIDENCE/${label}-not-ready.txt"
-      if ! assert_scratch_prefs; then
-        if [[ "$label" == "launch" ]]; then
-          fail_launch "$PREFS_ERROR See $EVIDENCE/${label}-not-ready.txt."
-        fi
-        die 1 "$PREFS_ERROR See $EVIDENCE/${label}-not-ready.txt."
-      fi
       if [[ "$label" == "launch" ]]; then
         fail_launch "timed out waiting for Choose a download folder or No downloads. See $EVIDENCE/${label}-not-ready.txt."
       fi
@@ -1305,11 +1762,58 @@ wait_until_ready() {
   done
 }
 
+record_launch_evidence() {
+  mkdir -p "$EVIDENCE/launch"
+  chmod 700 "$EVIDENCE/launch" || true
+  cp "$(account_snap_file)" "$EVIDENCE/launch/account-before.txt"
+  private_file "$EVIDENCE/launch/account-before.txt"
+  printf '%s\n' "$scratch" >"$EVIDENCE/launch/scratch-path.txt"
+  private_file "$EVIDENCE/launch/scratch-path.txt"
+  {
+    printf 'HOME=%s\n' "$(process_env "$pid" HOME || true)"
+    printf 'CFFIXED_USER_HOME=%s\n' "$(process_env "$pid" CFFIXED_USER_HOME || true)"
+    printf '__CFPREFERENCES_AVOID_DAEMON=%s\n' "$(process_env "$pid" __CFPREFERENCES_AVOID_DAEMON || true)"
+    printf 'TMPDIR=%s\n' "$(process_env "$pid" TMPDIR || true)"
+  } >"$EVIDENCE/launch/environ.txt"
+  private_file "$EVIDENCE/launch/environ.txt"
+  {
+    printf 'harness_pid=%s\n' "$$"
+    printf 'harness_comm=%s\n' "$(ps -o comm= -p $$ 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+    printf 'parent_pid=%s\n' "$PPID"
+    printf 'parent_comm=%s\n' "$(ps -o comm= -p "$PPID" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  } >"$EVIDENCE/launch/accessibility-host.txt"
+  private_file "$EVIDENCE/launch/accessibility-host.txt"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    local handler
+    set +e
+    handler="$(handler_get 2>/dev/null)"
+    local handler_status=$?
+    set -e
+    if [[ $handler_status -ne 0 || -z "$handler" ]]; then
+      printf 'unread\n' >"$EVIDENCE/launch/handler-before.txt"
+    else
+      printf '%s\n' "$handler" >"$EVIDENCE/launch/handler-before.txt"
+    fi
+  else
+    printf 'skipped\n' >"$EVIDENCE/launch/handler-before.txt"
+  fi
+  private_file "$EVIDENCE/launch/handler-before.txt"
+  if [[ -f "$(account_snap_file)" ]]; then
+    if grep -q $'^download\tabsent$' "$(account_snap_file)"; then
+      printf 'absent\n' >"$EVIDENCE/launch/real-download-folder.txt"
+    else
+      grep $'^download\t' "$(account_snap_file)" >"$EVIDENCE/launch/real-download-folder.txt" || true
+    fi
+    private_file "$EVIDENCE/launch/real-download-folder.txt"
+  fi
+}
+
 cmd_launch() {
+  local snap_status=0
   parse_common "$@"
-  fill_default_evidence
-  validate_evidence_location
   [[ -n "$APP" ]] || die 2 "launch needs --app"
+  fill_default_evidence
+  check_evidence_path
   refuse_state_symlink
   if [[ -f "$STATE" ]]; then
     die 1 "state already exists at $STATE. Run verify-umbilical cleanup before launch."
@@ -1319,19 +1823,27 @@ cmd_launch() {
     die 1 "PolarOrganizationID is present but not a UUID. Verification does not launch this bundle and does not edit Polar config."
   fi
   assert_no_named_process
-  create_verify_parent
+  refuse_parent_if_present
   read_entitlements "$inspected_app"
   if [[ -n "$ENTITLEMENTS_TEXT" ]]; then
     reject_enforcing_release
   fi
   require_macos
+  ensure_evidence_dir
+  create_verify_parent
   mint_run_id
+  settings_written=0
   make_scratch
   app_path="$inspected_app"
   server_pid=""
-  if ! snapshot_real_prefs; then
+  # Hash failures are checked explicitly. set -e does not see them inside a conditional.
+  set +e
+  snapshot_account
+  snap_status=$?
+  set -e
+  if [[ $snap_status -ne 0 ]]; then
     remove_scratch_dir || true
-    die 1 "$PREFS_ERROR"
+    die 1 "${PREFS_ERROR:-could not snapshot the account home. Refusing to launch.}"
   fi
   spawn_detached "$scratch/logs/stdout.log" "$scratch/logs/stderr.log"
   if ! capture_lstart; then
@@ -1339,14 +1851,16 @@ cmd_launch() {
     fail_launch "could not record the process start time"
   fi
   write_state
+  record_launch_evidence
   log_line "launch pid=$pid app=$app_path version=$version polar=$polar"
   wait_until_ready launch
 }
 
 cmd_relaunch() {
+  local acct_status=0
   parse_common "$@"
   load_state
-  validate_evidence_location
+  check_evidence_path
   if process_alive "$pid"; then
     die 1 "pid $pid is still running. Quit it before relaunch."
   fi
@@ -1363,6 +1877,14 @@ cmd_relaunch() {
     reject_enforcing_release
   fi
   require_macos
+  ensure_evidence_dir
+  set +e
+  assert_account_unchanged
+  acct_status=$?
+  set -e
+  if [[ $acct_status -ne 0 ]]; then
+    die 1 "${PREFS_ERROR:-account home changed. Refusing to relaunch.}"
+  fi
   mkdir -p "$scratch/logs" "$scratch/tmp"
   chmod 700 "$scratch/logs" "$scratch/tmp" || true
   server_pid=""
@@ -1392,11 +1914,23 @@ doctor_identity() {
     die 1 "download folder $downloads is missing"
   fi
   assert_only_recorded_process "$pid"
-  if ! assert_real_prefs_unchanged; then
-    die 1 "$PREFS_ERROR"
+  local acct_status=0
+  local scratch_plist
+  set +e
+  assert_account_unchanged
+  acct_status=$?
+  set -e
+  if [[ $acct_status -ne 0 ]]; then
+    die 1 "${PREFS_ERROR:-account home changed.}"
   fi
-  if ! assert_scratch_prefs; then
-    die 1 "$PREFS_ERROR"
+  scratch_plist="$(scratch_prefs_path)"
+  if [[ -L "$scratch_plist" ]]; then
+    die 1 "scratch preferences plist is a symlink. UserDefaults isolation is not proven."
+  fi
+  if [[ "$settings_written" == "1" ]]; then
+    if ! assert_scratch_prefs; then
+      die 1 "$PREFS_ERROR"
+    fi
   fi
 }
 
@@ -1493,6 +2027,9 @@ cmd_drive() {
     safe_type_path "$downloads"
     ui_call choose-folder "$downloads"
     wait_for_ui "No downloads" 30 strict >/dev/null
+    mark_settings_written
+  elif [[ "$text" == *"No downloads"* || "$text" == *"umbilical-verify-downloads"* ]]; then
+    mark_settings_written
   fi
   local started_payload=0
   if [[ -z "$URL" ]]; then
@@ -1557,6 +2094,19 @@ cmd_drive() {
   ui_call read-text >"$EVIDENCE/add-http-download/ui.txt" || die 1 "could not save the accessibility dump"
   private_file "$EVIDENCE/add-http-download/ui.txt"
   cmd_ui_screenshot "$EVIDENCE/add-http-download/window.png"
+  settle_preferences
+  local acct_status=0
+  set +e
+  assert_account_unchanged "$EVIDENCE/add-http-download/account-after.txt"
+  acct_status=$?
+  set -e
+  if [[ -f "$EVIDENCE/add-http-download/account-after.txt" ]]; then
+    private_file "$EVIDENCE/add-http-download/account-after.txt"
+  fi
+  if [[ $acct_status -ne 0 ]]; then
+    die 1 "${PREFS_ERROR:-account home changed during the download.}"
+  fi
+  require_scratch_keys
   log_line "drive add-download sha256=$got"
 }
 
@@ -1643,6 +2193,7 @@ cmd_ui() {
       finish_doctor
       safe_type_path "$TARGET"
       ui_call choose-folder "$TARGET"
+      mark_settings_written
       ;;
     dump)
       [[ -n "$TARGET" ]] || die 2 "ui dump needs --path"
@@ -1676,30 +2227,95 @@ cmd_ui() {
       ;;
     open-url)
       [[ -n "$URL" ]] || die 2 "ui open-url needs --url"
+      [[ "$URL" == umbilical://* ]] || die 2 "ui open-url only delivers umbilical:// URLs"
       finish_doctor
+      mkdir -p "$EVIDENCE/open-url"
+      chmod 700 "$EVIDENCE/open-url" || true
+      local before_handler="" after_handler="" before="" found extra extra_exe extra_home extra_fixed extra_avoid
+      local handler_status=0 acct_status=0 second=0
+      set +e
+      before_handler="$(handler_get 2>/dev/null)"
+      handler_status=$?
+      set -e
+      if [[ $handler_status -ne 0 || -z "$before_handler" ]]; then
+        die 1 "could not record the umbilical:// handler. The URL was not sent."
+      fi
+      printf '%s\n' "$before_handler" >"$EVIDENCE/open-url/handler-before.txt"
+      private_file "$EVIDENCE/open-url/handler-before.txt"
       named_pids
-      local before="" found extra extra_exe
       if [[ ${#NAMED_PIDS[@]} -gt 0 ]]; then
         for found in "${NAMED_PIDS[@]}"; do
           before="$before $found"
         done
       fi
-      open -a "$app_path" "$URL"
+      deliver_url_to_pid "$URL"
       sleep 0.5
-      named_pids
-      if [[ ${#NAMED_PIDS[@]} -eq 0 ]]; then
-        return 0
+      settle_preferences
+      set +e
+      after_handler="$(handler_get 2>/dev/null)"
+      handler_status=$?
+      set -e
+      printf '%s\n' "${after_handler:-unread}" >"$EVIDENCE/open-url/handler-after.txt"
+      private_file "$EVIDENCE/open-url/handler-after.txt"
+      if [[ $handler_status -eq 0 && -n "$after_handler" && "$after_handler" != "$before_handler" && "$before_handler" != "absent" ]]; then
+        handler_set "$before_handler"
+        printf '%s\n' "$before_handler" >"$EVIDENCE/open-url/handler-restored.txt"
+      else
+        printf 'unchanged\n' >"$EVIDENCE/open-url/handler-restored.txt"
       fi
-      for extra in "${NAMED_PIDS[@]}"; do
-        if [[ "$extra" != "$pid" ]]; then
-          extra_exe="$(process_exe "$extra" || true)"
-          if [[ "$extra_exe" == "$executable" ]]; then
-            signal_pid "$extra"
-            die 1 "open started another umbilical pid $extra. That pid was stopped. The verification pid is $pid. Before:${before:- none}"
+      private_file "$EVIDENCE/open-url/handler-restored.txt"
+      set +e
+      assert_account_unchanged "$EVIDENCE/open-url/account-after.txt"
+      acct_status=$?
+      set -e
+      if [[ -f "$EVIDENCE/open-url/account-after.txt" ]]; then
+        private_file "$EVIDENCE/open-url/account-after.txt"
+      fi
+      named_pids
+      : >"$EVIDENCE/open-url/second-pid.txt"
+      : >"$EVIDENCE/open-url/second-pid-env.txt"
+      if [[ ${#NAMED_PIDS[@]} -gt 0 ]]; then
+        for extra in "${NAMED_PIDS[@]}"; do
+          if [[ "$extra" != "$pid" ]]; then
+            second=1
+            extra_exe="$(process_exe "$extra" || true)"
+            extra_home="$(process_env "$extra" HOME || true)"
+            extra_fixed="$(process_env "$extra" CFFIXED_USER_HOME || true)"
+            extra_avoid="$(process_env "$extra" __CFPREFERENCES_AVOID_DAEMON || true)"
+            printf 'pid=%s exe=%s\n' "$extra" "${extra_exe:-unknown}" >>"$EVIDENCE/open-url/second-pid.txt"
+            {
+              printf 'pid=%s\n' "$extra"
+              printf 'HOME=%s\n' "${extra_home:-unset}"
+              printf 'CFFIXED_USER_HOME=%s\n' "${extra_fixed:-unset}"
+              printf '__CFPREFERENCES_AVOID_DAEMON=%s\n' "${extra_avoid:-unset}"
+            } >>"$EVIDENCE/open-url/second-pid-env.txt"
+            if [[ "$extra_exe" == "$executable" ]]; then
+              local kids_file child
+              kids_file="$(mktemp)"
+              descendant_pids "$extra" >"$kids_file" || true
+              signal_pid "$extra"
+              while IFS= read -r child; do
+                [[ -z "$child" ]] && continue
+                if process_alive "$child"; then
+                  signal_pid "$child"
+                fi
+              done <"$kids_file"
+              rm -f "$kids_file"
+            fi
           fi
-          die 1 "open observed pid $extra whose executable is ${extra_exe:-unknown}. Signaled nothing. The verification pid is $pid."
-        fi
-      done
+        done
+      fi
+      if [[ "$second" == "0" ]]; then
+        printf 'none\n' >"$EVIDENCE/open-url/second-pid.txt"
+      fi
+      private_file "$EVIDENCE/open-url/second-pid.txt"
+      private_file "$EVIDENCE/open-url/second-pid-env.txt"
+      if [[ $acct_status -ne 0 ]]; then
+        die 1 "${PREFS_ERROR:-account home changed after the URL was delivered.}"
+      fi
+      if [[ "$second" != "0" ]]; then
+        die 1 "a second umbilical pid appeared. Its environment was recorded in $EVIDENCE/open-url. The recorded pid is $pid. Before:${before:- none}"
+      fi
       ;;
     quit)
       finish_doctor
@@ -1709,6 +2325,125 @@ cmd_ui() {
       die 2 "unknown ui action $action"
       ;;
   esac
+}
+
+handler_get() {
+  osascript -l JavaScript <<'JS'
+function run() {
+  ObjC.import("AppKit");
+  var url = $.NSURL.URLWithString("umbilical://download");
+  var app = $.NSWorkspace.sharedWorkspace.URLForApplicationToOpenURL(url);
+  if (!app || app.isNil()) {
+    return "absent";
+  }
+  var bundle = $.NSBundle.bundleWithURL(app);
+  if (!bundle || bundle.isNil() || !bundle.bundleIdentifier || bundle.bundleIdentifier.isNil()) {
+    return "absent";
+  }
+  return String(ObjC.unwrap(bundle.bundleIdentifier));
+}
+JS
+}
+
+handler_set() {
+  local ident="$1"
+  [[ "$ident" =~ ^[A-Za-z0-9._-]+$ ]] || die 1 "handler bundle id is not usable"
+  osascript -l JavaScript - "$ident" <<'JS'
+function run(argv) {
+  ObjC.import("CoreServices");
+  var status = $.LSSetDefaultHandlerForURLScheme("umbilical", argv[0]);
+  if (status !== 0) {
+    throw new Error("could not restore the umbilical handler");
+  }
+  return "restored";
+}
+JS
+}
+
+deliver_url_to_pid() {
+  local url="$1"
+  osascript -l JavaScript - "$pid" "$url" <<'JS'
+function run(argv) {
+  ObjC.import("Foundation");
+  var targetPid = parseInt(argv[0], 10);
+  var targetURL = argv[1];
+  if (!targetPid || !targetURL) {
+    throw new Error("url delivery needs a pid and a url");
+  }
+  var target = $.NSAppleEventDescriptor.descriptorWithProcessIdentifier(targetPid);
+  var event = $.NSAppleEventDescriptor.appleEventWithEventClassEventIDTargetDescriptorReturnIDTransactionID(
+    0x4755524C,
+    0x4755524C,
+    target,
+    -1,
+    0
+  );
+  event.setParamDescriptorForKeyword($.NSAppleEventDescriptor.descriptorWithString(targetURL), 0x2D2D2D2D);
+  var error = $();
+  event.sendWithOptionsTimeoutError(1, 30, error);
+  if (error && !error.isNil()) {
+    throw new Error(String(ObjC.unwrap(error.localizedDescription)));
+  }
+  return "sent";
+}
+JS
+}
+
+mark_settings_written() {
+  local _
+  settings_written=1
+  write_state
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if assert_scratch_prefs; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  die 1 "${PREFS_ERROR:-scratch preferences plist is missing after the download folder was chosen.}"
+}
+
+scratch_plist_has_keys() {
+  local path="$1"
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  python3 - "$path" <<'PY'
+import plistlib, sys
+with open(sys.argv[1], "rb") as handle:
+    data = plistlib.load(handle)
+if not isinstance(data, dict):
+    sys.exit(1)
+for key in ("umb.settings", "umb.history"):
+    if key not in data:
+        sys.exit(1)
+PY
+}
+
+require_scratch_keys() {
+  local path _
+  path="$(scratch_prefs_path)"
+  for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+    if scratch_plist_has_keys "$path"; then
+      mkdir -p "$EVIDENCE/add-http-download"
+      chmod 700 "$EVIDENCE/add-http-download" || true
+      printf 'umb.settings\numb.history\n' >"$EVIDENCE/add-http-download/scratch-plist-keys.txt"
+      private_file "$EVIDENCE/add-http-download/scratch-plist-keys.txt"
+      return 0
+    fi
+    sleep 0.25
+  done
+  die 1 "scratch preferences plist is missing umb.settings or umb.history"
+}
+
+cmd_freeze_account() {
+  local snap_status=0
+  run_id="${1:-}"
+  valid_run_id "$run_id" || die 2 "freeze-account needs a run id"
+  create_verify_parent
+  set +e
+  snapshot_account
+  snap_status=$?
+  set -e
+  [[ $snap_status -eq 0 ]] || die 1 "${PREFS_ERROR:-could not snapshot the account home}"
+  printf 'snapshot=%s\nprefs_sha=%s\nprefs_mtime=%s\n' "$(account_snap_file)" "$prefs_sha" "$prefs_mtime"
 }
 
 cmd_cleanup() {
@@ -1731,7 +2466,33 @@ cmd_cleanup() {
     fi
     signal_pid "$server_pid"
   fi
+  settle_preferences
+  local acct_status=0
+  local snap
+  mkdir -p "$EVIDENCE/cleanup"
+  chmod 700 "$EVIDENCE/cleanup" || true
+  snap="$(account_snap_file)"
+  set +e
+  assert_account_unchanged "$EVIDENCE/cleanup/account-after.txt"
+  acct_status=$?
+  set -e
+  if [[ -f "$EVIDENCE/cleanup/account-after.txt" ]]; then
+    private_file "$EVIDENCE/cleanup/account-after.txt"
+  fi
+  if [[ $acct_status -ne 0 ]]; then
+    die 1 "${PREFS_ERROR:-account home changed after quit.} State and scratch were kept."
+  fi
+  if [[ -L "$snap" ]]; then
+    die 1 "refusing to delete the account snapshot because it is a symlink. Scratch was kept."
+  fi
+  {
+    printf 'scratch=%s\n' "$scratch"
+    printf 'state=%s\n' "$STATE"
+    printf 'account-snapshot=%s\n' "$snap"
+  } >"$EVIDENCE/cleanup/removed.txt"
+  private_file "$EVIDENCE/cleanup/removed.txt"
   remove_scratch_dir
+  rm -f "$snap"
   rm -f "$STATE"
   log_line "cleanup removed scratch and state. Evidence remains at $EVIDENCE"
   echo "cleaned $EVIDENCE"
@@ -1753,6 +2514,7 @@ main() {
     ui) cmd_ui "$@" ;;
     payload) cmd_payload "$@" ;;
     cleanup) cmd_cleanup "$@" ;;
+    freeze-account) cmd_freeze_account "$@" ;;
     *) die 2 "unknown command $cmd" ;;
   esac
 }
