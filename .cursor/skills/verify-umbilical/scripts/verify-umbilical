@@ -14,9 +14,12 @@ URL_FIELD="https://example.com/file"
 PAYLOAD_NAME="verify-payload.txt"
 PAYLOAD_BODY="umbilical-verify-payload"
 PAYLOAD_MARKER="verify-umbilical-payload-marker"
-VERIFY_PARENT="/tmp/umbilical-verify"
+# Scratch and the account snapshot live in a private directory per run.
+# There is no shared /tmp/umbilical-verify parent.
+VERIFY_PARENT="${UMB_VERIFY_PARENT:-}"
+CREATED_PARENT=0
 
-STATE="${UMB_VERIFY_STATE:-$VERIFY_PARENT/state.env}"
+STATE="${UMB_VERIFY_STATE:-/tmp/umbilical-verify-state/state.env}"
 EVIDENCE="${UMB_VERIFY_EVIDENCE:-}"
 evidence_is_explicit=0
 if [[ -n "$EVIDENCE" ]]; then
@@ -44,6 +47,7 @@ settings_written=0
 handler_path=""
 ACCOUNT_HOME=""
 DISCARD=0
+COMMAND=""
 
 usage() {
   cat >&2 <<'EOF'
@@ -70,12 +74,14 @@ usage:
   verify-umbilical payload start --directory DIR --name NAME --body TEXT
   verify-umbilical payload stop --pid PID
   verify-umbilical cleanup [--discard] [--state PATH] [--evidence PATH]
-  verify-umbilical freeze-account RUN_ID
+  verify-umbilical freeze-account [--state PATH] RUN_ID
 
-freeze-account records the account home for a run id. It refuses when a state file
-already exists, so it cannot re-baseline a live run.
-cleanup --discard removes the scratch directory and the state file without
-claiming the account home matched. It still restores the umbilical:// handler.
+freeze-account records the account home for a run id. It reads --state wherever
+it appears and refuses when that state file exists, so it cannot re-baseline
+a live run.
+cleanup --discard removes the run even when the handler or the account home
+does not match. It writes that evidence, exits nonzero, and prints what still
+has to be fixed by hand. --discard is valid only on cleanup.
 
 Exit 0 means the command finished. Exit 1 means the instance or bundle is not usable.
 Exit 2 means the arguments are wrong. Exit 3 means this host is not macOS.
@@ -291,9 +297,11 @@ check_evidence_path() {
     fi
   fi
   [[ "$ok" == "1" ]] || die 1 "evidence directory must stay under /tmp or /opt/cursor/artifacts"
-  parent_canon="$(canonical_path "$VERIFY_PARENT")" || parent_canon="$VERIFY_PARENT"
-  if [[ "$canon" == "$parent_canon" || "$canon" == "$parent_canon"/* ]]; then
-    die 1 "evidence directory must stay outside $VERIFY_PARENT"
+  if [[ -n "$VERIFY_PARENT" && ! -L "$VERIFY_PARENT" ]]; then
+    parent_canon="$(canonical_path "$VERIFY_PARENT")" || parent_canon="$VERIFY_PARENT"
+    if [[ "$canon" == "$parent_canon" || "$canon" == "$parent_canon"/* ]]; then
+      die 1 "evidence directory must stay outside $VERIFY_PARENT"
+    fi
   fi
   if [[ -e "$EVIDENCE" && ! -d "$EVIDENCE" ]]; then
     die 1 "evidence path is not a directory: $EVIDENCE"
@@ -416,6 +424,9 @@ parse_common() {
         shift 2
         ;;
       --discard)
+        if [[ "${COMMAND:-}" != "cleanup" ]]; then
+          die 2 "--discard is only valid for cleanup"
+        fi
         DISCARD=1
         shift
         ;;
@@ -630,10 +641,15 @@ valid_run_id() {
   [[ "$1" =~ ^[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$ ]]
 }
 
-valid_scratch_path() {
+valid_verify_parent_path() {
   local path="$1"
   # Accept both prefixes. Do not assume which form mktemp prints.
-  [[ "$path" =~ ^(/tmp|/private/tmp)/umbilical-verify/scratch-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-[A-Za-z0-9]{6}$ ]]
+  [[ "$path" =~ ^(/tmp|/private/tmp)/umbilical-verify\.[A-Za-z0-9]+$ ]]
+}
+
+valid_scratch_path() {
+  local path="$1"
+  [[ "$path" =~ ^(/tmp|/private/tmp)/umbilical-verify\.[A-Za-z0-9]+/scratch-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-[A-Za-z0-9]{6}$ ]]
 }
 
 under_tmp_prefix() {
@@ -645,18 +661,19 @@ scratch_matches_run() {
   local path="$1"
   local run="$2"
   case "$path" in
-    /tmp/umbilical-verify/scratch-"$run"-*|/private/tmp/umbilical-verify/scratch-"$run"-*)
+    /tmp/umbilical-verify.*/scratch-"$run"-*|/private/tmp/umbilical-verify.*/scratch-"$run"-*)
       return 0
       ;;
   esac
   return 1
 }
 
-verify_parent() {
-  local parent="$VERIFY_PARENT"
+validate_verify_parent() {
+  local parent="$1"
   if [[ -L "$parent" ]]; then
     die 1 "refusing $parent because it is a symlink"
   fi
+  valid_verify_parent_path "$parent" || die 1 "verification parent must be a private umbilical-verify.<id> directory under /tmp"
   if [[ ! -d "$parent" ]]; then
     die 1 "$parent is missing or is not a directory"
   fi
@@ -668,27 +685,27 @@ verify_parent() {
 }
 
 create_verify_parent() {
-  local parent="$VERIFY_PARENT"
-  if [[ -L "$parent" ]]; then
-    die 1 "refusing $parent because it is a symlink"
+  if [[ -z "$VERIFY_PARENT" ]]; then
+    VERIFY_PARENT="$(mktemp -d /tmp/umbilical-verify.XXXXXX)" || die 1 "could not create a verification parent"
+    CREATED_PARENT=1
+    chmod 700 "$VERIFY_PARENT" || true
   fi
-  if [[ ! -d "$parent" ]]; then
-    mkdir -m 700 "$parent" || die 1 "could not create $parent"
-  fi
-  verify_parent
+  validate_verify_parent "$VERIFY_PARENT"
 }
 
-refuse_parent_if_present() {
-  local parent="$VERIFY_PARENT"
-  if [[ -L "$parent" ]]; then
-    die 1 "refusing $parent because it is a symlink"
+remove_created_parent() {
+  if [[ "$CREATED_PARENT" != "1" || -z "$VERIFY_PARENT" ]]; then
+    return 0
   fi
-  if [[ -e "$parent" && ! -d "$parent" ]]; then
-    die 1 "$parent is not a directory"
+  if [[ -L "$VERIFY_PARENT" || ! -d "$VERIFY_PARENT" ]]; then
+    return 0
   fi
-  if [[ -d "$parent" ]]; then
-    verify_parent
+  if [[ -n "${EVIDENCE:-}" && ( "$EVIDENCE" == "$VERIFY_PARENT" || "$EVIDENCE" == "$VERIFY_PARENT"/* ) ]]; then
+    return 0
   fi
+  rm -rf "$VERIFY_PARENT"
+  CREATED_PARENT=0
+  VERIFY_PARENT=""
 }
 
 refuse_state_symlink() {
@@ -717,7 +734,8 @@ load_state() {
   prefs_mtime=""
   settings_written=""
   handler_path=""
-  local line key value
+  VERIFY_PARENT=""
+  local line key value saw_parent=0
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" || "$line" == \#* ]] && continue
     key="${line%%=*}"
@@ -738,6 +756,7 @@ load_state() {
       prefs_mtime) prefs_mtime="$value" ;;
       settings_written) settings_written="$value" ;;
       handler_path) handler_path="$value" ;;
+      verify_parent) VERIFY_PARENT="$value"; saw_parent=1 ;;
       *) die 1 "unknown state field $key" ;;
     esac
   done <"$STATE"
@@ -769,6 +788,9 @@ load_state() {
     [[ "$handler_path" == /* && "$handler_path" != *$'\n'* && "$handler_path" != *..* ]] || die 1 "state handler_path is not usable"
   fi
   [[ -n "$handler_path" ]] || die 1 "state handler_path is not usable"
+  [[ "$saw_parent" == "1" && -n "$VERIFY_PARENT" ]] || die 1 "state verify_parent is not usable"
+  validate_verify_parent "$VERIFY_PARENT"
+  [[ "$scratch" == "$VERIFY_PARENT"/scratch-"$run_id"-* ]] || die 1 "state scratch is not inside the verification parent"
   local snap
   snap="$(account_snap_file)"
   if [[ -L "$snap" ]]; then
@@ -780,7 +802,6 @@ load_state() {
   if [[ -L "$scratch" ]]; then
     die 1 "refusing scratch because it is a symlink: $scratch"
   fi
-  verify_parent
   if [[ "$evidence_is_explicit" == "1" ]]; then
     if [[ "$EVIDENCE" != "$state_evidence" ]]; then
       die 1 "evidence flag $EVIDENCE does not match the state evidence $state_evidence"
@@ -812,6 +833,7 @@ prefs_sha=$prefs_sha
 prefs_mtime=$prefs_mtime
 settings_written=$settings_written
 handler_path=$handler_path
+verify_parent=$VERIFY_PARENT
 EOF
   chmod 600 "$tmp"
   mv "$tmp" "$STATE"
@@ -886,6 +908,15 @@ try:
             rel_dir = ""
         st = os.lstat(dirpath)
         lines.append("dir\t%s\t%s" % (rel_dir, int(st.st_mtime_ns)))
+        kept_dirs = []
+        for name in dirnames:
+            path = os.path.join(dirpath, name)
+            rel = os.path.join(rel_dir, name) if rel_dir else name
+            if os.path.islink(path):
+                lines.append("link\t%s\t%s" % (rel, os.readlink(path)))
+            else:
+                kept_dirs.append(name)
+        dirnames[:] = kept_dirs
         for name in filenames:
             path = os.path.join(dirpath, name)
             rel = os.path.join(rel_dir, name) if rel_dir else name
@@ -1022,27 +1053,51 @@ write_account_records() {
     PREFS_ERROR="download folder is not a real directory: $folder. Verification does not change it."
     return 1
   fi
-  # Names only. A Finder touch of an existing file, including .DS_Store, is not a new entry.
+  # Size and mtime for files and symlinks. Directory names are recorded without
+  # their mtime, so a Finder .DS_Store touch does not fail the run. File bytes are not read.
   local names name
   names="$(python3 - "$folder" 2>/dev/null <<'PY'
 import os, sys
 root = sys.argv[1]
+
+def raise_walk_error(err):
+    raise err
+
+rows = []
 try:
-    found = os.listdir(root)
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=raise_walk_error):
+        dirnames.sort()
+        filenames.sort()
+        rel_dir = os.path.relpath(dirpath, root)
+        if rel_dir == ".":
+            rel_dir = ""
+        kept = []
+        for name in dirnames:
+            if name == ".DS_Store":
+                continue
+            path = os.path.join(dirpath, name)
+            rel = os.path.join(rel_dir, name) if rel_dir else name
+            if os.path.islink(path):
+                st = os.lstat(path)
+                rows.append("link\t%s\t%s\t%s\t%s\t%s" % (rel, st.st_size, int(st.st_mtime_ns), os.readlink(path), path))
+            else:
+                rows.append("dir\t%s\t%s" % (rel, path))
+                kept.append(name)
+        dirnames[:] = kept
+        for name in filenames:
+            if name == ".DS_Store":
+                continue
+            path = os.path.join(dirpath, name)
+            rel = os.path.join(rel_dir, name) if rel_dir else name
+            st = os.lstat(path)
+            if os.path.islink(path):
+                rows.append("link\t%s\t%s\t%s\t%s\t%s" % (rel, st.st_size, int(st.st_mtime_ns), os.readlink(path), path))
+            else:
+                rows.append("file\t%s\t%s\t%s\t%s" % (rel, st.st_size, int(st.st_mtime_ns), path))
 except OSError:
     sys.exit(1)
-kept = []
-for name in found:
-    if name == ".DS_Store" or name.startswith("._"):
-        continue
-    path = os.path.join(root, name)
-    try:
-        os.lstat(path)
-    except OSError:
-        sys.exit(1)
-    kept.append(name)
-for name in sorted(kept):
-    sys.stdout.write(name + "\n")
+for row in sorted(rows):
+    sys.stdout.write(row + "\n")
 PY
 )" || {
     PREFS_ERROR="could not list download folder $folder. Verification does not change it and does not launch."
@@ -1051,7 +1106,7 @@ PY
   printf 'download\tfolder\t%s\n' "$folder" >>"$dest"
   while IFS= read -r name; do
     [[ -z "$name" ]] && continue
-    printf 'download\tname\t%s\t%s\n' "$name" "$folder/$name" >>"$dest"
+    printf 'download\t%s\n' "$name" >>"$dest"
   done <<<"$names"
 }
 
@@ -1141,7 +1196,8 @@ report_snapshot_diff() {
 }
 
 assert_account_unchanged() {
-  local snap tmp
+  local snap tmp diff_path
+  diff_path="${2:-}"
   PREFS_ERROR=""
   snap="$(account_snap_file)"
   if [[ -L "$snap" || ! -f "$snap" ]]; then
@@ -1180,6 +1236,9 @@ assert_account_unchanged() {
     chmod 600 "$1" || true
   fi
   if ! cmp -s "$tmp" "$snap"; then
+    if [[ -n "$diff_path" ]]; then
+      diff -u "$snap" "$tmp" >"$diff_path" || true
+    fi
     report_snapshot_diff "$snap" "$tmp" || true
     rm -f "$tmp"
     return 1
@@ -1192,8 +1251,8 @@ assert_real_prefs_unchanged() {
 }
 
 settle_preferences() {
-  # A lazy cfprefsd flush must land before the second snapshot.
-  # Do not run defaults and do not signal cfprefsd. Four seconds is inside the 3-5s window.
+  # Wait for a lazy cfprefsd flush to land before the next snapshot.
+  # Do not run defaults and do not signal cfprefsd.
   sleep 4
 }
 
@@ -1433,7 +1492,11 @@ fail_launch() {
   if [[ -n "${scratch:-}" ]]; then
     remove_scratch_dir || true
   fi
+  if [[ -n "${run_id:-}" && -n "$VERIFY_PARENT" ]]; then
+    rm -f "$VERIFY_PARENT/account-$run_id.snap"
+  fi
   rm -f "$STATE"
+  remove_created_parent
   die 1 "$message"
 }
 
@@ -1538,8 +1601,8 @@ cmd_payload() {
       case "$payload_canon" in
         /tmp|/private/tmp|/tmp/|/private/tmp/) die 1 "payload directory must be a subdirectory of /tmp" ;;
       esac
-      parent="$(dirname "$DIRECTORY")"
-      if [[ ! -d "$parent" || -L "$parent" ]]; then
+      parent="$(dirname "$payload_canon")"
+      if [[ "$parent" == "/" || ! -d "$parent" || -L "$parent" ]]; then
         die 1 "payload directory parent must be a real directory"
       fi
       if [[ -L "$DIRECTORY" ]]; then
@@ -1784,7 +1847,7 @@ wait_until_ready() {
       fi
       die 1 "relaunch exited before the window was ready. State still records pid $pid so cleanup can remove the scratch directory."
     fi
-    # Names in the real download folder only. This loop does not hash that folder's bytes.
+    # Download entries are lstat size and mtime. This loop does not read file bytes.
     set +e
     assert_account_unchanged
     local acct_status=$?
@@ -1876,9 +1939,36 @@ record_launch_evidence() {
   fi
 }
 
+outermost_app_bundle() {
+  local exe="$1"
+  local acc="" part rest
+  [[ "$exe" == /* ]] || return 1
+  rest="${exe#/}"
+  while [[ -n "$rest" ]]; do
+    part="${rest%%/*}"
+    if [[ "$rest" == */* ]]; then
+      rest="${rest#*/}"
+    else
+      rest=""
+    fi
+    [[ -z "$part" ]] && continue
+    if [[ -z "$acc" ]]; then
+      acc="/$part"
+    else
+      acc="$acc/$part"
+    fi
+    if [[ "$part" == *.app ]]; then
+      printf '%s\n' "$acc"
+      return 0
+    fi
+  done
+  return 1
+}
+
 write_accessibility_host() {
   local dest="$1"
-  local current="$$" exe="" comm="" app_pid="" app_exe="" guard=0 parent=""
+  local current="$$" exe="" comm="" guard=0 parent="" bundle="" tail=""
+  local best_bundle="" best_pid="" best_direct=0 direct=0
   {
     printf 'harness_pid=%s\n' "$$"
     comm="$(ps -o comm= -p $$ 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
@@ -1887,10 +1977,21 @@ write_accessibility_host() {
       comm="$(ps -o comm= -p "$current" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
       exe="$(process_exe "$current" || true)"
       printf 'pid=%s comm=%s exe=%s\n' "$current" "${comm:-unknown}" "${exe:-unknown}"
-      if [[ "$exe" == *.app || "$exe" == *.app/* ]]; then
-        app_pid="$current"
-        app_exe="$exe"
-        break
+      bundle="$(outermost_app_bundle "$exe" || true)"
+      if [[ -n "$bundle" ]]; then
+        direct=0
+        tail="${exe#"$bundle"/}"
+        if [[ "$exe" == "$bundle" || ( "$tail" != *.app && "$tail" != *.app/* ) ]]; then
+          direct=1
+        fi
+        if [[ -z "$best_bundle" || ${#bundle} -lt ${#best_bundle} ]]; then
+          best_bundle="$bundle"
+          best_pid="$current"
+          best_direct=$direct
+        elif [[ "$bundle" == "$best_bundle" && "$direct" == "1" && "$best_direct" != "1" ]]; then
+          best_pid="$current"
+          best_direct=1
+        fi
       fi
       parent="$(ps -o ppid= -p "$current" 2>/dev/null | tr -d '[:space:]' || true)"
       if [[ ! "$parent" =~ ^[0-9]+$ || "$parent" == "$current" ]]; then
@@ -1900,8 +2001,8 @@ write_accessibility_host() {
       current="$parent"
       guard=$((guard + 1))
     done
-    if [[ -n "$app_exe" ]]; then
-      printf 'app_pid=%s\napp_exe=%s\n' "$app_pid" "$app_exe"
+    if [[ -n "$best_bundle" ]]; then
+      printf 'app_pid=%s\napp_bundle=%s\napp_exe=%s\n' "$best_pid" "$best_bundle" "$best_bundle"
     else
       printf 'app=absent\n'
     fi
@@ -1923,6 +2024,7 @@ record_handler_before_spawn() {
       handler_path=""
       rm -f "$(account_snap_file)"
       remove_scratch_dir || true
+      remove_created_parent
       die 1 "could not record the umbilical:// handler before launch. The app was not started."
     fi
   fi
@@ -1945,7 +2047,9 @@ cmd_launch() {
     die 1 "PolarOrganizationID is present but not a UUID. Verification does not launch this bundle and does not edit Polar config."
   fi
   assert_no_named_process
-  refuse_parent_if_present
+  if [[ -n "$VERIFY_PARENT" ]]; then
+    validate_verify_parent "$VERIFY_PARENT"
+  fi
   read_entitlements "$inspected_app"
   if [[ -n "$ENTITLEMENTS_TEXT" ]]; then
     reject_enforcing_release
@@ -1965,8 +2069,10 @@ cmd_launch() {
   set -e
   if [[ $snap_status -ne 0 ]]; then
     remove_scratch_dir || true
+    remove_created_parent
     die 1 "${PREFS_ERROR:-could not snapshot the account home. Refusing to launch.}"
   fi
+  check_evidence_path
   record_handler_before_spawn
   spawn_detached "$scratch/logs/stdout.log" "$scratch/logs/stderr.log"
   if ! capture_lstart; then
@@ -1977,6 +2083,7 @@ cmd_launch() {
   record_launch_evidence
   log_line "launch pid=$pid app=$app_path version=$version polar=$polar"
   wait_until_ready launch
+  printf 'state=%s\nverify_parent=%s\n' "$STATE" "$VERIFY_PARENT"
 }
 
 cmd_relaunch() {
@@ -1988,7 +2095,7 @@ cmd_relaunch() {
     die 1 "pid $pid is still running. Quit it before relaunch."
   fi
   assert_no_named_process
-  verify_parent
+  validate_verify_parent "$VERIFY_PARENT"
   local expected="$version"
   load_inspect "$app_path"
   if [[ "$version" != "$expected" ]]; then
@@ -2384,11 +2491,9 @@ cmd_ui() {
       if [[ -f "$EVIDENCE/open-url/handler-restored.txt" ]]; then
         private_file "$EVIDENCE/open-url/handler-restored.txt"
       fi
+      local handler_error=""
       if [[ $handler_status -ne 0 ]]; then
-        die 1 "${PREFS_ERROR:-umbilical:// handler changed.} Delivery status was $deliver_status."
-      fi
-      if [[ $deliver_status -ne 0 ]]; then
-        die 1 "could not deliver the URL to pid $pid. The handler path is $handler_path."
+        handler_error="${PREFS_ERROR:-umbilical:// handler changed.}"
       fi
       set +e
       assert_account_unchanged "$EVIDENCE/open-url/account-after.txt"
@@ -2436,6 +2541,12 @@ cmd_ui() {
       fi
       private_file "$EVIDENCE/open-url/second-pid.txt"
       private_file "$EVIDENCE/open-url/second-pid-env.txt"
+      if [[ -n "$handler_error" ]]; then
+        die 1 "$handler_error Delivery status was $deliver_status."
+      fi
+      if [[ $deliver_status -ne 0 ]]; then
+        die 1 "could not deliver the URL to pid $pid. The handler path is $handler_path."
+      fi
       if [[ $acct_status -ne 0 ]]; then
         die 1 "${PREFS_ERROR:-account home changed after the URL was delivered.}"
       fi
@@ -2518,18 +2629,29 @@ JS
 handler_set() {
   local ident="$1"
   [[ "$ident" == /* && "$ident" != *$'\n'* && "$ident" != *..* ]] || return 1
+  # The macOS 12 NSWorkspace call is asynchronous and may ask for consent before completion.
   osascript -l JavaScript - "$ident" <<'JS' || return 1
 function run(argv) {
   ObjC.import("AppKit");
+  ObjC.import("Foundation");
   var appURL = $.NSURL.fileURLWithPath(argv[0]);
-  var error = $();
-  var ok = $.NSWorkspace.sharedWorkspace.setDefaultApplicationAtURLToOpenURLsWithSchemeError(appURL, "umbilical", error);
-  if (!ok) {
-    var message = "could not restore the umbilical handler";
+  var finished = false;
+  var failed = "";
+  $.NSWorkspace.sharedWorkspace.setDefaultApplicationAtURLToOpenURLsWithSchemeCompletionHandler(appURL, "umbilical", function(error) {
     if (error && !error.isNil()) {
-      message = String(ObjC.unwrap(error.localizedDescription));
+      failed = String(ObjC.unwrap(error.localizedDescription));
     }
-    throw new Error(message);
+    finished = true;
+  });
+  var deadline = Date.now() + 60000;
+  while (!finished) {
+    $.NSRunLoop.currentRunLoop.runModeBeforeDate($.NSDefaultRunLoopMode, $.NSDate.dateWithTimeIntervalSinceNow(0.2));
+    if (Date.now() > deadline) {
+      throw new Error("handler restore timed out waiting for NSWorkspace");
+    }
+  }
+  if (failed) {
+    throw new Error(failed);
   }
   return "restored";
 }
@@ -2613,19 +2735,49 @@ require_scratch_keys() {
 }
 
 cmd_freeze_account() {
-  local snap_status=0
-  run_id="${1:-}"
+  local snap_status=0 run_id="" snap
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --state)
+        require_value "$1" "${2:-}"
+        STATE="$2"
+        shift 2
+        ;;
+      --discard)
+        die 2 "--discard is only valid for cleanup"
+        ;;
+      --*)
+        die 2 "unknown argument $1"
+        ;;
+      *)
+        [[ -z "$run_id" ]] || die 2 "freeze-account takes one run id"
+        run_id="$1"
+        shift
+        ;;
+    esac
+  done
   valid_run_id "$run_id" || die 2 "freeze-account needs a run id"
   if [[ -e "$STATE" || -L "$STATE" ]]; then
-    die 1 "freeze-account refuses while $STATE exists. It does not re-baseline a live run. Move aside a new download-folder file and run cleanup, or run cleanup --discard."
+    die 1 "freeze-account refuses while $STATE exists. It does not re-baseline a live run."
   fi
-  create_verify_parent
+  if [[ -n "$VERIFY_PARENT" ]]; then
+    validate_verify_parent "$VERIFY_PARENT"
+  else
+    VERIFY_PARENT="$(mktemp -d /tmp/umbilical-verify.XXXXXX)" || die 1 "could not create a verification parent"
+    CREATED_PARENT=1
+    chmod 700 "$VERIFY_PARENT" || true
+    validate_verify_parent "$VERIFY_PARENT"
+  fi
+  snap="$VERIFY_PARENT/account-$run_id.snap"
+  if [[ -e "$snap" || -L "$snap" ]]; then
+    die 1 "freeze-account refuses because $snap already exists. It does not re-baseline a run."
+  fi
   set +e
   snapshot_account
   snap_status=$?
   set -e
   [[ $snap_status -eq 0 ]] || die 1 "${PREFS_ERROR:-could not snapshot the account home}"
-  printf 'snapshot=%s\nprefs_sha=%s\nprefs_mtime=%s\n' "$(account_snap_file)" "$prefs_sha" "$prefs_mtime"
+  printf 'verify_parent=%s\nsnapshot=%s\nprefs_sha=%s\nprefs_mtime=%s\n' "$VERIFY_PARENT" "$(account_snap_file)" "$prefs_sha" "$prefs_mtime"
 }
 
 cmd_cleanup() {
@@ -2651,10 +2803,14 @@ cmd_cleanup() {
   settle_preferences
   local acct_status=0
   local handler_status=0
+  local handler_error=""
+  local account_error=""
   local snap
   mkdir -p "$EVIDENCE/cleanup"
   chmod 700 "$EVIDENCE/cleanup" || true
-  rm -f "$EVIDENCE/cleanup/handler-after.txt" "$EVIDENCE/cleanup/handler-restored.txt"
+  rm -f "$EVIDENCE/cleanup/handler-after.txt" "$EVIDENCE/cleanup/handler-restored.txt" \
+    "$EVIDENCE/cleanup/handler-error.txt" "$EVIDENCE/cleanup/account-after.txt" \
+    "$EVIDENCE/cleanup/account-diff.txt" "$EVIDENCE/cleanup/account-error.txt"
   snap="$(account_snap_file)"
   set +e
   assert_handler_restored "$EVIDENCE/cleanup"
@@ -2667,22 +2823,27 @@ cmd_cleanup() {
     private_file "$EVIDENCE/cleanup/handler-restored.txt"
   fi
   if [[ $handler_status -ne 0 ]]; then
-    die 1 "${PREFS_ERROR:-umbilical:// handler changed.} State and scratch were kept."
+    handler_error="${PREFS_ERROR:-umbilical:// handler changed.}"
+    printf '%s\n' "$handler_error" >"$EVIDENCE/cleanup/handler-error.txt"
+    private_file "$EVIDENCE/cleanup/handler-error.txt"
   fi
-  if [[ "$DISCARD" == "1" ]]; then
-    printf 'account-snapshot-not-required\n' >"$EVIDENCE/cleanup/discarded.txt"
-    private_file "$EVIDENCE/cleanup/discarded.txt"
-  else
-    set +e
-    assert_account_unchanged "$EVIDENCE/cleanup/account-after.txt"
-    acct_status=$?
-    set -e
-    if [[ -f "$EVIDENCE/cleanup/account-after.txt" ]]; then
-      private_file "$EVIDENCE/cleanup/account-after.txt"
-    fi
-    if [[ $acct_status -ne 0 ]]; then
-      die 1 "${PREFS_ERROR:-account home changed after quit.} State and scratch were kept. If this names a new file, move that file aside and run cleanup again. cleanup --discard drops the scratch and the state file without claiming the account home matched. freeze-account will not re-baseline a live run."
-    fi
+  set +e
+  assert_account_unchanged "$EVIDENCE/cleanup/account-after.txt" "$EVIDENCE/cleanup/account-diff.txt"
+  acct_status=$?
+  set -e
+  if [[ -f "$EVIDENCE/cleanup/account-after.txt" ]]; then
+    private_file "$EVIDENCE/cleanup/account-after.txt"
+  fi
+  if [[ -f "$EVIDENCE/cleanup/account-diff.txt" ]]; then
+    private_file "$EVIDENCE/cleanup/account-diff.txt"
+  fi
+  if [[ $acct_status -ne 0 ]]; then
+    account_error="${PREFS_ERROR:-account home changed after quit.}"
+    printf '%s\n' "$account_error" >"$EVIDENCE/cleanup/account-error.txt"
+    private_file "$EVIDENCE/cleanup/account-error.txt"
+  fi
+  if [[ "$DISCARD" != "1" && ( $handler_status -ne 0 || $acct_status -ne 0 ) ]]; then
+    die 1 "${handler_error}${handler_error:+ }${account_error} State and scratch were kept. Move a named new file aside and run cleanup again. cleanup --discard removes this run, writes the evidence, and exits nonzero. It names the handler to fix by hand."
   fi
   if [[ -L "$snap" ]]; then
     die 1 "refusing to delete the account snapshot because it is a symlink. Scratch was kept."
@@ -2696,8 +2857,15 @@ cmd_cleanup() {
   remove_scratch_dir
   rm -f "$snap"
   rm -f "$STATE"
+  rmdir "$VERIFY_PARENT" 2>/dev/null || true
   if [[ "$DISCARD" == "1" ]]; then
-    log_line "cleanup discarded scratch and state without an account match. Evidence remains at $EVIDENCE"
+    if [[ $handler_status -ne 0 || $acct_status -ne 0 ]]; then
+      if [[ -n "$handler_error" ]]; then
+        die 1 "cleanup --discard removed the run. Evidence remains at $EVIDENCE. Fix the umbilical:// handler by hand. $handler_error ${account_error}"
+      fi
+      die 1 "cleanup --discard removed the run. Evidence remains at $EVIDENCE. $account_error"
+    fi
+    log_line "cleanup discarded a matching run. Evidence remains at $EVIDENCE"
     echo "discarded $EVIDENCE"
   else
     log_line "cleanup removed scratch and state. Evidence remains at $EVIDENCE"
@@ -2706,13 +2874,13 @@ cmd_cleanup() {
 }
 
 main() {
-  local cmd="${1:-}"
-  if [[ -z "$cmd" || "$cmd" == "-h" || "$cmd" == "--help" ]]; then
+  COMMAND="${1:-}"
+  if [[ -z "$COMMAND" || "$COMMAND" == "-h" || "$COMMAND" == "--help" ]]; then
     usage
     exit 2
   fi
   shift
-  case "$cmd" in
+  case "$COMMAND" in
     launch) cmd_launch "$@" ;;
     relaunch) cmd_relaunch "$@" ;;
     doctor) cmd_doctor "$@" ;;
@@ -2722,7 +2890,7 @@ main() {
     payload) cmd_payload "$@" ;;
     cleanup) cmd_cleanup "$@" ;;
     freeze-account) cmd_freeze_account "$@" ;;
-    *) die 2 "unknown command $cmd" ;;
+    *) die 2 "unknown command $COMMAND" ;;
   esac
 }
 

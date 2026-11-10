@@ -5,7 +5,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 ## Baseline preconditions
 
 - Build `umbilical.app` with Xcode and launch it through `verify-umbilical launch --app`.
-- The scratch directory is created with `mktemp -d` under `/tmp/umbilical-verify`. `HOME` and `CFFIXED_USER_HOME` are `<scratch>/home`. Download files go in `umbilical-verify-downloads` under that scratch directory.
+- Each run gets a private `/tmp/umbilical-verify.<id>` parent. The scratch directory is created with `mktemp -d` inside it. `HOME` and `CFFIXED_USER_HOME` are `<scratch>/home`. Download files go in `umbilical-verify-downloads` under that scratch directory.
 - `verify-umbilical doctor` exits 0. The recorded pid, bundle id `me.peapod.umbilical`, version, scratch `HOME`, `CFFIXED_USER_HOME`, start time, and preferences snapshot match. The account preferences plist is unchanged.
 - The window says `Unofficial build. License checks are off.` A build that enforces Polar is not a verification instance.
 - `Contents/Helpers/aria2c` and `Contents/Helpers/umb-watch` are executable before a download journey. `yt-dlp` is required only for a video download.
