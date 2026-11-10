@@ -41,6 +41,9 @@ ENTITLEMENTS_TEXT=""
 ENTITLEMENTS_KEYCHAIN=""
 ENTITLEMENTS_TASK_ALLOW=""
 settings_written=0
+handler_path=""
+ACCOUNT_HOME=""
+DISCARD=0
 
 usage() {
   cat >&2 <<'EOF'
@@ -66,8 +69,13 @@ usage:
   verify-umbilical ui quit
   verify-umbilical payload start --directory DIR --name NAME --body TEXT
   verify-umbilical payload stop --pid PID
-  verify-umbilical cleanup [--state PATH] [--evidence PATH]
+  verify-umbilical cleanup [--discard] [--state PATH] [--evidence PATH]
   verify-umbilical freeze-account RUN_ID
+
+freeze-account records the account home for a run id. It refuses when a state file
+already exists, so it cannot re-baseline a live run.
+cleanup --discard removes the scratch directory and the state file without
+claiming the account home matched. It still restores the umbilical:// handler.
 
 Exit 0 means the command finished. Exit 1 means the instance or bundle is not usable.
 Exit 2 means the arguments are wrong. Exit 3 means this host is not macOS.
@@ -147,19 +155,32 @@ file_mtime() {
   printf '%s\n' "$value"
 }
 
-real_user_home() {
-  local found=""
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    found="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{ print $2 }')"
-  elif command -v getent >/dev/null 2>&1; then
-    found="$(getent passwd "$(id -un)" | awk -F: '{ print $6 }')"
+resolve_account_home() {
+  if [[ -n "$ACCOUNT_HOME" ]]; then
+    return 0
   fi
-  [[ -n "$found" && "$found" == /* && "$found" != *..* ]] || die 1 "could not resolve the account home"
-  printf '%s\n' "$found"
+  local found=""
+  # A failing lookup must return 1 here. die inside $(...) would only exit the subshell.
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    found="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | awk '{ print $2 }')" || return 1
+  elif command -v getent >/dev/null 2>&1; then
+    found="$(getent passwd "$(id -un)" | awk -F: '{ print $6 }')" || return 1
+  else
+    return 1
+  fi
+  [[ -n "$found" && "$found" == /* && "$found" != *..* ]] || return 1
+  ACCOUNT_HOME="$found"
+}
+
+real_user_home() {
+  resolve_account_home || return 1
+  printf '%s\n' "$ACCOUNT_HOME"
 }
 
 real_prefs_path() {
-  printf '%s\n' "$(real_user_home)/Library/Preferences/${BUNDLE_ID}.plist"
+  local root
+  root="$(real_user_home)" || return 1
+  printf '%s\n' "$root/Library/Preferences/${BUNDLE_ID}.plist"
 }
 
 scratch_prefs_path() {
@@ -394,6 +415,10 @@ parse_common() {
         BODY="$2"
         shift 2
         ;;
+      --discard)
+        DISCARD=1
+        shift
+        ;;
       -h | --help)
         usage
         exit 2
@@ -607,8 +632,13 @@ valid_run_id() {
 
 valid_scratch_path() {
   local path="$1"
-  # mktemp on macOS returns the /private/tmp real path because /tmp is a symlink.
+  # Accept both prefixes. Do not assume which form mktemp prints.
   [[ "$path" =~ ^(/tmp|/private/tmp)/umbilical-verify/scratch-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}-[A-Za-z0-9]{6}$ ]]
+}
+
+under_tmp_prefix() {
+  local path="$1"
+  [[ "$path" == /tmp/* || "$path" == /private/tmp/* ]]
 }
 
 scratch_matches_run() {
@@ -686,6 +716,7 @@ load_state() {
   prefs_sha=""
   prefs_mtime=""
   settings_written=""
+  handler_path=""
   local line key value
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -z "$line" || "$line" == \#* ]] && continue
@@ -706,6 +737,7 @@ load_state() {
       prefs_sha) prefs_sha="$value" ;;
       prefs_mtime) prefs_mtime="$value" ;;
       settings_written) settings_written="$value" ;;
+      handler_path) handler_path="$value" ;;
       *) die 1 "unknown state field $key" ;;
     esac
   done <"$STATE"
@@ -733,6 +765,10 @@ load_state() {
     die 1 "state server_pid is not usable"
   fi
   [[ "$settings_written" == "0" || "$settings_written" == "1" ]] || die 1 "state settings_written is not usable"
+  if [[ "$handler_path" != "absent" && "$handler_path" != "skipped" ]]; then
+    [[ "$handler_path" == /* && "$handler_path" != *$'\n'* && "$handler_path" != *..* ]] || die 1 "state handler_path is not usable"
+  fi
+  [[ -n "$handler_path" ]] || die 1 "state handler_path is not usable"
   local snap
   snap="$(account_snap_file)"
   if [[ -L "$snap" ]]; then
@@ -775,6 +811,7 @@ lstart=$lstart
 prefs_sha=$prefs_sha
 prefs_mtime=$prefs_mtime
 settings_written=$settings_written
+handler_path=$handler_path
 EOF
   chmod 600 "$tmp"
   mv "$tmp" "$STATE"
@@ -787,13 +824,18 @@ account_snap_file() {
 
 account_paths() {
   local root dir base name
-  root="$(real_user_home)"
+  root="$(real_user_home)" || {
+    PREFS_ERROR="could not resolve the account home"
+    return 1
+  }
   printf '%s\n' \
     "$root/Library/Preferences/${BUNDLE_ID}.plist" \
     "$root/Library/Saved Application State/${BUNDLE_ID}.savedState" \
     "$root/Library/Containers/${BUNDLE_ID}" \
     "$root/Library/Group Containers/${BUNDLE_ID}" \
-    "$root/Library/Application Support/${BUNDLE_ID}"
+    "$root/Library/Application Support/${BUNDLE_ID}" \
+    "$root/Library/Caches/${BUNDLE_ID}" \
+    "$root/Library/HTTPStorages/${BUNDLE_ID}"
   dir="$root/Library/Preferences/ByHost"
   if [[ -L "$dir" ]]; then
     PREFS_ERROR="ByHost preferences directory is a symlink. Verification does not follow it."
@@ -826,32 +868,40 @@ account_paths() {
 fingerprint_dir() {
   local dir="$1"
   local sha
-  sha="$(python3 - "$dir" <<'PY'
+  # stderr stays off the terminal so a read error is one harness line, not a traceback.
+  sha="$(python3 - "$dir" 2>/dev/null <<'PY'
 import hashlib, os, sys
 root = sys.argv[1]
+
+def raise_walk_error(err):
+    raise err
+
 lines = []
-for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
-    dirnames.sort()
-    filenames.sort()
-    rel_dir = os.path.relpath(dirpath, root)
-    if rel_dir == ".":
-        rel_dir = ""
-    st = os.lstat(dirpath)
-    lines.append("dir\t%s\t%s" % (rel_dir, int(st.st_mtime_ns)))
-    for name in filenames:
-        path = os.path.join(dirpath, name)
-        rel = os.path.join(rel_dir, name) if rel_dir else name
-        st = os.lstat(path)
-        if os.path.islink(path):
-            lines.append("link\t%s\t%s" % (rel, os.readlink(path)))
-        elif os.path.isfile(path):
-            digest = hashlib.sha256()
-            with open(path, "rb") as handle:
-                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            lines.append("file\t%s\t%s\t%s" % (rel, digest.hexdigest(), int(st.st_mtime_ns)))
-        else:
-            lines.append("other\t%s\t%s" % (rel, st.st_mode))
+try:
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=raise_walk_error):
+        dirnames.sort()
+        filenames.sort()
+        rel_dir = os.path.relpath(dirpath, root)
+        if rel_dir == ".":
+            rel_dir = ""
+        st = os.lstat(dirpath)
+        lines.append("dir\t%s\t%s" % (rel_dir, int(st.st_mtime_ns)))
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            rel = os.path.join(rel_dir, name) if rel_dir else name
+            st = os.lstat(path)
+            if os.path.islink(path):
+                lines.append("link\t%s\t%s" % (rel, os.readlink(path)))
+            elif os.path.isfile(path):
+                digest = hashlib.sha256()
+                with open(path, "rb") as handle:
+                    for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                        digest.update(chunk)
+                lines.append("file\t%s\t%s\t%s" % (rel, digest.hexdigest(), int(st.st_mtime_ns)))
+            else:
+                lines.append("other\t%s\t%s" % (rel, st.st_mode))
+except OSError:
+    sys.exit(1)
 text = ("\n".join(lines) + "\n").encode()
 sys.stdout.write(hashlib.sha256(text).hexdigest())
 PY
@@ -947,7 +997,10 @@ write_account_records() {
   done <"$sorted"
   rm -f "$paths_file" "$sorted"
   [[ "$failed" == "0" ]] || return 1
-  plist="$(real_prefs_path)"
+  plist="$(real_prefs_path)" || {
+    PREFS_ERROR="could not resolve the account home"
+    return 1
+  }
   folder=""
   if [[ -e "$plist" || -L "$plist" ]]; then
     if [[ -L "$plist" || ! -f "$plist" ]]; then
@@ -963,18 +1016,52 @@ write_account_records() {
   fi
   if [[ -z "$folder" ]]; then
     printf 'download\tabsent\n' >>"$dest"
-  else
-    if ! fingerprint_path "$folder"; then
-      return 1
-    fi
-    printf 'download\t%s\n' "$FINGERPRINT_LINE" >>"$dest"
+    return 0
   fi
+  if [[ -L "$folder" || ! -d "$folder" ]]; then
+    PREFS_ERROR="download folder is not a real directory: $folder. Verification does not change it."
+    return 1
+  fi
+  # Names only. A Finder touch of an existing file, including .DS_Store, is not a new entry.
+  local names name
+  names="$(python3 - "$folder" 2>/dev/null <<'PY'
+import os, sys
+root = sys.argv[1]
+try:
+    found = os.listdir(root)
+except OSError:
+    sys.exit(1)
+kept = []
+for name in found:
+    if name == ".DS_Store" or name.startswith("._"):
+        continue
+    path = os.path.join(root, name)
+    try:
+        os.lstat(path)
+    except OSError:
+        sys.exit(1)
+    kept.append(name)
+for name in sorted(kept):
+    sys.stdout.write(name + "\n")
+PY
+)" || {
+    PREFS_ERROR="could not list download folder $folder. Verification does not change it and does not launch."
+    return 1
+  }
+  printf 'download\tfolder\t%s\n' "$folder" >>"$dest"
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    printf 'download\tname\t%s\t%s\n' "$name" "$folder/$name" >>"$dest"
+  done <<<"$names"
 }
 
 apply_prefs_fields_from_snap() {
   local snap kind sha mtime path plist found
   snap="$(account_snap_file)"
-  plist="$(real_prefs_path)"
+  plist="$(real_prefs_path)" || {
+    PREFS_ERROR="could not resolve the account home"
+    return 1
+  }
   found=0
   prefs_sha="absent"
   prefs_mtime="absent"
@@ -1106,8 +1193,8 @@ assert_real_prefs_unchanged() {
 
 settle_preferences() {
   # A lazy cfprefsd flush must land before the second snapshot.
-  # Do not run defaults and do not signal cfprefsd.
-  sleep 1
+  # Do not run defaults and do not signal cfprefsd. Four seconds is inside the 3-5s window.
+  sleep 4
 }
 
 assert_scratch_prefs() {
@@ -1206,7 +1293,7 @@ read_entitlements() {
   fi
   ENTITLEMENTS_TEXT="$(codesign -d --entitlements :- "$app" 2>/dev/null || true)"
   if [[ -z "$ENTITLEMENTS_TEXT" ]]; then
-    die 1 "could not read the signature entitlements for $app"
+    die 1 "could not read signature entitlements for $app. A signed build with no entitlements is refused."
   fi
   parsed="$(printf '%s' "$ENTITLEMENTS_TEXT" | python3 -c '
 import plistlib, sys
@@ -1401,7 +1488,7 @@ validate_http_url() {
 
 payload_script_ok() {
   local path="$1"
-  [[ "$path" == /tmp/* ]] || return 1
+  under_tmp_prefix "$path" || return 1
   [[ "$(basename "$path")" == "verify-umbilical-payload.py" ]] || return 1
   [[ "$path" != *..* ]] || return 1
   [[ -f "$path" && ! -L "$path" ]] || return 1
@@ -1446,7 +1533,7 @@ cmd_payload() {
       payload_canon="$(canonical_path "$DIRECTORY")" || die 1 "could not resolve payload directory $DIRECTORY"
       case "$payload_canon" in
         /tmp/*|/private/tmp/*) ;;
-        *) die 1 "payload directory must stay under /tmp" ;;
+        *) die 1 "payload directory must stay under /tmp or /private/tmp" ;;
       esac
       case "$payload_canon" in
         /tmp|/private/tmp|/tmp/|/private/tmp/) die 1 "payload directory must be a subdirectory of /tmp" ;;
@@ -1465,7 +1552,7 @@ cmd_payload() {
       payload_canon="$(canonical_path "$DIRECTORY")" || die 1 "could not resolve payload directory $DIRECTORY"
       case "$payload_canon" in
         /tmp/*|/private/tmp/*) ;;
-        *) die 1 "payload directory must stay under /tmp" ;;
+        *) die 1 "payload directory must stay under /tmp or /private/tmp" ;;
       esac
       chmod 700 "$DIRECTORY" || true
       if [[ -L "$DIRECTORY" ]]; then
@@ -1697,6 +1784,7 @@ wait_until_ready() {
       fi
       die 1 "relaunch exited before the window was ready. State still records pid $pid so cleanup can remove the scratch directory."
     fi
+    # Names in the real download folder only. This loop does not hash that folder's bytes.
     set +e
     assert_account_unchanged
     local acct_status=$?
@@ -1776,36 +1864,70 @@ record_launch_evidence() {
     printf 'TMPDIR=%s\n' "$(process_env "$pid" TMPDIR || true)"
   } >"$EVIDENCE/launch/environ.txt"
   private_file "$EVIDENCE/launch/environ.txt"
-  {
-    printf 'harness_pid=%s\n' "$$"
-    printf 'harness_comm=%s\n' "$(ps -o comm= -p $$ 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-    printf 'parent_pid=%s\n' "$PPID"
-    printf 'parent_comm=%s\n' "$(ps -o comm= -p "$PPID" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-  } >"$EVIDENCE/launch/accessibility-host.txt"
+  write_accessibility_host "$EVIDENCE/launch/accessibility-host.txt"
   private_file "$EVIDENCE/launch/accessibility-host.txt"
-  if [[ "$(uname -s)" == "Darwin" ]]; then
-    local handler
-    set +e
-    handler="$(handler_get 2>/dev/null)"
-    local handler_status=$?
-    set -e
-    if [[ $handler_status -ne 0 || -z "$handler" ]]; then
-      printf 'unread\n' >"$EVIDENCE/launch/handler-before.txt"
-    else
-      printf '%s\n' "$handler" >"$EVIDENCE/launch/handler-before.txt"
-    fi
-  else
-    printf 'skipped\n' >"$EVIDENCE/launch/handler-before.txt"
-  fi
-  private_file "$EVIDENCE/launch/handler-before.txt"
   if [[ -f "$(account_snap_file)" ]]; then
     if grep -q $'^download\tabsent$' "$(account_snap_file)"; then
       printf 'absent\n' >"$EVIDENCE/launch/real-download-folder.txt"
     else
-      grep $'^download\t' "$(account_snap_file)" >"$EVIDENCE/launch/real-download-folder.txt" || true
+      sed -n 's/^download\tfolder\t//p' "$(account_snap_file)" >"$EVIDENCE/launch/real-download-folder.txt"
     fi
     private_file "$EVIDENCE/launch/real-download-folder.txt"
   fi
+}
+
+write_accessibility_host() {
+  local dest="$1"
+  local current="$$" exe="" comm="" app_pid="" app_exe="" guard=0 parent=""
+  {
+    printf 'harness_pid=%s\n' "$$"
+    comm="$(ps -o comm= -p $$ 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
+    printf 'harness_comm=%s\n' "$comm"
+    while [[ "$current" =~ ^[0-9]+$ && "$current" -gt 1 && $guard -lt 30 ]]; do
+      comm="$(ps -o comm= -p "$current" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true)"
+      exe="$(process_exe "$current" || true)"
+      printf 'pid=%s comm=%s exe=%s\n' "$current" "${comm:-unknown}" "${exe:-unknown}"
+      if [[ "$exe" == *.app || "$exe" == *.app/* ]]; then
+        app_pid="$current"
+        app_exe="$exe"
+        break
+      fi
+      parent="$(ps -o ppid= -p "$current" 2>/dev/null | tr -d '[:space:]' || true)"
+      if [[ ! "$parent" =~ ^[0-9]+$ || "$parent" == "$current" ]]; then
+        printf 'ps=failed\n'
+        break
+      fi
+      current="$parent"
+      guard=$((guard + 1))
+    done
+    if [[ -n "$app_exe" ]]; then
+      printf 'app_pid=%s\napp_exe=%s\n' "$app_pid" "$app_exe"
+    else
+      printf 'app=absent\n'
+    fi
+  } >"$dest"
+}
+
+record_handler_before_spawn() {
+  mkdir -p "$EVIDENCE/launch"
+  chmod 700 "$EVIDENCE/launch" || true
+  local status=0
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    handler_path="skipped"
+  else
+    set +e
+    handler_path="$(handler_get 2>/dev/null)"
+    status=$?
+    set -e
+    if [[ $status -ne 0 || -z "$handler_path" ]]; then
+      handler_path=""
+      rm -f "$(account_snap_file)"
+      remove_scratch_dir || true
+      die 1 "could not record the umbilical:// handler before launch. The app was not started."
+    fi
+  fi
+  printf '%s\n' "$handler_path" >"$EVIDENCE/launch/handler-before.txt"
+  private_file "$EVIDENCE/launch/handler-before.txt"
 }
 
 cmd_launch() {
@@ -1845,6 +1967,7 @@ cmd_launch() {
     remove_scratch_dir || true
     die 1 "${PREFS_ERROR:-could not snapshot the account home. Refusing to launch.}"
   fi
+  record_handler_before_spawn
   spawn_detached "$scratch/logs/stdout.log" "$scratch/logs/stderr.log"
   if ! capture_lstart; then
     stop_spawned_without_lstart
@@ -2231,16 +2354,13 @@ cmd_ui() {
       finish_doctor
       mkdir -p "$EVIDENCE/open-url"
       chmod 700 "$EVIDENCE/open-url" || true
-      local before_handler="" after_handler="" before="" found extra extra_exe extra_home extra_fixed extra_avoid
-      local handler_status=0 acct_status=0 second=0
-      set +e
-      before_handler="$(handler_get 2>/dev/null)"
-      handler_status=$?
-      set -e
-      if [[ $handler_status -ne 0 || -z "$before_handler" ]]; then
+      rm -f "$EVIDENCE/open-url/handler-after.txt" "$EVIDENCE/open-url/handler-restored.txt"
+      local before="" found extra extra_exe extra_home extra_fixed extra_avoid
+      local deliver_status=0 acct_status=0 second=0 handler_status=0
+      if [[ -z "$handler_path" || "$handler_path" == "skipped" ]]; then
         die 1 "could not record the umbilical:// handler. The URL was not sent."
       fi
-      printf '%s\n' "$before_handler" >"$EVIDENCE/open-url/handler-before.txt"
+      printf '%s\n' "$handler_path" >"$EVIDENCE/open-url/handler-before.txt"
       private_file "$EVIDENCE/open-url/handler-before.txt"
       named_pids
       if [[ ${#NAMED_PIDS[@]} -gt 0 ]]; then
@@ -2248,22 +2368,28 @@ cmd_ui() {
           before="$before $found"
         done
       fi
+      set +e
       deliver_url_to_pid "$URL"
+      deliver_status=$?
+      set -e
       sleep 0.5
       settle_preferences
       set +e
-      after_handler="$(handler_get 2>/dev/null)"
+      assert_handler_restored "$EVIDENCE/open-url"
       handler_status=$?
       set -e
-      printf '%s\n' "${after_handler:-unread}" >"$EVIDENCE/open-url/handler-after.txt"
-      private_file "$EVIDENCE/open-url/handler-after.txt"
-      if [[ $handler_status -eq 0 && -n "$after_handler" && "$after_handler" != "$before_handler" && "$before_handler" != "absent" ]]; then
-        handler_set "$before_handler"
-        printf '%s\n' "$before_handler" >"$EVIDENCE/open-url/handler-restored.txt"
-      else
-        printf 'unchanged\n' >"$EVIDENCE/open-url/handler-restored.txt"
+      if [[ -f "$EVIDENCE/open-url/handler-after.txt" ]]; then
+        private_file "$EVIDENCE/open-url/handler-after.txt"
       fi
-      private_file "$EVIDENCE/open-url/handler-restored.txt"
+      if [[ -f "$EVIDENCE/open-url/handler-restored.txt" ]]; then
+        private_file "$EVIDENCE/open-url/handler-restored.txt"
+      fi
+      if [[ $handler_status -ne 0 ]]; then
+        die 1 "${PREFS_ERROR:-umbilical:// handler changed.} Delivery status was $deliver_status."
+      fi
+      if [[ $deliver_status -ne 0 ]]; then
+        die 1 "could not deliver the URL to pid $pid. The handler path is $handler_path."
+      fi
       set +e
       assert_account_unchanged "$EVIDENCE/open-url/account-after.txt"
       acct_status=$?
@@ -2327,8 +2453,52 @@ cmd_ui() {
   esac
 }
 
+assert_handler_restored() {
+  local evidence_dir="${1:-}"
+  local after="" restored="" status=0
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    return 0
+  fi
+  if [[ -z "$handler_path" || "$handler_path" == "skipped" ]]; then
+    PREFS_ERROR="handler path was not recorded before launch"
+    return 1
+  fi
+  status=0
+  after="$(handler_get 2>/dev/null)" || status=$?
+  if [[ $status -ne 0 || -z "$after" ]]; then
+    PREFS_ERROR="could not read the umbilical:// handler"
+    return 1
+  fi
+  if [[ -n "$evidence_dir" ]]; then
+    printf '%s\n' "$after" >"$evidence_dir/handler-after.txt"
+  fi
+  if [[ "$after" == "$handler_path" ]]; then
+    if [[ -n "$evidence_dir" ]]; then
+      printf 'unchanged\n' >"$evidence_dir/handler-restored.txt"
+    fi
+    return 0
+  fi
+  if [[ "$handler_path" == "absent" ]]; then
+    PREFS_ERROR="umbilical:// handler changed from absent to $after. There is no previous app path to restore."
+    return 1
+  fi
+  if ! handler_set "$handler_path"; then
+    PREFS_ERROR="could not restore the umbilical:// handler from $after to $handler_path."
+    return 1
+  fi
+  status=0
+  restored="$(handler_get 2>/dev/null)" || status=$?
+  if [[ $status -ne 0 || "$restored" != "$handler_path" ]]; then
+    PREFS_ERROR="umbilical:// handler is ${restored:-unread}, expected $handler_path. It had moved to $after."
+    return 1
+  fi
+  if [[ -n "$evidence_dir" ]]; then
+    printf '%s\n' "$handler_path" >"$evidence_dir/handler-restored.txt"
+  fi
+}
+
 handler_get() {
-  osascript -l JavaScript <<'JS'
+  osascript -l JavaScript <<'JS' || return 1
 function run() {
   ObjC.import("AppKit");
   var url = $.NSURL.URLWithString("umbilical://download");
@@ -2336,24 +2506,30 @@ function run() {
   if (!app || app.isNil()) {
     return "absent";
   }
-  var bundle = $.NSBundle.bundleWithURL(app);
-  if (!bundle || bundle.isNil() || !bundle.bundleIdentifier || bundle.bundleIdentifier.isNil()) {
+  var path = app.path;
+  if (!path || path.isNil()) {
     return "absent";
   }
-  return String(ObjC.unwrap(bundle.bundleIdentifier));
+  return String(ObjC.unwrap(path));
 }
 JS
 }
 
 handler_set() {
   local ident="$1"
-  [[ "$ident" =~ ^[A-Za-z0-9._-]+$ ]] || die 1 "handler bundle id is not usable"
-  osascript -l JavaScript - "$ident" <<'JS'
+  [[ "$ident" == /* && "$ident" != *$'\n'* && "$ident" != *..* ]] || return 1
+  osascript -l JavaScript - "$ident" <<'JS' || return 1
 function run(argv) {
-  ObjC.import("CoreServices");
-  var status = $.LSSetDefaultHandlerForURLScheme("umbilical", argv[0]);
-  if (status !== 0) {
-    throw new Error("could not restore the umbilical handler");
+  ObjC.import("AppKit");
+  var appURL = $.NSURL.fileURLWithPath(argv[0]);
+  var error = $();
+  var ok = $.NSWorkspace.sharedWorkspace.setDefaultApplicationAtURLToOpenURLsWithSchemeError(appURL, "umbilical", error);
+  if (!ok) {
+    var message = "could not restore the umbilical handler";
+    if (error && !error.isNil()) {
+      message = String(ObjC.unwrap(error.localizedDescription));
+    }
+    throw new Error(message);
   }
   return "restored";
 }
@@ -2362,7 +2538,7 @@ JS
 
 deliver_url_to_pid() {
   local url="$1"
-  osascript -l JavaScript - "$pid" "$url" <<'JS'
+  osascript -l JavaScript - "$pid" "$url" <<'JS' || return 1
 function run(argv) {
   ObjC.import("Foundation");
   var targetPid = parseInt(argv[0], 10);
@@ -2380,9 +2556,12 @@ function run(argv) {
   );
   event.setParamDescriptorForKeyword($.NSAppleEventDescriptor.descriptorWithString(targetURL), 0x2D2D2D2D);
   var error = $();
-  event.sendWithOptionsTimeoutError(1, 30, error);
+  var reply = event.sendWithOptionsTimeoutError(1, 30, error);
   if (error && !error.isNil()) {
     throw new Error(String(ObjC.unwrap(error.localizedDescription)));
+  }
+  if (!reply || reply.isNil()) {
+    throw new Error("url delivery returned nil");
   }
   return "sent";
 }
@@ -2437,6 +2616,9 @@ cmd_freeze_account() {
   local snap_status=0
   run_id="${1:-}"
   valid_run_id "$run_id" || die 2 "freeze-account needs a run id"
+  if [[ -e "$STATE" || -L "$STATE" ]]; then
+    die 1 "freeze-account refuses while $STATE exists. It does not re-baseline a live run. Move aside a new download-folder file and run cleanup, or run cleanup --discard."
+  fi
   create_verify_parent
   set +e
   snapshot_account
@@ -2468,19 +2650,39 @@ cmd_cleanup() {
   fi
   settle_preferences
   local acct_status=0
+  local handler_status=0
   local snap
   mkdir -p "$EVIDENCE/cleanup"
   chmod 700 "$EVIDENCE/cleanup" || true
+  rm -f "$EVIDENCE/cleanup/handler-after.txt" "$EVIDENCE/cleanup/handler-restored.txt"
   snap="$(account_snap_file)"
   set +e
-  assert_account_unchanged "$EVIDENCE/cleanup/account-after.txt"
-  acct_status=$?
+  assert_handler_restored "$EVIDENCE/cleanup"
+  handler_status=$?
   set -e
-  if [[ -f "$EVIDENCE/cleanup/account-after.txt" ]]; then
-    private_file "$EVIDENCE/cleanup/account-after.txt"
+  if [[ -f "$EVIDENCE/cleanup/handler-after.txt" ]]; then
+    private_file "$EVIDENCE/cleanup/handler-after.txt"
   fi
-  if [[ $acct_status -ne 0 ]]; then
-    die 1 "${PREFS_ERROR:-account home changed after quit.} State and scratch were kept."
+  if [[ -f "$EVIDENCE/cleanup/handler-restored.txt" ]]; then
+    private_file "$EVIDENCE/cleanup/handler-restored.txt"
+  fi
+  if [[ $handler_status -ne 0 ]]; then
+    die 1 "${PREFS_ERROR:-umbilical:// handler changed.} State and scratch were kept."
+  fi
+  if [[ "$DISCARD" == "1" ]]; then
+    printf 'account-snapshot-not-required\n' >"$EVIDENCE/cleanup/discarded.txt"
+    private_file "$EVIDENCE/cleanup/discarded.txt"
+  else
+    set +e
+    assert_account_unchanged "$EVIDENCE/cleanup/account-after.txt"
+    acct_status=$?
+    set -e
+    if [[ -f "$EVIDENCE/cleanup/account-after.txt" ]]; then
+      private_file "$EVIDENCE/cleanup/account-after.txt"
+    fi
+    if [[ $acct_status -ne 0 ]]; then
+      die 1 "${PREFS_ERROR:-account home changed after quit.} State and scratch were kept. If this names a new file, move that file aside and run cleanup again. cleanup --discard drops the scratch and the state file without claiming the account home matched. freeze-account will not re-baseline a live run."
+    fi
   fi
   if [[ -L "$snap" ]]; then
     die 1 "refusing to delete the account snapshot because it is a symlink. Scratch was kept."
@@ -2494,8 +2696,13 @@ cmd_cleanup() {
   remove_scratch_dir
   rm -f "$snap"
   rm -f "$STATE"
-  log_line "cleanup removed scratch and state. Evidence remains at $EVIDENCE"
-  echo "cleaned $EVIDENCE"
+  if [[ "$DISCARD" == "1" ]]; then
+    log_line "cleanup discarded scratch and state without an account match. Evidence remains at $EVIDENCE"
+    echo "discarded $EVIDENCE"
+  else
+    log_line "cleanup removed scratch and state. Evidence remains at $EVIDENCE"
+    echo "cleaned $EVIDENCE"
+  fi
 }
 
 main() {
