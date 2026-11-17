@@ -58,29 +58,144 @@ track_tree() {
   done < <(pgrep -P "$pid" || true)
 }
 
-release_pid() {
+# Reap only a pid recorded for this run. The start time is the identity.
+# A child can exec and change its executable without becoming a different
+# process. A reused pid has a new start time and is left alone.
+same_recorded_process() {
   local pid="$1"
-  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
-  track_tree "$pid"
-  kill -TERM "$pid" 2>/dev/null || true
+  local start="$2"
+  local now
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  now="$(lstart_of "$pid" 2>/dev/null || true)"
+  [[ -n "$start" && "$now" == "$start" ]]
 }
 
-stop_tracked() {
-  local pid start exe now_start now_exe child
-  [[ -f "$PIDFILE" ]] || return 0
-  tac "$PIDFILE" | while IFS=$'\t' read -r pid start exe; do
+collect_live_tree() {
+  local dest="$1"
+  local pid="$2"
+  local depth="${3:-0}"
+  local child start exe
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  [[ "$depth" -lt 20 ]] || return 0
+  start="$(lstart_of "$pid" 2>/dev/null || true)"
+  [[ -n "$start" ]] || return 0
+  exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+  if ! awk -F '\t' -v pid="$pid" -v start="$start" '$1 == pid && $2 == start { found = 1 } END { exit found ? 0 : 1 }' "$dest"; then
+    printf '%s\t%s\t%s\n' "$pid" "$start" "$exe" >>"$dest"
+  fi
+  while IFS= read -r child; do
+    [[ -z "$child" || "$child" == "$pid" ]] && continue
+    collect_live_tree "$dest" "$child" "$((depth + 1))"
+  done < <(pgrep -P "$pid" || true)
+}
+
+signal_recorded_file() {
+  local file="$1"
+  local sig="$2"
+  local snapshot pid start exe
+  [[ -s "$file" ]] || return 0
+  snapshot="$(mktemp)"
+  tac "$file" >"$snapshot" || true
+  while IFS=$'\t' read -r pid start exe; do
     [[ -z "$pid" ]] && continue
-    now_start="$(lstart_of "$pid" 2>/dev/null || true)"
-    now_exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
-    [[ -n "$start" && "$now_start" == "$start" && -n "$exe" && "$now_exe" == "$exe" ]] || continue
+    same_recorded_process "$pid" "$start" || continue
+    kill "-$sig" "$pid" 2>/dev/null || true
+  done <"$snapshot"
+  rm -f "$snapshot"
+}
+
+recorded_file_alive() {
+  local file pid start exe
+  for file in "$@"; do
+    [[ -s "$file" ]] || continue
+    while IFS=$'\t' read -r pid start exe; do
+      [[ -z "$pid" ]] && continue
+      if same_recorded_process "$pid" "$start"; then
+        return 0
+      fi
+    done <"$file"
+  done
+  return 1
+}
+
+reap_recorded_file() {
+  local file="$1"
+  local extra snapshot pid start exe child
+  [[ -s "$file" ]] || return 0
+  extra="$(mktemp)"
+  snapshot="$(mktemp)"
+  : >"$extra"
+  : >"$snapshot"
+  tac "$file" >"$snapshot" || true
+  while IFS=$'\t' read -r pid start exe; do
+    [[ -z "$pid" ]] && continue
+    same_recorded_process "$pid" "$start" || continue
     while IFS= read -r child; do
-      [[ -z "$child" ]] && continue
+      [[ -z "$child" || "$child" == "$pid" ]] && continue
+      track "$child"
+      collect_live_tree "$extra" "$child"
       kill -TERM "$child" 2>/dev/null || true
     done < <(pgrep -P "$pid" || true)
     kill -TERM "$pid" 2>/dev/null || true
-  done || true
-  sleep 0.3
-  return 0
+  done <"$snapshot"
+  if recorded_file_alive "$file" "$extra"; then
+    sleep 0.4
+    cat "$file" "$extra" >"$snapshot" || true
+    while IFS=$'\t' read -r pid start exe; do
+      [[ -z "$pid" ]] && continue
+      same_recorded_process "$pid" "$start" || continue
+      while IFS= read -r child; do
+        [[ -z "$child" || "$child" == "$pid" ]] && continue
+        track "$child"
+        collect_live_tree "$extra" "$child"
+      done < <(pgrep -P "$pid" || true)
+    done <"$snapshot"
+    signal_recorded_file "$file" KILL
+    signal_recorded_file "$extra" KILL
+  fi
+  rm -f "$extra" "$snapshot"
+}
+
+release_pid() {
+  local pid="$1"
+  local tree
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  track_tree "$pid"
+  tree="$(mktemp)"
+  : >"$tree"
+  collect_live_tree "$tree" "$pid"
+  reap_recorded_file "$tree"
+  rm -f "$tree"
+}
+
+stop_tracked() {
+  [[ -f "$PIDFILE" ]] || return 0
+  reap_recorded_file "$PIDFILE"
+}
+
+tracked_still_alive() {
+  local pid start exe
+  [[ -s "$PIDFILE" ]] || return 1
+  while IFS=$'\t' read -r pid start exe; do
+    [[ -z "$pid" ]] && continue
+    if same_recorded_process "$pid" "$start"; then
+      echo "tracked pid $pid still alive (recorded exe ${exe:-unknown})" >&2
+      ps -o pid=,ppid=,args= -p "$pid" >&2 || true
+      return 0
+    fi
+  done <"$PIDFILE"
+  return 1
+}
+
+second_pid_grandchild() {
+  local dir
+  local target="$UMB_FAKE_DIR/fake-second.out"
+  for dir in /proc/[0-9]*; do
+    if ls -l "$dir/fd" 2>/dev/null | grep -F -q -- "$target"; then
+      return 0
+    fi
+  done
+  return 1
 }
 copy_evidence() {
   if [[ "${UMB_VERIFY_SAVE_LOGS:-}" != "1" ]]; then
@@ -93,7 +208,24 @@ copy_evidence() {
     cp -f "$EVIDENCE/proof.log" "$EVIDENCE/commands.log" "$EVIDENCE/kept.txt" "$ARTIFACTS/" 2>/dev/null || true
   fi
 }
-trap 'stop_tracked || true; copy_evidence' EXIT
+teardown() {
+  trap - INT TERM EXIT
+  stop_tracked || true
+  if tracked_still_alive; then
+    echo "FAIL: teardown left a process this run started" >&2
+    copy_evidence || true
+    exit 1
+  fi
+  copy_evidence || true
+}
+on_prove_signal() {
+  trap - INT TERM EXIT
+  teardown
+  exit "$1"
+}
+trap 'on_prove_signal 130' INT
+trap 'on_prove_signal 143' TERM
+trap 'teardown' EXIT
 
 run_harness() {
   "$BASH32" "$HARNESS" "$@"
@@ -323,6 +455,7 @@ assert_contains "$LAST_ERR" "--discard is only valid for cleanup" "doctor discar
 run_expect 2 "freeze rejects discard" run_harness freeze-account --discard 20260101T000000Z-abcdef01
 assert_contains "$LAST_ERR" "--discard is only valid for cleanup" "freeze discard message"
 python3 "$SCRIPT_DIR/check-handler-call.py" "$HARNESS" "$SCRIPT_DIR/restore-handler.swift" || fail "handler call check"
+python3 "$SCRIPT_DIR/check-handler-call.py" --self-check || fail "watched() is a chain of startswith calls again"
 call_tmp="$(mktemp)"
 printf '%s\n' '// setDefaultApplicationAtURLToOpenURLsWithSchemeCompletionHandler(appURL, "umbilical", function(error) {})' >"$call_tmp"
 python3 "$SCRIPT_DIR/check-handler-call.py" "$call_tmp" && fail "a comment was accepted as the handler call"
@@ -1303,6 +1436,10 @@ if [[ -f $UMB_FAKE_DIR/fake-second-pid ]] && kill -0 "$(cat $UMB_FAKE_DIR/fake-s
   fail "second pid is still running"
 fi
 pass "second pid was stopped"
+if second_pid_grandchild; then
+  fail "second pid left a grandchild"
+fi
+pass "second pid grandchild was stopped"
 rm -f $UMB_FAKE_DIR/fake-open-second
 printf '%s\n' "$GOOD" > $UMB_FAKE_DIR/fake-handler-flip
 touch $UMB_FAKE_DIR/fake-open-second $UMB_FAKE_DIR/fake-handler-restore-fail
@@ -1314,6 +1451,10 @@ if [[ -f $UMB_FAKE_DIR/fake-second-pid ]] && kill -0 "$(cat $UMB_FAKE_DIR/fake-s
   fail "handler failure left the second pid running"
 fi
 pass "second pid scan finished before the handler failure"
+if second_pid_grandchild; then
+  fail "handler failure left the second pid grandchild"
+fi
+pass "handler failure stopped the second pid grandchild"
 rm -f $UMB_FAKE_DIR/fake-open-second $UMB_FAKE_DIR/fake-handler-flip $UMB_FAKE_DIR/fake-handler-restore-fail
 printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
 

@@ -73,7 +73,8 @@ note_new_owned() {
     note_pid "$pid"
   done < <(pgrep -x umbilical || true)
 }
-stop_owned() {
+signal_owned() {
+  local sig="$1"
   local pid start exe now_start now_exe
   [[ -s "$OWNED" ]] || return 0
   tac "$OWNED" | while IFS=$'\t' read -r pid start exe; do
@@ -81,9 +82,44 @@ stop_owned() {
     now_start="$(proc_lstart "$pid")"
     now_exe="$(proc_exe "$pid")"
     [[ "$now_start" == "$start" && -n "$exe" && "$now_exe" == "$exe" ]] || continue
-    kill -TERM "$pid" 2>/dev/null || true
+    kill "-$sig" "$pid" 2>/dev/null || true
   done || true
+}
+stop_owned() {
+  [[ -s "$OWNED" ]] || return 0
+  signal_owned TERM
+  sleep 0.4
+  signal_owned KILL
   return 0
+}
+# Best of several doctor samples, and a floor that rises when a walk of the
+# same tree is already slow. The 2000ms floor stays. One sample cannot pass it.
+doctor_budget_ms() {
+  local baseline="$1"
+  local scaled=$((baseline * 8))
+  if [[ "$scaled" -lt 2000 ]]; then
+    printf '%s\n' 2000
+  else
+    printf '%s\n' "$scaled"
+  fi
+}
+best_ms() {
+  local best="" sample
+  for sample in "$@"; do
+    [[ "$sample" =~ ^[0-9]+$ ]] || return 2
+    if [[ -z "$best" || "$sample" -lt "$best" ]]; then
+      best="$sample"
+    fi
+  done
+  [[ -n "$best" ]] || return 2
+  printf '%s\n' "$best"
+}
+doctor_within_budget() {
+  local sample="$1"
+  local baseline="$2"
+  local budget
+  budget="$(doctor_budget_ms "$baseline")"
+  [[ "$sample" -lt "$budget" ]]
 }
 snapshot_preexisting() {
   : >"$PREEXISTING"
@@ -100,7 +136,18 @@ umb_snap() {
     printf '%s\t%s\n' "$pid" "$(proc_lstart "$pid")"
   done < <(pgrep -x umbilical || true) | LC_ALL=C sort
 }
-trap 'stop_owned || true; copy_log' EXIT
+teardown() {
+  stop_owned || true
+  copy_log || true
+}
+on_regress_signal() {
+  trap - INT TERM EXIT
+  teardown
+  exit "$1"
+}
+trap 'on_regress_signal 130' INT
+trap 'on_regress_signal 143' TERM
+trap 'teardown' EXIT
 
 run_expect() {
   local want="$1"
@@ -164,6 +211,29 @@ harness() {
 
 [[ "$(readlink -f /tmp)" == "/private/tmp" ]] || fail "not in the macOS /tmp layout"
 python3 -c 'import os,sys; sys.exit(0 if os.path.samefile("/tmp","/private/tmp") else 1)' || fail "/tmp and /private/tmp are not the same directory"
+[[ "$(doctor_budget_ms 100)" == "2000" ]] || fail "doctor budget dropped the 2000ms floor"
+[[ "$(doctor_budget_ms 300)" == "2400" ]] || fail "doctor budget did not scale a slow walk"
+[[ "$(best_ms 2500 1500 4000)" == "1500" ]] || fail "best of N did not keep the fastest sample"
+doctor_within_budget "$(best_ms 2500 1500 4000)" 100 || fail "a fast sample under the floor was rejected"
+if doctor_within_budget "$(best_ms 9000 8000 7000)" 100; then
+  fail "samples above the 2000ms floor were accepted"
+fi
+doctor_within_budget "$(best_ms 5000 4500 4000)" 1000 || fail "a sample under the scaled budget was rejected"
+if doctor_within_budget "$(best_ms 20000 19000 18000)" 1000; then
+  fail "a sample far above the scaled budget was accepted"
+fi
+python3 - "$0" <<'PY' || fail "the 50000-file doctor gate is a single 2000ms sample again"
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+needle = '[[ "$doctor_ms" -lt ' + "2000 ]]"
+if needle in text:
+    raise SystemExit("single comparison is back")
+if "doctor_within_budget" not in text or "sample_i -le 3" not in text:
+    raise SystemExit("best-of-three budget gate is missing")
+PY
+python3 "$CHECK" --self-check >/dev/null || fail "watched() is a chain of startswith calls again"
+pass "doctor budget keeps the floor and scales with the machine"
+pass "watched() is one startswith tuple"
 snapshot_preexisting
 echo "regress bash $BASH_VERSION work $WORK" | tee -a "$LOG"
 
@@ -226,8 +296,12 @@ assert_contains "$(cat "$WORK/bare-handler.err")" "missing my" "bare handler cal
 rm -f "$bare_script"
 pass "handler calls inside tell use my"
 pass "handler call is parsed"
-awk '/^die\(\)/,/^}/' "$HARNESS" | grep -q 'remove_scratch_dir' || fail "die does not use remove_scratch_dir"
+awk '/^release_ephemeral_scratch\(\)/,/^}/' "$HARNESS" | grep -q 'remove_scratch_dir' || fail "teardown does not use remove_scratch_dir"
+awk '/^die\(\)/,/^}/' "$HARNESS" | grep -q 'release_ephemeral_scratch' || fail "die does not use the shared teardown"
+awk '/^on_signal\(\)/,/^}/' "$HARNESS" | grep -q 'release_ephemeral_scratch' || fail "signal trap does not use the shared teardown"
 awk '/^die\(\)/,/^}/' "$HARNESS" | grep -q 'rm -rf' && fail "die still uses rm -rf"
+grep -q "trap 'on_signal 130' INT" "$HARNESS" || fail "harness has no INT trap"
+grep -q "trap 'on_signal 143' TERM" "$HARNESS" || fail "harness has no TERM trap"
 grep -q 'xcode-select -p' "$HARNESS" || fail "swift helper does not check xcode-select"
 grep -q 'module-cache-path' "$HARNESS" || fail "swift helper does not set a module cache"
 grep -q 'TMPDIR=' "$HARNESS" || fail "swift helper does not set TMPDIR"
@@ -583,12 +657,46 @@ PY
 cp -a "$DOWNLOADS/marker" "$WORK/marker.stamp"
 printf '/Applications/Original.app\n' > "$UMB_FAKE_DIR/fake-handler"
 run_expect 0 "launch with 50000 download files" timeout 60 "$BASH" "$HARNESS" launch --app "$GOOD"
-start_ns="$(date +%s%N)"
-run_expect 0 "doctor walks 50000 files" harness doctor
-end_ns="$(date +%s%N)"
-doctor_ms=$(( (end_ns - start_ns) / 1000000 ))
-echo "doctor at 50000 files took ${doctor_ms}ms" | tee -a "$LOG"
-[[ "$doctor_ms" -lt 2000 ]] || fail "doctor at 50000 files took ${doctor_ms}ms"
+baseline_start="$(date +%s%N)"
+find "$DOWNLOADS" -type f -print >/dev/null
+baseline_end="$(date +%s%N)"
+baseline_ms=$(( (baseline_end - baseline_start) / 1000000 ))
+[[ "$baseline_ms" -ge 1 ]] || baseline_ms=1
+budget_ms="$(doctor_budget_ms "$baseline_ms")"
+best_ms_seen=""
+sample_i=1
+while [[ "$sample_i" -le 3 ]]; do
+  sample_out="$(mktemp)"
+  sample_err="$(mktemp)"
+  sample_start="$(date +%s%N)"
+  set +e
+  harness doctor >"$sample_out" 2>"$sample_err"
+  sample_status=$?
+  sample_end="$(date +%s%N)"
+  set -e
+  note_new_owned || true
+  sample_ms=$(( (sample_end - sample_start) / 1000000 ))
+  echo "doctor sample $sample_i ${sample_ms}ms" | tee -a "$LOG"
+  if [[ "$sample_status" -ne 0 ]]; then
+    {
+      echo "doctor sample $sample_i failed"
+      cat "$sample_err"
+      cat "$sample_out"
+    } >>"$LOG"
+    rm -f "$sample_out" "$sample_err"
+    fail "doctor at 50000 files wanted exit 0, got $sample_status"
+  fi
+  rm -f "$sample_out" "$sample_err"
+  if [[ -z "$best_ms_seen" || "$sample_ms" -lt "$best_ms_seen" ]]; then
+    best_ms_seen="$sample_ms"
+  fi
+  sample_i=$((sample_i + 1))
+done
+echo "doctor best ${best_ms_seen}ms baseline ${baseline_ms}ms budget ${budget_ms}ms" | tee -a "$LOG"
+if ! doctor_within_budget "$best_ms_seen" "$baseline_ms"; then
+  fail "doctor at 50000 files best ${best_ms_seen}ms exceeded budget ${budget_ms}ms (baseline ${baseline_ms}ms)"
+fi
+pass "doctor at 50000 files best ${best_ms_seen}ms within ${budget_ms}ms"
 printf 'XXXXXX\n' > "$DOWNLOADS/marker"
 touch -r "$WORK/marker.stamp" "$DOWNLOADS/marker"
 run_expect 1 "same-size overwrite" harness doctor

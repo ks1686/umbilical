@@ -114,9 +114,7 @@ log_line() {
   fi
 }
 
-die() {
-  local code="$1"
-  shift
+release_ephemeral_scratch() {
   if [[ -n "${INSPECT_TMP:-}" ]]; then
     rm -f "$INSPECT_TMP"
     INSPECT_TMP=""
@@ -131,9 +129,36 @@ die() {
     fi
     remove_created_parent
   fi
+}
+
+die() {
+  local code="$1"
+  shift
+  release_ephemeral_scratch
   echo "verify-umbilical: $*" >&2
   log_line "exit=$code $*"
   exit "$code"
+}
+
+# INT and TERM run the same scratch teardown as die. Exit from the trap so the
+# shell does not continue the command that was in progress.
+on_signal() {
+  local status="$1"
+  local now_start=""
+  trap - INT TERM
+  if [[ -n "${HOLD_SLEEP:-}" && -n "${HOLD_SLEEP_START:-}" ]]; then
+    now_start="$(process_lstart "$HOLD_SLEEP" || true)"
+    if [[ "$now_start" == "$HOLD_SLEEP_START" ]]; then
+      kill -KILL "$HOLD_SLEEP" 2>/dev/null || true
+      wait "$HOLD_SLEEP" 2>/dev/null || true
+    fi
+  fi
+  if [[ -n "${UMB_VERIFY_SIGNAL_HOLD:-}" && -f "${UMB_VERIFY_SIGNAL_HOLD}" && ! -L "${UMB_VERIFY_SIGNAL_HOLD}" ]]; then
+    printf 'signal %s\n' "$status" >>"${UMB_VERIFY_SIGNAL_HOLD}" || true
+  fi
+  release_ephemeral_scratch
+  log_line "exit=$status signal"
+  exit "$status"
 }
 
 require_value() {
@@ -2011,28 +2036,25 @@ stop_spawned_without_lstart() {
 
 signal_pid() {
   local target="$1"
+  local started _
   if ! process_alive "$target"; then
     return 0
   fi
+  started="$(process_lstart "$target" || true)"
   kill -TERM "$target" 2>/dev/null || true
-  local _
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     process_alive "$target" || return 0
+    if [[ -n "$started" && "$(process_lstart "$target" || true)" != "$started" ]]; then
+      return 0
+    fi
     sleep 0.2
   done
-  if process_alive "$target"; then
+  if [[ -z "$started" ]]; then
+    return 0
+  fi
+  if process_alive "$target" && [[ "$(process_lstart "$target" || true)" == "$started" ]]; then
     kill -KILL "$target" 2>/dev/null || true
   fi
-}
-
-descendant_pids() {
-  local root="$1"
-  local line
-  while IFS= read -r line; do
-    [[ -z "$line" ]] && continue
-    printf '%s\n' "$line"
-    descendant_pids "$line"
-  done < <(pgrep -P "$root" || true)
 }
 
 stop_recorded_process() {
@@ -2042,12 +2064,14 @@ stop_recorded_process() {
   if ! kill_identity_ok; then
     die 1 "$IDENTITY_REASON. Signaled nothing."
   fi
-  local kids_file child
-  kids_file="$(mktemp)"
-  descendant_pids "$pid" >"$kids_file" || true
+  local tree now_exe
+  tree="$(mktemp)"
+  now_exe="$(process_exe "$pid" || true)"
+  tree_remember_root "$tree" "$pid" "$lstart" "$now_exe"
+  tree_note_descendants "$tree" "$pid"
   if [[ "$(uname -s)" == "Darwin" ]]; then
     if ! kill_identity_ok; then
-      rm -f "$kids_file"
+      rm -f "$tree"
       die 1 "$IDENTITY_REASON. Signaled nothing."
     fi
     set +e
@@ -2058,21 +2082,18 @@ stop_recorded_process() {
       process_alive "$pid" || break
       sleep 0.3
     done
+    if process_alive "$pid"; then
+      tree_note_descendants "$tree" "$pid"
+    fi
   fi
   if process_alive "$pid"; then
     if ! kill_identity_ok; then
-      rm -f "$kids_file"
+      rm -f "$tree"
       die 1 "$IDENTITY_REASON. Signaled nothing."
     fi
-    signal_pid "$pid"
   fi
-  while IFS= read -r child; do
-    [[ -z "$child" ]] && continue
-    if process_alive "$child"; then
-      signal_pid "$child"
-    fi
-  done <"$kids_file"
-  rm -f "$kids_file"
+  escalate_recorded_tree "$tree"
+  rm -f "$tree"
 }
 
 cmd_inspect() {
@@ -2889,17 +2910,17 @@ cmd_ui() {
               printf '__CFPREFERENCES_AVOID_DAEMON=%s\n' "${extra_avoid:-unset}"
             } >>"$EVIDENCE/open-url/second-pid-env.txt"
             if [[ "$extra_exe" == "$executable" ]]; then
-              local kids_file child
-              kids_file="$(mktemp)"
-              descendant_pids "$extra" >"$kids_file" || true
-              signal_pid "$extra"
-              while IFS= read -r child; do
-                [[ -z "$child" ]] && continue
-                if process_alive "$child"; then
-                  signal_pid "$child"
-                fi
-              done <"$kids_file"
-              rm -f "$kids_file"
+              local tree started
+              tree="$(mktemp)"
+              started="$(process_lstart "$extra" || true)"
+              if [[ -n "$started" ]]; then
+                tree_remember_root "$tree" "$extra" "$started" "$extra_exe"
+                tree_note_descendants "$tree" "$extra"
+                escalate_recorded_tree "$tree"
+              else
+                signal_pid "$extra"
+              fi
+              rm -f "$tree"
             fi
           fi
         done
@@ -3033,11 +3054,149 @@ function run(argv) {
 JS
 }
 
+# Rows are pid, start time, and executable. A reused pid has a new start time
+# and is left alone. Descendants are included so a child that ignores TERM
+# cannot leave a grandchild behind when the parent is killed.
+tree_pid_known() {
+  local file="$1"
+  local pid="$2"
+  [[ -s "$file" ]] || return 1
+  awk -F '\t' -v pid="$pid" '$1 == pid { found = 1 } END { exit found ? 0 : 1 }' "$file"
+}
+
+tree_remember() {
+  local file="$1"
+  local pid="$2"
+  local start exe
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  [[ "$pid" -gt 1 ]] || return 0
+  kill -0 "$pid" 2>/dev/null || return 0
+  start="$(process_lstart "$pid" || true)"
+  [[ -n "$start" ]] || return 0
+  if tree_pid_known "$file" "$pid"; then
+    return 0
+  fi
+  exe="$(process_exe "$pid" || true)"
+  printf '%s\t%s\t%s\n' "$pid" "$start" "$exe" >>"$file"
+}
+
+tree_remember_root() {
+  local file="$1"
+  local pid="$2"
+  local start="$3"
+  local exe="$4"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  [[ "$pid" -gt 1 ]] || return 0
+  [[ -n "$start" ]] || return 0
+  if tree_pid_known "$file" "$pid"; then
+    return 0
+  fi
+  printf '%s\t%s\t%s\n' "$pid" "$start" "$exe" >>"$file"
+}
+
+tree_matches() {
+  local pid="$1"
+  local start="$2"
+  local exe="$3"
+  local now_start now_exe
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  [[ "$pid" -gt 1 ]] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  now_start="$(process_lstart "$pid" || true)"
+  [[ -n "$start" && "$now_start" == "$start" ]] || return 1
+  if [[ -n "$exe" ]]; then
+    now_exe="$(process_exe "$pid" || true)"
+    [[ "$now_exe" == "$exe" ]] || return 1
+  fi
+  return 0
+}
+
+tree_collect() {
+  local file="$1"
+  local root="$2"
+  local depth="${3:-0}"
+  local child
+  if [[ "$depth" -ge 20 ]]; then
+    return 0
+  fi
+  if ! tree_pid_known "$file" "$root"; then
+    tree_remember "$file" "$root"
+  fi
+  while IFS= read -r child; do
+    [[ -z "$child" || "$child" == "$root" ]] && continue
+    tree_collect "$file" "$child" "$((depth + 1))"
+  done < <(pgrep -P "$root" || true)
+}
+
+tree_note_descendants() {
+  local file="$1"
+  local root="$2"
+  local child
+  while IFS= read -r child; do
+    [[ -z "$child" || "$child" == "$root" ]] && continue
+    tree_collect "$file" "$child" 0
+  done < <(pgrep -P "$root" || true)
+}
+
+tree_signal_matching() {
+  local file="$1"
+  local sig="$2"
+  local pid start exe
+  [[ -s "$file" ]] || return 0
+  while IFS=$'\t' read -r pid start exe; do
+    [[ -z "$pid" ]] && continue
+    tree_matches "$pid" "$start" "$exe" || continue
+    kill "-$sig" "$pid" 2>/dev/null || true
+  done <"$file"
+}
+
+tree_any_alive() {
+  local file="$1"
+  local pid start exe
+  [[ -s "$file" ]] || return 1
+  while IFS=$'\t' read -r pid start exe; do
+    [[ -z "$pid" ]] && continue
+    if tree_matches "$pid" "$start" "$exe"; then
+      return 0
+    fi
+  done <"$file"
+  return 1
+}
+
+escalate_recorded_tree() {
+  local file="$1"
+  local attempt=0
+  local scan pid start exe child
+  tree_signal_matching "$file" TERM
+  while [[ "$attempt" -lt 5 ]]; do
+    if ! tree_any_alive "$file"; then
+      return 0
+    fi
+    scan="$(mktemp)"
+    cp "$file" "$scan"
+    while IFS=$'\t' read -r pid start exe; do
+      [[ -z "${pid:-}" ]] && continue
+      if ! tree_matches "$pid" "$start" "$exe"; then
+        continue
+      fi
+      while IFS= read -r child; do
+        [[ -z "$child" || "$child" == "$pid" ]] && continue
+        tree_collect "$file" "$child" 0
+      done < <(pgrep -P "$pid" || true)
+    done <"$scan"
+    rm -f "$scan"
+    tree_signal_matching "$file" TERM
+    sleep 0.2
+    attempt=$((attempt + 1))
+  done
+  tree_signal_matching "$file" KILL
+}
+
 stop_bounded_child() {
   local target="$1"
   local mark_start="$2"
   local mark_exe="$3"
-  local now_start now_exe ppid attempt
+  local now_start now_exe ppid file
   ppid="$(ps -o ppid= -p "$target" 2>/dev/null | tr -d '[:space:]' || true)"
   [[ "$ppid" == "$$" ]] || return 0
   now_start="$(process_lstart "$target" || true)"
@@ -3048,24 +3207,11 @@ stop_bounded_child() {
   if [[ -n "$mark_exe" && "$now_exe" != "$mark_exe" ]]; then
     return 0
   fi
-  kill -TERM "$target" 2>/dev/null || true
-  attempt=0
-  while [[ "$attempt" -lt 5 ]]; do
-    kill -0 "$target" 2>/dev/null || return 0
-    sleep 0.2
-    attempt=$((attempt + 1))
-  done
-  ppid="$(ps -o ppid= -p "$target" 2>/dev/null | tr -d '[:space:]' || true)"
-  [[ "$ppid" == "$$" ]] || return 0
-  now_start="$(process_lstart "$target" || true)"
-  now_exe="$(process_exe "$target" || true)"
-  if [[ -n "$mark_start" && "$now_start" != "$mark_start" ]]; then
-    return 0
-  fi
-  if [[ -n "$mark_exe" && "$now_exe" != "$mark_exe" ]]; then
-    return 0
-  fi
-  kill -KILL "$target" 2>/dev/null || true
+  file="$(mktemp)"
+  tree_remember_root "$file" "$target" "$now_start" "$now_exe"
+  tree_note_descendants "$file" "$target"
+  escalate_recorded_tree "$file"
+  rm -f "$file"
 }
 
 # Run a command and return its status. After SECONDS, stop that child if it is
@@ -3449,11 +3595,45 @@ $found"
   fi
 }
 
+# Test hook. Create one private scratch and wait until INT or TERM. The signal
+# trap then runs release_ephemeral_scratch, the same teardown die uses.
+hold_for_signal() {
+  local marker="${UMB_VERIFY_SIGNAL_HOLD}"
+  case "$marker" in
+    /tmp/*|/private/tmp/*) ;;
+    *) die 2 "signal hold marker must be under /tmp" ;;
+  esac
+  if [[ -L "$marker" || ! -f "$marker" ]]; then
+    die 2 "signal hold marker is not a regular file"
+  fi
+  if [[ "$(file_owner "$marker")" != "$(id -u)" ]]; then
+    die 2 "signal hold marker is not owned by this user"
+  fi
+  VERIFY_PARENT="$(mktemp -d /tmp/umbilical-verify.XXXXXX)" || die 1 "could not create a verification parent"
+  CREATED_PARENT=1
+  chmod 700 "$VERIFY_PARENT" || die 1 "could not create a verification parent"
+  run_id="20260101T000000Z-abcdef01"
+  scratch="$VERIFY_PARENT/scratch-${run_id}-hold01"
+  mkdir -p "$scratch" || die 1 "could not create the scratch directory"
+  chmod 700 "$scratch" || die 1 "could not create the scratch directory"
+  mkfifo "$scratch/hold" || die 1 "could not create the signal hold"
+  CLEAN_PARENT_ON_DIE=1
+  # No writer. read blocks in open, which a trapped INT or TERM can interrupt.
+  printf '%s\n%s\n' "$$" "$scratch" >"$marker" || die 1 "could not record the signal hold"
+  read -r -t 60 _ <"$scratch/hold" || true
+  # Only the signal trap removes this scratch. Falling through must leave it.
+  echo "verify-umbilical: signal hold ended without a signal" >&2
+  exit 1
+}
+
 main() {
   COMMAND="${1:-}"
   if [[ -z "$COMMAND" || "$COMMAND" == "-h" || "$COMMAND" == "--help" ]]; then
     usage
     exit 2
+  fi
+  if [[ -n "${UMB_VERIFY_SIGNAL_HOLD:-}" ]]; then
+    hold_for_signal
   fi
   shift
   case "$COMMAND" in
@@ -3469,5 +3649,8 @@ main() {
     *) die 2 "unknown command $COMMAND" ;;
   esac
 }
+
+trap 'on_signal 130' INT
+trap 'on_signal 143' TERM
 
 main "$@"
