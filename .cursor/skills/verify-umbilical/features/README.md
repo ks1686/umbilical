@@ -43,6 +43,6 @@ Each feature file starts with an H1 title and one paragraph describing the user-
 
 - [Choose a download folder](./choose-download-folder.md) covers the first-launch folder choice, the Settings path, and the same folder after relaunch.
 - [Add an HTTP download](./add-http-download.md) covers the add sheet, a finished file, rejection of unsafe inputs, and quarantine.
-- [Pause, resume, and remove](./pause-resume-remove.md) covers the row buttons, the confirmation dialog, and what remains on disk. A Mac run must check `App/DownloadList.swift` line 32. `.accessibilityElement(children: .combine)` on that row may hide Pause, Resume, and Remove from System Events. Do not change the app.
+- [Pause, resume, and remove](./pause-resume-remove.md) covers the row buttons, the confirmation dialog, and what remains on disk. `App/DownloadList.swift` sets `.accessibilityElement(children: .contain)` on the row, so Pause, Resume, and Remove stay separate buttons.
 - [Menu bar](./menu-bar.md) covers the idle status item, an active summary, Open umbilical, Settings, and Quit.
 - [Confirm a handoff](./confirm-handoff.md) covers the sheet Safari and Finder reach, the one-second arming delay, and Cancel.

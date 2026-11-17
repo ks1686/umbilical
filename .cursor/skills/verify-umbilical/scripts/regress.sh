@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Round-8 regressions for verify-umbilical. Run from any directory.
+# Round-9 regressions for verify-umbilical. Run from any directory.
 # The harness runs under the same bash that executes this script.
 set -euo pipefail
 umask 077
@@ -230,11 +230,10 @@ awk '/^die\(\)/,/^}/' "$HARNESS" | grep -q 'remove_scratch_dir' || fail "die doe
 awk '/^die\(\)/,/^}/' "$HARNESS" | grep -q 'rm -rf' && fail "die still uses rm -rf"
 grep -q 'xcode-select -p' "$HARNESS" || fail "swift helper does not check xcode-select"
 grep -q 'module-cache-path' "$HARNESS" || fail "swift helper does not set a module cache"
-grep -q 'RunLoop.main.run()' "$SCRIPT_DIR/restore-handler.swift" || fail "swift helper does not run the main loop"
-grep -q 'Timer(timeInterval: 60' "$SCRIPT_DIR/restore-handler.swift" || fail "swift helper does not time out"
 grep -q 'TMPDIR=' "$HARNESS" || fail "swift helper does not set TMPDIR"
 grep -q 'CLANG_MODULE_CACHE_PATH' "$HARNESS" || fail "swift helper does not set a clang cache"
 pass "die and the swift helper stay inside the run"
+"$BASH" "$SCRIPT_DIR/check-restore-exit.sh" "$SCRIPT_DIR/restore-handler.swift" "$HARNESS" | tee -a "$LOG"
 grep -E -n 'umbilical-verify-state|\.tmp\.\$\$' "$HARNESS" && fail "shared state path or predictable temp is still in the harness"
 pass "harness has no shared state path"
 

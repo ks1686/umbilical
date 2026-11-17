@@ -361,6 +361,7 @@ mutate_call "M3 extra argument" harness 'appURL, "umbilical", function' 'appURL,
 mutate_call "M5 lookup name" harness "URLForApplicationToOpenURL(" "URLForApplicationToOpenURLX("
 mutate_call "M6 delivery name" harness "sendWithOptionsTimeoutError(" "sendWithOptionsTimeout("
 pass "handler call is parsed"
+"$BASH" "$SCRIPT_DIR/check-restore-exit.sh" "$SCRIPT_DIR/restore-handler.swift" "$HARNESS" | tee -a "$EVIDENCE/proof.log" || fail "restore helper exit check"
 
 GOOD="$FIXTURES/Umbilical.app"
 rm -rf $FIXTURES

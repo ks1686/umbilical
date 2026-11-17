@@ -2,13 +2,41 @@ import AppKit
 import Foundation
 
 // Fallback when the JavaScript restore does not finish.
-// The completion can be delivered on the main queue, so the main run loop has to be running.
-// A timer stops the wait after 60 seconds.
+// The completion can be delivered on the main queue, so the main run loop has to
+// be running. The no-argument run loop does not return after that completion,
+// so this process polls until the restore finishes or the deadline passes and
+// then exits. Exit 0 is success. Exit 1 is a workspace error or a timeout.
 
 final class ResultBox: @unchecked Sendable {
-    var failed = false
-    var message = ""
-    var finished = false
+    private let lock = NSLock()
+    private var failed = false
+    private var message = ""
+    private var didFinish = false
+
+    var finished: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return didFinish
+    }
+
+    func finish(errorText: String?) {
+        lock.lock()
+        if let errorText = errorText {
+            failed = true
+            message = errorText
+        }
+        didFinish = true
+        lock.unlock()
+    }
+
+    func failureMessage() -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        if failed {
+            return message
+        }
+        return nil
+    }
 }
 
 let arguments = CommandLine.arguments
@@ -25,27 +53,25 @@ if scheme != "umbilical" {
 }
 
 let box = ResultBox()
-let timer = Timer(timeInterval: 60, repeats: false) { _ in
-    if !box.finished {
-        fputs("handler restore timed out waiting for NSWorkspace\n", stderr)
-        exit(1)
-    }
-}
-
 NSWorkspace.shared.setDefaultApplication(at: appURL, toOpenURLsWithScheme: "umbilical", completion: { error in
     if let error = error {
-        box.failed = true
-        box.message = error.localizedDescription
+        box.finish(errorText: error.localizedDescription)
+    } else {
+        box.finish(errorText: nil)
     }
-    box.finished = true
-    CFRunLoopStop(CFRunLoopGetMain())
 })
 
-RunLoop.main.add(timer, forMode: .common)
-RunLoop.main.run()
+let deadline = Date().addingTimeInterval(60)
+while !box.finished && Date() < deadline {
+    _ = RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.1))
+}
 
-if box.failed {
-    fputs(box.message + "\n", stderr)
+if !box.finished {
+    fputs("handler restore timed out waiting for NSWorkspace\n", stderr)
+    exit(1)
+}
+if let message = box.failureMessage() {
+    fputs(message + "\n", stderr)
     exit(1)
 }
 exit(0)
