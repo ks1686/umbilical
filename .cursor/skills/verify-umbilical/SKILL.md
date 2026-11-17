@@ -9,7 +9,7 @@ umbilical is a native macOS app. The user drives the main window titled `umbilic
 
 The harness is `.cursor/skills/verify-umbilical/scripts/verify-umbilical`. Run it from the repo root. UI commands use System Events against button titles and field labels from the SwiftUI source. They call `osascript .cursor/skills/verify-umbilical/scripts/ui.applescript`. Do not add an XCUITest target to `project.yml` for this skill.
 
-One verification instance per Mac. The app stores its download folder and history with `UserDefaults.standard` for bundle id `me.peapod.umbilical`. `cfprefsd` ignores `HOME`, so launch also sets `CFFIXED_USER_HOME` to the scratch home and `__CFPREFERENCES_AVOID_DAEMON=1`. Before the process starts, the harness snapshots the real account home (from `dscl` or `getent`, not from `$HOME`). Absent stays absent. The snapshot covers `Library/Preferences/me.peapod.umbilical.plist`, `Library/Preferences/ByHost/me.peapod.umbilical*`, `Library/Saved Application State/me.peapod.umbilical.savedState`, `Library/Containers/me.peapod.umbilical`, `Library/Group Containers` entries for that bundle id, `Library/Application Support/me.peapod.umbilical`, `Library/Caches/me.peapod.umbilical`, and `Library/HTTPStorages/me.peapod.umbilical`. A directory that cannot be read fails the snapshot. When the preferences plist names a download folder, the snapshot records each entry's size and mtime, including entries inside child folders and AppleDouble `._*` names. It skips Finder `.DS_Store`. Each regular file also stores a sha256 of its first 64KiB and, when the file is longer, its last 64KiB, so a same-size overwrite is visible even if mtime is restored. The walk does not read a whole large file and stops at 100000 entries. A `.DS_Store` touch does not fail the run. A new entry, a removed entry, a size or mtime change, a same-size overwrite, or a retargeted symlink does. The harness never writes those paths. A change fails the run. The scratch plist is not required until a download folder has been chosen or the window already shows one. After quit, the harness waits four seconds without `defaults` and without `killall`, then checks the same paths again. A second process shares the menu bar name and the `umbilical://` handler. Launch refuses when any process is already named `umbilical`.
+One verification instance per Mac. The app stores its download folder and history with `UserDefaults.standard` for bundle id `me.peapod.umbilical`. `cfprefsd` ignores `HOME`, so launch also sets `CFFIXED_USER_HOME` to the scratch home and `__CFPREFERENCES_AVOID_DAEMON=1`. Before the process starts, the harness snapshots the real account home (from `dscl` or `getent`, not from `$HOME`). Absent stays absent. The snapshot covers `Library/Preferences/me.peapod.umbilical.plist`, `Library/Preferences/ByHost/me.peapod.umbilical*`, `Library/Saved Application State/me.peapod.umbilical.savedState`, `Library/Containers/me.peapod.umbilical`, `Library/Group Containers` entries for that bundle id, `Library/Application Support/me.peapod.umbilical`, `Library/Caches/me.peapod.umbilical`, and `Library/HTTPStorages/me.peapod.umbilical`. A directory that cannot be read fails the snapshot. When the preferences plist names a download folder, the snapshot records each entry's size and mtime, including entries inside child folders and AppleDouble `._*` names. It skips Finder `.DS_Store`. Each regular file of at most 1 MiB is hashed in full. A larger file stores a sha256 of its first 64KiB, a 64KiB window at the midpoint, and its last 64KiB, so a same-size edit past the ends is visible and a 2 GiB file is not read whole. A fifo or other non-regular file is recorded and never opened. The walk stops at 100000 entries. A `.DS_Store` touch does not fail the run. A new entry, a removed entry, a size or mtime change, a same-size overwrite, or a retargeted symlink does. The harness never writes those paths. A change fails the run. The scratch plist is not required until a download folder has been chosen or the window already shows one. After quit, the harness waits four seconds without `defaults` and without `killall`, then checks the same paths again. A second process shares the menu bar name and the `umbilical://` handler. Launch refuses when any process is already named `umbilical`.
 
 ## Launch
 
@@ -41,7 +41,7 @@ Ready means the accessibility dump contains `Choose a download folder` or `No do
 Relaunch keeps the same `HOME` after the recorded pid has exited:
 
 ```bash
-.cursor/skills/verify-umbilical/scripts/verify-umbilical relaunch
+.cursor/skills/verify-umbilical/scripts/verify-umbilical relaunch --state <printed path>
 ```
 
 Sparkle may contact GitHub for the appcast when the window opens. Do not choose `Check for Updates`.
@@ -51,7 +51,7 @@ Sparkle may contact GitHub for the appcast when the window opens. Do not choose 
 Run this before the first drive and again after any failure:
 
 ```bash
-.cursor/skills/verify-umbilical/scripts/verify-umbilical doctor
+.cursor/skills/verify-umbilical/scripts/verify-umbilical doctor --state <printed path>
 ```
 
 Exit 0 means the instance is worth driving. The recorded pid is alive. Its executable, `HOME`, `CFFIXED_USER_HOME`, `__CFPREFERENCES_AVOID_DAEMON`, and start time match the state file. The account snapshot still matches every real-home path. The scratch preferences plist is required only after a settings write (`settings_written=1`), and it must not be a symlink. The bundle version matches, no second process is named `umbilical`, and the window is past engine startup. Any other exit means it is not worth driving. A later `doctor` or `cleanup` with no `--evidence` uses the evidence path stored at launch.
@@ -70,7 +70,7 @@ Exit 1 means the state file, process, bundle, or window is wrong. Exit 2 means t
 Drive the feature file under `features/` after doctor exits 0. Prefer the accessibility names in that file. The composed HTTP journey is:
 
 ```bash
-.cursor/skills/verify-umbilical/scripts/verify-umbilical drive add-download
+.cursor/skills/verify-umbilical/scripts/verify-umbilical drive add-download --state <printed path>
 ```
 
 That command chooses the scratch download folder when the window asks for one, serves `verify-payload.txt` from `127.0.0.1` only, types that URL into the field labeled `https://example.com/file`, leaves `Video` off, and chooses `Add`. It passes only when the row says `Complete`, the file bytes match the payload, and `xattr -p com.apple.quarantine` on that file contains `umbilical`. It stops if the window does not say license checks are off. It does not type a license key.
@@ -78,15 +78,15 @@ That command chooses the scratch download folder when the window asks for one, s
 Step commands, after doctor would pass:
 
 ```bash
-.cursor/skills/verify-umbilical/scripts/verify-umbilical ui click --name "Add Download"
-.cursor/skills/verify-umbilical/scripts/verify-umbilical ui fill \
+.cursor/skills/verify-umbilical/scripts/verify-umbilical ui click --state <printed path> --name "Add Download"
+.cursor/skills/verify-umbilical/scripts/verify-umbilical ui fill --state <printed path> \
   --name "https://example.com/file" \
   --value "http://127.0.0.1:9/verify-payload.txt"
-.cursor/skills/verify-umbilical/scripts/verify-umbilical ui checkbox --name "Video"
-.cursor/skills/verify-umbilical/scripts/verify-umbilical ui choose-folder \
+.cursor/skills/verify-umbilical/scripts/verify-umbilical ui checkbox --state <printed path> --name "Video"
+.cursor/skills/verify-umbilical/scripts/verify-umbilical ui choose-folder --state <printed path> \
   --path /tmp/umbilical-verify.RUNID/scratch-RUN-SUFFIX/umbilical-verify-downloads
-.cursor/skills/verify-umbilical/scripts/verify-umbilical ui menu --name "Quit umbilical"
-.cursor/skills/verify-umbilical/scripts/verify-umbilical ui open-url \
+.cursor/skills/verify-umbilical/scripts/verify-umbilical ui menu --state <printed path> --name "Quit umbilical"
+.cursor/skills/verify-umbilical/scripts/verify-umbilical ui open-url --state <printed path> \
   --url "umbilical://download?url=http://127.0.0.1:9/verify-payload.txt"
 ```
 
@@ -105,10 +105,10 @@ The default state file is `<verify_parent>/state.env`. `--state` or `UMB_VERIFY_
 ## Cleanup
 
 ```bash
-.cursor/skills/verify-umbilical/scripts/verify-umbilical cleanup
+.cursor/skills/verify-umbilical/scripts/verify-umbilical cleanup --state <printed path>
 ```
 
-Cleanup reads the state file. Before Quit, `TERM`, or `KILL`, and before it signals a descendant, the recorded pid must still have the same executable, `HOME`, and start time. The start time is read with `TZ=UTC0 LC_ALL=C ps -o lstart= -p PID`. A mismatch signals nothing, leaves the scratch directory and the state file in place, and does not print `cleaned`. On macOS, Quit is sent with System Events to that pid, not to every process named `umbilical`. If the pid is still alive after Quit, cleanup signals it, then the children collected while the identity matched. It signals `server_pid` only when that pid is `python` and one argument is exactly the payload script `verify-umbilical-payload.py`, the path is not a symlink, and the file contains the payload marker. It then waits four seconds, restores the `umbilical://` handler with `setDefaultApplicationAtURL:toOpenURLsWithScheme:completionHandler:` when its app path differs from `handler_path`, and checks every real-home path again. The restore waits for the completion handler and may show a consent prompt. A handler that cannot be restored, or an account mismatch, keeps the scratch directory and the state file, writes `cleanup/account-after.txt` and `cleanup/account-diff.txt` when the account can be read, and does not print `cleaned`. The error names the new path. Move that file aside and run cleanup again. `cleanup --discard` stops the process only when the identity matches. It still records a failed handler restore and the account check, removes the scratch directory and the state file, and exits nonzero when either check failed. The message names the handler to fix by hand. A matching discard prints `discarded` and exits 0. `--discard` on any other command is a usage error. `freeze-account` reads `--state` wherever it appears and refuses when that state file exists. It needs `UMB_VERIFY_PARENT` and does not create a directory. It does not re-baseline a live run. When the paths match, cleanup deletes only the scratch directory, the state file, and the account snapshot. It does not delete the evidence directory. A missing state file prints `nothing to clean` and exits 0. A scratch path outside the `mktemp` pattern, or a symlink, is left in place and cleanup exits 1. Do not kill processes by name.
+Cleanup reads the state file. Before Quit, `TERM`, or `KILL`, and before it signals a descendant, the recorded pid must still have the same executable, `HOME`, and start time. The start time is read with `TZ=UTC0 LC_ALL=C ps -o lstart= -p PID`. A mismatch signals nothing, leaves the scratch directory and the state file in place, and does not print `cleaned`. On macOS, Quit is sent with System Events to that pid, not to every process named `umbilical`. If the pid is still alive after Quit, cleanup signals it, then the children collected while the identity matched. It signals `server_pid` only when that pid is `python` and one argument is exactly the payload script `verify-umbilical-payload.py`, the path is not a symlink, and the file contains the payload marker. It then waits four seconds, restores the `umbilical://` handler with `setDefaultApplicationAtURL:toOpenURLsWithScheme:completionHandler:` when its app path differs from `handler_path`, and checks every real-home path again. The restore waits for the completion handler and may show a consent prompt. A handler that cannot be restored, or an account mismatch, keeps the scratch directory and the state file, writes `cleanup/account-after.txt` and `cleanup/account-diff.txt` when the account can be read, and does not print `cleaned`. The error names the new path. Move that file aside and run cleanup again. `cleanup --discard` stops the process only when the identity matches. It still records a failed handler restore and the account check, removes the scratch directory and the state file, and exits nonzero when either check failed. The message names the handler to fix by hand. A matching discard prints `discarded` and exits 0. `--discard` on any other command is a usage error. `freeze-account` reads `--state` wherever it appears and refuses when that state file exists. It needs `UMB_VERIFY_PARENT` and does not create a directory. It does not re-baseline a live run. When the paths match, cleanup deletes only the scratch directory, the state file, and the account snapshot. It does not delete the evidence directory. Launch prints `state=`. Pass that path to every later command, including cleanup. With no `--state`, cleanup uses the one `state.env` this user owns under a private `umbilical-verify` parent. Zero matches prints `nothing to clean` and exits 0. More than one exits 1 and names each path, and the app stays running. A missing file at an explicit `--state` path prints `nothing to clean` and exits 0. A scratch path outside the `mktemp` pattern, or a symlink, is left in place and cleanup exits 1. Do not kill processes by name.
 
 `payload start` refuses a symlink at the directory, the `www` directory, the body file, or the script path. `payload stop` uses the same exact script identity and does not match a longer file name that merely contains `verify-umbilical-payload.py`.
 
@@ -142,7 +142,7 @@ The first run on a Mac has to keep one evidence file for each of these. The harn
 
 - `launch/account-before.txt`: every real-home path above, each `absent` or a hash, plus the download-folder lines. `~/Library/Containers/me.peapod.umbilical` and the real download folder were read. Doctor's stderr has no permission error for those paths.
 - `launch/handler-before.txt`: the app path for `umbilical://`, or `absent`, written before the process starts. Record what that path is on this Mac.
-- `launch/accessibility-host.txt`: `app_bundle` is the nearest `.app` on the nearest parent process, not the shortest path and not an outer bundle that merely contains it. That app is the process that must hold the Accessibility grant. `app=absent` means the walk found no bundle.
+- `launch/accessibility-host.txt`: the walk keeps the nearest ancestor process and `app_bundle` is the outermost `.app` on that process's path. `Cursor.app` is the host when the process is `Cursor Helper (Plugin).app`. `app=absent` means the walk found no bundle. That app is the process that must hold the Accessibility grant.
 - `launch/scratch-path.txt`: `<verify_parent>/scratch-<run-id>-<suffix>`, under `/tmp` or `/private/tmp`.
 - `launch/environ.txt`: `HOME` and `CFFIXED_USER_HOME` both equal `<scratch>/home`, and `__CFPREFERENCES_AVOID_DAEMON=1`.
 - `launch/real-download-folder.txt`: `absent`, or the folder recorded in the account plist.
@@ -155,15 +155,16 @@ The first run on a Mac has to keep one evidence file for each of these. The harn
 - `cleanup/account-after.txt`: every real-home path byte-identical to the launch snapshot, or still absent, after quit and the four second settle.
 - `cleanup/removed.txt`: only `scratch`, `state`, and `account-snapshot`, each with its path. Nothing under the account home.
 
-Also confirm these on that Mac, next to the evidence:
+These checks are unverified until that Mac run. The harness does not reorder them.
 
 - The restore puts the handler back by path, whether or not a consent prompt appears, so `cleanup/handler-after.txt` matches `launch/handler-before.txt` on a clean run.
 - Record the handler path before launch. Launching the build must not leave a different path behind after cleanup.
 - The URL send is non-nil, the Automation prompt appears, and the handoff sheet shows. The URL reached the app.
-- `launch/accessibility-host.txt` names the app that holds the Accessibility grant.
+- `launch/accessibility-host.txt` names the app that holds the Accessibility grant. That name is the outermost `.app` on the nearest ancestor process.
 - Real `~/Downloads` and `~/Library/Containers/me.peapod.umbilical` are read with no permission errors.
-- Time one `doctor` against the real `~/Downloads`. Record the duration. A `.DS_Store` touch must leave doctor at exit 0. A new file, a changed file, a same-size overwrite with mtime restored, or a file inside a child folder must make it exit nonzero and name that path. The walk stops at 100000 entries.
-- A no-op handler restore to the current path returns within 60 seconds and the handler path is unchanged. If it does not, run the Swift helper before the JavaScript call.
+- Time one `doctor` against the real `~/Downloads`. Record the duration. A `.DS_Store` touch must leave doctor at exit 0. A new file, a changed file, a same-size overwrite with mtime restored, or a file inside a child folder must make it exit nonzero and name that path. The walk stops at 100000 entries. A fifo in that folder must not hang the launch.
+- `mktemp` may print `/tmp` or `/private/tmp`. Both forms are accepted.
+- JavaScript runs first and waits up to 60 seconds. If that call fails and `xcode-select -p` prints a developer directory, the Swift helper is compiled into the run's scratch directory, its module cache stays in that directory, and it waits with `semaphore.wait(timeout:)`. If the Command Line Tools are missing, the helper fails and does not ask to install them. A no-op restore to the current path returns within 60 seconds and the handler path is unchanged.
 
 The Accessibility host named in `launch/accessibility-host.txt` is the process that must be granted access. The harness does not write the TCC database.
 

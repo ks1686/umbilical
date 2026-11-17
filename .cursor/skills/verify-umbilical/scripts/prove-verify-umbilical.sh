@@ -144,7 +144,10 @@ make_app() {
   rm -rf "$dest"
   mkdir -p "$dest/Contents/MacOS"
   if [[ "$bin" == "holder" ]]; then
-    cp -a /tmp/umb-holder "$dest/Contents/MacOS/umbilical"
+    if [[ ! -x "$PROOF_ROOT/umb-holder" ]]; then
+      cc -o "$PROOF_ROOT/umb-holder" "$SCRIPT_DIR/holder.c" || fail "could not build the holder"
+    fi
+    cp -a "$PROOF_ROOT/umb-holder" "$dest/Contents/MacOS/umbilical"
   elif [[ "$bin" == "sleep" ]]; then
     cp -a "$(readlink -f "$(command -v sleep)")" "$dest/Contents/MacOS/umbilical"
   fi
@@ -276,6 +279,35 @@ python3 "$SCRIPT_DIR/check-handler-call.py" "$call_tmp" && fail "a string was ac
 printf '%s\n' '$.NSWorkspace.sharedWorkspace.setDefaultApplicationAtURLToOpenURLsWithSchemeError(appURL, "umbilical", function(error) {});' >"$call_tmp"
 python3 "$SCRIPT_DIR/check-handler-call.py" "$call_tmp" && fail "the old error selector was accepted"
 rm -f "$call_tmp"
+mutate_call() {
+  local label="$1"
+  local which="$2"
+  local old="$3"
+  local new="$4"
+  local copy swift
+  copy="$(mktemp)"
+  swift="$(mktemp)"
+  mv "$swift" "$swift.swift"
+  swift="$swift.swift"
+  cp "$HARNESS" "$copy"
+  cp "$SCRIPT_DIR/restore-handler.swift" "$swift"
+  python3 - "$which" "$copy" "$swift" "$old" "$new" <<'PY' || fail "could not apply $label"
+import pathlib, sys
+which, harness, swift, old, new = sys.argv[1:]
+path = pathlib.Path(harness if which == "harness" else swift)
+text = path.read_text()
+if old not in text:
+    raise SystemExit(2)
+path.write_text(text.replace(old, new, 1))
+PY
+  python3 "$SCRIPT_DIR/check-handler-call.py" "$copy" "$swift" && fail "$label was accepted"
+  rm -f "$copy" "$swift"
+  pass "$label is rejected"
+}
+mutate_call "M2 receiver" harness ".sharedWorkspace.setDefaultApplicationAtURL" ".setDefaultApplicationAtURL"
+mutate_call "M3 extra argument" harness 'appURL, "umbilical", function' 'appURL, "umbilical", "extra", function'
+mutate_call "M5 lookup name" harness "URLForApplicationToOpenURL(" "URLForApplicationToOpenURLX("
+mutate_call "M6 delivery name" harness "sendWithOptionsTimeoutError(" "sendWithOptionsTimeout("
 pass "handler call is parsed"
 
 GOOD="/tmp/umb-fixtures/Umbilical.app"
@@ -1100,6 +1132,38 @@ chmod 755 "$FAKE_HOME/Library/Application Support/me.peapod.umbilical/locked"
 PATH="/tmp/fake-darwin:$PATH" run_expect 0 "mode 000 restored" run_harness doctor
 pass "unreadable account entries fail closed"
 PATH="/tmp/fake-darwin:$PATH" run_expect 0 "cleanup after mode 000" run_harness cleanup
+saved_state="$UMB_VERIFY_STATE"
+unset UMB_VERIFY_STATE
+printf '/Applications/Original.app\n' > /tmp/fake-handler
+PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch with the default state file" run_harness launch --app "$GOOD"
+live_state="$(printf '%s\n' "$LAST_OUT" | sed -n 's/^state=//p')"
+live_parent="$(printf '%s\n' "$LAST_OUT" | sed -n 's/^verify_parent=//p')"
+[[ -f "$live_state" ]] || fail "default launch wrote no state file"
+if ! pgrep -x umbilical >/dev/null 2>&1; then
+  fail "default launch did not leave the app running"
+fi
+decoy="$(mktemp -d /tmp/umbilical-verify.XXXXXX)"
+chmod 700 "$decoy"
+printf 'other\n' > "$decoy/state.env"
+chmod 600 "$decoy/state.env"
+PATH="/tmp/fake-darwin:$PATH" run_expect 1 "cleanup with two state files while the app is live" run_harness cleanup
+assert_contains "$LAST_ERR" "$live_state" "cleanup names the live state"
+assert_contains "$LAST_ERR" "$decoy/state.env" "cleanup names the other state"
+assert_absent "$LAST_OUT" "nothing to clean" "two states did not say nothing to clean"
+assert_absent "$LAST_OUT" "cleaned" "two states did not clean"
+if ! pgrep -x umbilical >/dev/null 2>&1; then
+  fail "ambiguous cleanup stopped the live app"
+fi
+[[ -f "$live_state" ]] || fail "ambiguous cleanup removed the live state"
+rm -rf "$decoy"
+PATH="/tmp/fake-darwin:$PATH" run_expect 0 "cleanup finds the only live state" run_harness cleanup
+assert_contains "$LAST_OUT" "cleaned" "single state cleanup"
+if pgrep -x umbilical >/dev/null 2>&1; then
+  fail "single state cleanup left the app running"
+fi
+[[ ! -d "$live_parent" ]] || fail "single state cleanup left the parent"
+export UMB_VERIFY_STATE="$saved_state"
+pass "cleanup finds one live state and refuses two"
 reset_fake_home
 rm -f "$STATE"
 printf '/Applications/Original.app\n' > /tmp/fake-handler
@@ -1208,7 +1272,7 @@ grep -qx '/Applications/Original.app' "$EVIDENCE/cleanup/handler-restored.txt" |
 [[ ! -f "$STATE" ]] || fail "final fake cleanup left state"
 pass "cleanup restored the handler and matched the account home"
 
-# A configured download folder records size, mtime, and a head and tail sample hash.
+# A configured download folder records size and mtime. Files up to 1 MiB are hashed whole. Larger files use a head, midpoint, and tail sample. A fifo is never opened.
 reset_fake_home
 rm -f "$STATE"
 DOWNLOADS=/tmp/u31-downloads
@@ -1219,6 +1283,13 @@ printf 'old\n' > "$DOWNLOADS/.DS_Store"
 mkdir -p "$DOWNLOADS/child"
 printf 'nested\n' > "$DOWNLOADS/child/keep"
 truncate -s 2G "$DOWNLOADS/sparse"
+python3 - "$DOWNLOADS/wide" <<'PY'
+import os, sys
+fd = os.open(sys.argv[1], os.O_CREAT | os.O_WRONLY, 0o644)
+os.ftruncate(fd, 2 * 1024 * 1024)
+os.close(fd)
+PY
+mkfifo "$DOWNLOADS/pipe"
 python3 - "$FAKE_HOME" "$DOWNLOADS" <<'PY'
 import json, os, plistlib, sys
 home, folder = sys.argv[1], sys.argv[2]
@@ -1229,7 +1300,7 @@ with open(path, "wb") as handle:
     plistlib.dump({"umb.settings": payload}, handle)
 PY
 printf '/Applications/Original.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch with a recorded download folder" run_harness launch --app "$GOOD"
+PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch with a recorded download folder" timeout 30 "$BASH32" "$HARNESS" launch --app "$GOOD"
 touch "$DOWNLOADS/.DS_Store"
 DL_START="$(date +%s%N)"
 PATH="/tmp/fake-darwin:$PATH" run_expect 0 "ds_store touch stays clean" run_harness doctor
@@ -1253,6 +1324,18 @@ PATH="/tmp/fake-darwin:$PATH" run_expect 1 "same-size overwrite" run_harness doc
 assert_contains "$LAST_ERR" "$DOWNLOADS/marker" "same-size overwrite names the file"
 cp -a "$PROOF_ROOT/marker.stamp" "$DOWNLOADS/marker"
 PATH="/tmp/fake-darwin:$PATH" run_expect 0 "same-size overwrite restored" run_harness doctor
+cp -a "$DOWNLOADS/wide" "$PROOF_ROOT/wide.stamp"
+python3 - "$DOWNLOADS/wide" <<'PY'
+import sys
+with open(sys.argv[1], "r+b") as handle:
+    handle.seek(1024 * 1024)
+    handle.write(b"Z")
+PY
+touch -r "$PROOF_ROOT/wide.stamp" "$DOWNLOADS/wide"
+PATH="/tmp/fake-darwin:$PATH" run_expect 1 "mid-file edit past 128KiB" run_harness doctor
+assert_contains "$LAST_ERR" "$DOWNLOADS/wide" "mid-file edit names the file"
+cp -a "$PROOF_ROOT/wide.stamp" "$DOWNLOADS/wide"
+PATH="/tmp/fake-darwin:$PATH" run_expect 0 "mid-file edit restored" run_harness doctor
 printf 'appledouble\n' > "$DOWNLOADS/._old.zip"
 PATH="/tmp/fake-darwin:$PATH" run_expect 1 "appledouble name" run_harness doctor
 assert_contains "$LAST_ERR" "$DOWNLOADS/._old.zip" "appledouble name"
@@ -1422,9 +1505,10 @@ chmod 755 "$OUTER_ROOT/run-nearest.sh"
 printf '/Applications/Original.app\n' > /tmp/fake-handler
 PATH="/tmp/fake-darwin:$PATH" "$A_BASH" "$OUTER_ROOT/run-nearest.sh" >"$PROOF_ROOT/outer.out" 2>"$PROOF_ROOT/outer.err" || fail "nearest app launch failed: $(cat "$PROOF_ROOT/outer.err")"
 app_bundle="$(sed -n 's/^app_bundle=//p' "$EVIDENCE/launch/accessibility-host.txt")"
-[[ "$(basename "$app_bundle")" == "Helper.app" ]] || fail "nearest bundle was not recorded: $(cat "$EVIDENCE/launch/accessibility-host.txt")"
+[[ "$(basename "$app_bundle")" == "VeryLongApplicationName.app" ]] || fail "outer bundle was not recorded: $(cat "$EVIDENCE/launch/accessibility-host.txt")"
+grep -q '/Helper.app/' "$EVIDENCE/launch/accessibility-host.txt" || fail "inner helper was missing from the walk: $(cat "$EVIDENCE/launch/accessibility-host.txt")"
 grep -q '/A.app/' "$EVIDENCE/launch/accessibility-host.txt" || fail "shorter ancestor was missing from the walk: $(cat "$EVIDENCE/launch/accessibility-host.txt")"
-pass "accessibility host names the nearest app"
+pass "accessibility host names the outer bundle of the nearest process"
 PATH="/tmp/fake-darwin:$PATH" run_expect 0 "cleanup after nearest app" run_harness cleanup
 rm -rf "$OUTER_ROOT"
 

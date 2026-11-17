@@ -84,8 +84,10 @@ UMB_VERIFY_PARENT. It does not create a directory. It reads --state wherever
 it appears and refuses when that state file exists, so it cannot re-baseline
 a live run. The default state file is that parent's state.env. An explicit
 state directory must already exist, mode 700, owned by this user, and not be
-a symlink. Launch refuses when umbilical:// already opens the build being
-launched.
+a symlink. Launch refuses a handler path that contains "..", and refuses when
+the handler's resolved path or bundle identity is this verification build.
+cleanup with no --state uses the one state.env this user owns. Zero matches
+prints "nothing to clean". More than one exits 1 and names each path.
 cleanup --discard removes the run even when the handler or the account home
 does not match. It writes that evidence, exits nonzero, and prints what still
 has to be fixed by hand. --discard is valid only on cleanup.
@@ -113,9 +115,9 @@ die() {
   fi
   if [[ "${CLEAN_PARENT_ON_DIE:-0}" == "1" ]]; then
     CLEAN_PARENT_ON_DIE=0
-    if [[ -n "${scratch:-}" && ! -L "$scratch" && -d "$scratch" ]]; then
-      rm -rf "$scratch"
-    fi
+    IN_DIE=1
+    remove_scratch_dir || true
+    IN_DIE=0
     if [[ -n "${run_id:-}" && -n "${VERIFY_PARENT:-}" && ! -L "$VERIFY_PARENT" && -d "$VERIFY_PARENT" ]]; then
       rm -f "$VERIFY_PARENT/account-$run_id.snap"
     fi
@@ -1169,35 +1171,52 @@ write_account_records() {
   fi
   # Size and mtime for files and symlinks. Directory names are recorded without
   # their mtime, so a Finder .DS_Store touch does not fail the run. A regular
-  # file also stores a sha256 of its first 64KiB and, when it is longer, its
-  # last 64KiB, so a same-size overwrite is visible even if mtime is restored.
-  # The walk stops at 100000 entries. Rows are appended here so a large folder
-  # is not copied through the shell.
+  # file of at most 1 MiB is hashed in full. A larger file stores a sha256 of
+  # its first 64KiB, a 64KiB window at the midpoint, and its last 64KiB, so a
+  # same-size edit past the ends is visible and a 2 GiB file is not read whole.
+  # A fifo or other non-regular file is recorded and never opened. The walk
+  # stops at 100000 entries. Rows are appended here so a large folder is not
+  # copied through the shell.
   local py_status=0
   python3 - "$folder" "$dest" 2>/dev/null <<'PY' || py_status=$?
 import hashlib
 import os
+import stat
 import sys
 
 CAP = 100000
 SAMPLE = 65536
+FULL = 1048576
 root = sys.argv[1]
 dest = sys.argv[2]
 rows = []
 count = 0
 
-def sample_hash(path, size):
+def content_hash(path, size):
     digest = hashlib.sha256()
     with open(path, "rb") as handle:
-        head = handle.read(SAMPLE)
-        digest.update(head)
+        if size <= FULL:
+            remaining = size
+            while remaining > 0:
+                chunk = handle.read(min(SAMPLE, remaining))
+                if not chunk:
+                    break
+                digest.update(chunk)
+                remaining -= len(chunk)
+            return digest.hexdigest()
+        digest.update(handle.read(SAMPLE))
+        middle = size // 2 - SAMPLE // 2
+        if middle < SAMPLE:
+            middle = SAMPLE
+        if middle + SAMPLE <= size - SAMPLE:
+            handle.seek(middle)
+            digest.update(handle.read(SAMPLE))
         if size > SAMPLE:
             start = size - SAMPLE
             if start < SAMPLE:
                 start = SAMPLE
-            if start < size:
-                handle.seek(start)
-                digest.update(handle.read(SAMPLE))
+            handle.seek(start)
+            digest.update(handle.read(SAMPLE))
     return digest.hexdigest()
 
 def walk(dirpath, rel_dir):
@@ -1220,7 +1239,10 @@ def walk(dirpath, rel_dir):
             walk(entry.path, rel)
             continue
         st = entry.stat(follow_symlinks=False)
-        digest = sample_hash(entry.path, st.st_size)
+        if not stat.S_ISREG(st.st_mode):
+            rows.append("other\t%s\t%s\t%s\t%s\t%s" % (rel, st.st_mode, st.st_size, int(st.st_mtime_ns), entry.path))
+            continue
+        digest = content_hash(entry.path, st.st_size)
         rows.append("file\t%s\t%s\t%s\t%s\t%s" % (rel, st.st_size, int(st.st_mtime_ns), digest, entry.path))
 
 try:
@@ -1598,6 +1620,14 @@ ui_call() {
   printf '%s\n' "$UI_CALL_OUT"
 }
 
+scratch_is_private() {
+  [[ -n "${scratch:-}" ]] || return 1
+  [[ ! -L "$scratch" && -d "$scratch" ]] || return 1
+  valid_scratch_path "$scratch" || return 1
+  [[ "$(file_owner "$scratch")" == "$(id -u)" ]] || return 1
+  [[ "$(file_mode "$scratch")" == "700" ]] || return 1
+}
+
 remove_scratch_dir() {
   if [[ -z "${scratch:-}" ]]; then
     return 0
@@ -1606,15 +1636,36 @@ remove_scratch_dir() {
     return 0
   fi
   if [[ -L "$scratch" || ! -d "$scratch" ]]; then
+    if [[ "${IN_DIE:-0}" == "1" ]]; then
+      return 1
+    fi
     die 1 "refusing to delete scratch because it is not a real directory: $scratch"
   fi
-  valid_scratch_path "$scratch" || die 1 "refusing to delete scratch outside the verification prefix: $scratch"
+  if ! valid_scratch_path "$scratch"; then
+    if [[ "${IN_DIE:-0}" == "1" ]]; then
+      return 1
+    fi
+    die 1 "refusing to delete scratch outside the verification prefix: $scratch"
+  fi
   local owner mode
   owner="$(file_owner "$scratch")"
   mode="$(file_mode "$scratch")"
-  [[ "$owner" == "$(id -u)" ]] || die 1 "refusing to delete scratch owned by uid $owner"
-  [[ "$mode" == "700" ]] || die 1 "refusing to delete scratch with mode $mode"
+  if [[ "$owner" != "$(id -u)" ]]; then
+    if [[ "${IN_DIE:-0}" == "1" ]]; then
+      return 1
+    fi
+    die 1 "refusing to delete scratch owned by uid $owner"
+  fi
+  if [[ "$mode" != "700" ]]; then
+    if [[ "${IN_DIE:-0}" == "1" ]]; then
+      return 1
+    fi
+    die 1 "refusing to delete scratch with mode $mode"
+  fi
   if [[ -n "${EVIDENCE:-}" && ( "$EVIDENCE" == "$scratch" || "$EVIDENCE" == "$scratch"/* ) ]]; then
+    if [[ "${IN_DIE:-0}" == "1" ]]; then
+      return 1
+    fi
     die 1 "refusing to delete scratch because evidence is inside it"
   fi
   rm -rf "$scratch"
@@ -2079,9 +2130,9 @@ record_launch_evidence() {
   fi
 }
 
-nearest_app_bundle() {
+outermost_app_bundle() {
   local exe="$1"
-  local acc="" part rest found=""
+  local acc="" part rest
   [[ "$exe" == /* ]] || return 1
   rest="${exe#/}"
   while [[ -n "$rest" ]]; do
@@ -2098,13 +2149,10 @@ nearest_app_bundle() {
       acc="$acc/$part"
     fi
     if [[ "$part" == *.app ]]; then
-      found="$acc"
+      printf '%s\n' "$acc"
+      return 0
     fi
   done
-  if [[ -n "$found" ]]; then
-    printf '%s\n' "$found"
-    return 0
-  fi
   return 1
 }
 
@@ -2121,7 +2169,7 @@ write_accessibility_host() {
       exe="$(process_exe "$current" || true)"
       printf 'pid=%s comm=%s exe=%s\n' "$current" "${comm:-unknown}" "${exe:-unknown}"
       if [[ -z "$chosen_bundle" ]]; then
-        bundle="$(nearest_app_bundle "$exe" || true)"
+        bundle="$(outermost_app_bundle "$exe" || true)"
         if [[ -n "$bundle" ]]; then
           chosen_bundle="$bundle"
           chosen_pid="$current"
@@ -2143,6 +2191,74 @@ write_accessibility_host() {
   } >"$dest"
 }
 
+normalized_path() {
+  local path="$1"
+  while [[ "$path" != "/" && "$path" == */ ]]; do
+    path="${path%/}"
+  done
+  canonical_path "$path"
+}
+
+handler_names_verify_build() {
+  local handler="$1"
+  local app="$2"
+  local left="" right="" bundle plist ident text
+  left="$(normalized_path "$handler" 2>/dev/null || true)"
+  right="$(normalized_path "$app" 2>/dev/null || true)"
+  if [[ -n "$left" && -n "$right" && "$left" == "$right" ]]; then
+    return 0
+  fi
+  bundle="$left"
+  [[ -n "$bundle" && ! -L "$bundle" && -d "$bundle" && "${bundle##*/}" == *.app ]] || return 1
+  plist="$bundle/Contents/Info.plist"
+  [[ -f "$plist" && ! -L "$plist" ]] || return 1
+  ident="$(python3 - "$plist" <<'PY'
+import plistlib
+import sys
+with open(sys.argv[1], "rb") as handle:
+    info = plistlib.load(handle)
+value = info.get("CFBundleIdentifier", "")
+if isinstance(value, str):
+    sys.stdout.write(value.strip())
+PY
+)" || ident=""
+  [[ "$ident" == "$BUNDLE_ID" ]] || return 1
+  command -v codesign >/dev/null 2>&1 || return 1
+  text="$(codesign -d --entitlements :- "$bundle" 2>/dev/null || true)"
+  [[ -n "$text" ]] || return 1
+  printf '%s' "$text" | python3 -c '
+import plistlib
+import sys
+raw = sys.stdin.buffer.read()
+start = raw.find(b"<?xml")
+if start < 0:
+    start = raw.find(b"<plist")
+if start < 0:
+    start = raw.find(b"bplist00")
+if start < 0:
+    sys.exit(1)
+try:
+    data = plistlib.loads(raw[start:])
+except Exception:
+    sys.exit(1)
+if not isinstance(data, dict):
+    sys.exit(1)
+sys.exit(0 if data.get("com.apple.security.get-task-allow", False) is True else 1)
+' && return 0
+  return 1
+}
+
+abort_launch_before_spawn() {
+  local message="$1"
+  printf '%s\n' "${handler_path:-}" >"$EVIDENCE/launch/handler-before.txt"
+  private_file "$EVIDENCE/launch/handler-before.txt"
+  rm -f "$(account_snap_file)"
+  remove_scratch_dir || true
+  remove_created_parent
+  CLEAN_PARENT_ON_DIE=0
+  die 1 "$message"
+}
+
 record_handler_before_spawn() {
   mkdir -p "$EVIDENCE/launch"
   chmod 700 "$EVIDENCE/launch" || true
@@ -2156,20 +2272,15 @@ record_handler_before_spawn() {
     set -e
     if [[ $status -ne 0 || -z "$handler_path" ]]; then
       handler_path=""
-      rm -f "$(account_snap_file)"
-      remove_scratch_dir || true
-      remove_created_parent
-      CLEAN_PARENT_ON_DIE=0
-      die 1 "could not record the umbilical:// handler before launch. The app was not started."
+      abort_launch_before_spawn "could not record the umbilical:// handler before launch. The app was not started."
     fi
-    if [[ "$handler_path" == "$inspected_app" || "$handler_path" == "$app_path" ]]; then
-      printf '%s\n' "$handler_path" >"$EVIDENCE/launch/handler-before.txt"
-      private_file "$EVIDENCE/launch/handler-before.txt"
-      rm -f "$(account_snap_file)"
-      remove_scratch_dir || true
-      remove_created_parent
-      CLEAN_PARENT_ON_DIE=0
-      die 1 "umbilical:// already opens this verification build ($handler_path). A discarded run must not become the next baseline. Point the handler at the previous app, then launch again. The app was not started."
+    if [[ "$handler_path" != "absent" ]]; then
+      if [[ "$handler_path" != /* || "$handler_path" == *$'\n'* || "$handler_path" == *..* ]]; then
+        abort_launch_before_spawn "umbilical:// handler path is not usable ($handler_path). The app was not started."
+      fi
+      if handler_names_verify_build "$handler_path" "$inspected_app"; then
+        abort_launch_before_spawn "umbilical:// already opens this verification build ($handler_path). A discarded run must not become the next baseline. Point the handler at the previous app, then launch again. The app was not started."
+      fi
     fi
   fi
   printf '%s\n' "$handler_path" >"$EVIDENCE/launch/handler-before.txt"
@@ -2818,22 +2929,28 @@ JS
 
 handler_set_swift() {
   local ident="$1"
-  local dir bin status=0
+  local bin cache status=0
   [[ -d /System/Library/Frameworks/AppKit.framework ]] || return 1
   [[ -f "$SCRIPT_DIR/restore-handler.swift" ]] || return 1
-  dir="$(mktemp -d /tmp/umbilical-verify-handler.XXXXXX)" || return 1
-  bin="$dir/restore-handler"
+  # A bare swiftc or xcrun can open the Command Line Tools installer.
+  xcode-select -p >/dev/null 2>&1 || return 1
+  scratch_is_private || return 1
+  cache="$scratch/swift-module-cache"
+  mkdir -p "$cache" || return 1
+  chmod 700 "$cache" || return 1
+  bin="$scratch/restore-handler"
+  rm -f "$bin"
   if command -v xcrun >/dev/null 2>&1; then
-    xcrun swiftc -framework AppKit "$SCRIPT_DIR/restore-handler.swift" -o "$bin" || status=$?
+    xcrun swiftc -module-cache-path "$cache" -framework AppKit "$SCRIPT_DIR/restore-handler.swift" -o "$bin" || status=$?
   else
-    swiftc -framework AppKit "$SCRIPT_DIR/restore-handler.swift" -o "$bin" || status=$?
+    swiftc -module-cache-path "$cache" -framework AppKit "$SCRIPT_DIR/restore-handler.swift" -o "$bin" || status=$?
   fi
   if [[ "$status" -ne 0 || ! -x "$bin" ]]; then
-    rm -rf "$dir"
+    rm -f "$bin"
     return 1
   fi
   "$bin" "$ident" umbilical || status=$?
-  rm -rf "$dir"
+  rm -f "$bin"
   [[ "$status" -eq 0 ]]
 }
 
@@ -2968,11 +3085,43 @@ cmd_freeze_account() {
   printf 'verify_parent=%s\nsnapshot=%s\nprefs_sha=%s\nprefs_mtime=%s\n' "$VERIFY_PARENT" "$(account_snap_file)" "$prefs_sha" "$prefs_mtime"
 }
 
+list_user_state_files() {
+  local root entry owner mode state
+  shopt -s nullglob
+  for root in /tmp /private/tmp; do
+    [[ -d "$root" ]] || continue
+    for entry in "$root"/umbilical-verify.*; do
+      [[ -L "$entry" ]] && continue
+      valid_verify_parent_path "$entry" || continue
+      [[ -d "$entry" ]] || continue
+      owner="$(file_owner "$entry")"
+      mode="$(file_mode "$entry")"
+      [[ "$owner" == "$(id -u)" ]] || continue
+      [[ "$mode" == "700" ]] || continue
+      state="$entry/state.env"
+      [[ -L "$state" ]] && continue
+      [[ -f "$state" ]] || continue
+      printf '%s\n' "$state"
+    done
+  done
+  shopt -u nullglob
+}
+
 cmd_cleanup() {
   parse_common "$@"
   if [[ -z "$STATE" ]]; then
-    echo "nothing to clean"
-    exit 0
+    local found count
+    found="$(list_user_state_files)"
+    if [[ -z "$found" ]]; then
+      echo "nothing to clean"
+      exit 0
+    fi
+    count="$(printf '%s\n' "$found" | wc -l | tr -d '[:space:]')"
+    if [[ "$count" -gt 1 ]]; then
+      die 1 "more than one verification state file. Pass --state. Candidates:
+$found"
+    fi
+    STATE="$found"
   fi
   if [[ ! -e "$STATE" && ! -L "$STATE" ]]; then
     fill_default_evidence

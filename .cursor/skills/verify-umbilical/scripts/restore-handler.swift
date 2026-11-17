@@ -1,11 +1,10 @@
 import AppKit
 import Foundation
 
-// Fallback when the JavaScript restore does not finish. The completion can
-// run on another queue, so this waits on a semaphore and also pumps the run
-// loop. It gives up after 60 seconds.
+// Fallback when the JavaScript restore does not finish.
+// The completion may run on another queue. Wait on the semaphore and give up after 60 seconds.
 
-final class ResultBox {
+final class ResultBox: @unchecked Sendable {
     var failed = false
     var message = ""
 }
@@ -29,13 +28,9 @@ NSWorkspace.shared.setDefaultApplication(at: appURL, toOpenURLsWithScheme: schem
     semaphore.signal()
 })
 
-let deadline = Date().addingTimeInterval(60)
-while semaphore.wait(timeout: .now()) == .timedOut {
-    if Date() > deadline {
-        fputs("handler restore timed out waiting for NSWorkspace\n", stderr)
-        exit(1)
-    }
-    RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.2))
+if semaphore.wait(timeout: .now() + 60) == .timedOut {
+    fputs("handler restore timed out waiting for NSWorkspace\n", stderr)
+    exit(1)
 }
 
 if box.failed {

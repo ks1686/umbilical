@@ -108,7 +108,42 @@ python3 "$CHECK" "$call_tmp" && fail "a string was accepted as the handler call"
 printf '%s\n' '$.NSWorkspace.sharedWorkspace.setDefaultApplicationAtURLToOpenURLsWithSchemeError(appURL, "umbilical", function(error) {});' >"$call_tmp"
 python3 "$CHECK" "$call_tmp" && fail "the old error selector was accepted"
 rm -f "$call_tmp"
+mutate_call() {
+  local label="$1"
+  local which="$2"
+  local old="$3"
+  local new="$4"
+  local copy swift
+  copy="$(mktemp)"
+  swift="$(mktemp)"
+  mv "$swift" "$swift.swift"
+  swift="$swift.swift"
+  cp "$HARNESS" "$copy"
+  cp "$SCRIPT_DIR/restore-handler.swift" "$swift"
+  python3 - "$which" "$copy" "$swift" "$old" "$new" <<'PY' || fail "could not apply $label"
+import pathlib, sys
+which, harness, swift, old, new = sys.argv[1:]
+path = pathlib.Path(harness if which == "harness" else swift)
+text = path.read_text()
+if old not in text:
+    raise SystemExit(2)
+path.write_text(text.replace(old, new, 1))
+PY
+  python3 "$CHECK" "$copy" "$swift" && fail "$label was accepted"
+  rm -f "$copy" "$swift"
+  pass "$label is rejected"
+}
+mutate_call "M2 receiver" harness ".sharedWorkspace.setDefaultApplicationAtURL" ".setDefaultApplicationAtURL"
+mutate_call "M3 extra argument" harness 'appURL, "umbilical", function' 'appURL, "umbilical", "extra", function'
+mutate_call "M5 lookup name" harness "URLForApplicationToOpenURL(" "URLForApplicationToOpenURLX("
+mutate_call "M6 delivery name" harness "sendWithOptionsTimeoutError(" "sendWithOptionsTimeout("
 pass "handler call is parsed"
+awk '/^die\(\)/,/^}/' "$HARNESS" | grep -q 'remove_scratch_dir' || fail "die does not use remove_scratch_dir"
+awk '/^die\(\)/,/^}/' "$HARNESS" | grep -q 'rm -rf' && fail "die still uses rm -rf"
+grep -q 'xcode-select -p' "$HARNESS" || fail "swift helper does not check xcode-select"
+grep -q 'module-cache-path' "$HARNESS" || fail "swift helper does not set a module cache"
+grep -q 'semaphore.wait(timeout:' "$SCRIPT_DIR/restore-handler.swift" || fail "swift helper does not wait with a timeout"
+pass "die and the swift helper stay inside the run"
 grep -E -n 'umbilical-verify-state|\.tmp\.\$\$' "$HARNESS" && fail "shared state path or predictable temp is still in the harness"
 pass "harness has no shared state path"
 
@@ -203,25 +238,10 @@ exit 1
 EOF
 cp "$STUB" /tmp/fake-darwin/osascript
 chmod 755 /tmp/fake-darwin/uname /tmp/fake-darwin/dscl /tmp/fake-darwin/codesign /tmp/fake-darwin/open /tmp/fake-darwin/osascript
-if [[ ! -x /tmp/umb-holder ]]; then
-  cat >"$WORK/holder.c" <<'EOF'
-#include <signal.h>
-#include <unistd.h>
-static void on_term(int sig) { (void)sig; _exit(0); }
-int main(void) {
-  pid_t child;
-  signal(SIGTERM, on_term);
-  signal(SIGINT, on_term);
-  child = fork();
-  if (child == 0) { execl("/bin/sleep", "sleep", "240", (char *)0); _exit(0); }
-  for (;;) pause();
-}
-EOF
-  cc -o /tmp/umb-holder "$WORK/holder.c"
-fi
+cc -o "$WORK/umb-holder" "$SCRIPT_DIR/holder.c" || fail "could not build the holder"
 rm -rf "$GOOD"
 mkdir -p "$GOOD/Contents/MacOS"
-cp -a /tmp/umb-holder "$GOOD/Contents/MacOS/umbilical"
+cp -a "$WORK/umb-holder" "$GOOD/Contents/MacOS/umbilical"
 chmod 755 "$GOOD/Contents/MacOS/umbilical"
 python3 - "$GOOD/Contents/Info.plist" <<'PY'
 import plistlib, sys
@@ -264,8 +284,31 @@ parent_line="$(printf '%s\n' "$LAST_OUT" | sed -n 's/^verify_parent=//p')"
 if [[ "$shared_before" == "0" ]]; then
   [[ ! -e /tmp/umbilical-verify-state && ! -L /tmp/umbilical-verify-state ]] || fail "launch created /tmp/umbilical-verify-state"
 fi
-UMB_VERIFY_STATE="$state_line" run_expect 0 "cleanup default state" harness cleanup
-[[ ! -d "$parent_line" ]] || fail "default state cleanup left the parent"
+run_expect 0 "cleanup finds the only state file" harness cleanup
+assert_contains "$LAST_OUT" "cleaned" "single state cleanup text"
+if pgrep -x umbilical >/dev/null 2>&1; then
+  fail "single state cleanup left the app"
+fi
+[[ ! -d "$parent_line" ]] || fail "single state cleanup left the parent"
+run_expect 0 "second launch for two state files" harness launch --app "$GOOD"
+state_line="$(printf '%s\n' "$LAST_OUT" | sed -n 's/^state=//p')"
+parent_line="$(printf '%s\n' "$LAST_OUT" | sed -n 's/^verify_parent=//p')"
+decoy="$(mktemp -d /tmp/umbilical-verify.XXXXXX)"
+chmod 700 "$decoy"
+printf 'other\n' > "$decoy/state.env"
+chmod 600 "$decoy/state.env"
+run_expect 1 "cleanup refuses two state files" harness cleanup
+assert_contains "$LAST_ERR" "$state_line" "names the live state"
+assert_contains "$LAST_ERR" "$decoy/state.env" "names the other state"
+if printf '%s\n' "$LAST_OUT" | grep -q "nothing to clean"; then
+  fail "two states said nothing to clean"
+fi
+if ! pgrep -x umbilical >/dev/null 2>&1; then
+  fail "two-state cleanup stopped the app"
+fi
+rm -rf "$decoy"
+run_expect 0 "cleanup after the extra state is gone" harness cleanup
+[[ ! -d "$parent_line" ]] || fail "cleanup left the parent after the extra state"
 export UMB_VERIFY_STATE="$STATE"
 
 printf '%s\n' "$GOOD" > /tmp/fake-handler
@@ -278,7 +321,37 @@ if pgrep -x umbilical >/dev/null 2>&1; then
 fi
 [[ "$(parents)" == "$before" ]] || fail "self handler left a parent"
 [[ ! -f "$STATE" ]] || fail "self handler wrote a state file"
+printf '%s/\n' "$GOOD" > /tmp/fake-handler
+run_expect 1 "handler trailing slash" harness launch --app "$GOOD"
+assert_contains "$LAST_ERR" "already opens this verification build" "trailing slash message"
+printf '%s/./Umbilical.app\n' "$WORK" > /tmp/fake-handler
+run_expect 1 "handler dot slash" harness launch --app "$GOOD"
+assert_contains "$LAST_ERR" "already opens this verification build" "dot slash message"
+ln -s "$GOOD" "$WORK/link.app"
+printf '%s\n' "$WORK/link.app" > /tmp/fake-handler
+run_expect 1 "handler symlink" harness launch --app "$GOOD"
+assert_contains "$LAST_ERR" "already opens this verification build" "symlink handler message"
+mkdir -p /private/tmp/umb-j2-target
+ln -sfn "$GOOD" /private/tmp/umb-j2-target/Umbilical.app
+ln -sfn /private/tmp/umb-j2-target /tmp/umb-j2-link
+printf '/private/tmp/umb-j2-target/Umbilical.app\n' > /tmp/fake-handler
+run_expect 1 "handler private tmp form" harness launch --app /tmp/umb-j2-link/Umbilical.app
+assert_contains "$LAST_ERR" "already opens this verification build" "private tmp message"
+rm -rf "$WORK/Copy.app"
+cp -a "$GOOD" "$WORK/Copy.app"
+printf '%s\n' "$WORK/Copy.app" > /tmp/fake-handler
+run_expect 1 "handler is a copy of this build" harness launch --app "$GOOD"
+assert_contains "$LAST_ERR" "already opens this verification build" "copy message"
+printf '/tmp/foo/../Original.app\n' > /tmp/fake-handler
+before="$(parents)"
+run_expect 1 "handler path with dotdot" harness launch --app "$GOOD"
+assert_contains "$LAST_ERR" "not usable" "dotdot handler message"
+[[ "$(parents)" == "$before" ]] || fail "dotdot handler left a parent"
+if pgrep -x umbilical >/dev/null 2>&1; then
+  fail "dotdot handler started a process"
+fi
 printf '/Applications/Original.app\n' > /tmp/fake-handler
+rm -rf /tmp/umb-j2-link /private/tmp/umb-j2-target "$WORK/link.app" "$WORK/Copy.app"
 pass "a discarded build cannot become the next baseline"
 
 mkdir -p "$WORK/bin"
@@ -336,6 +409,11 @@ folder, home = sys.argv[1], sys.argv[2]
 marker = os.path.join(folder, "marker")
 with open(marker, "w", encoding="utf-8") as handle:
     handle.write("marker\n")
+wide = os.path.join(folder, "wide")
+fd = os.open(wide, os.O_CREAT | os.O_WRONLY, 0o644)
+os.ftruncate(fd, 2 * 1024 * 1024)
+os.close(fd)
+os.mkfifo(os.path.join(folder, "pipe"))
 for index in range(50000):
     path = os.path.join(folder, "f%05d" % index)
     fd = os.open(path, os.O_CREAT | os.O_WRONLY, 0o644)
@@ -349,7 +427,7 @@ with open(prefs, "wb") as handle:
 PY
 cp -a "$DOWNLOADS/marker" "$WORK/marker.stamp"
 printf '/Applications/Original.app\n' > /tmp/fake-handler
-run_expect 0 "launch with 50000 download files" harness launch --app "$GOOD"
+run_expect 0 "launch with 50000 download files" timeout 60 "$BASH" "$HARNESS" launch --app "$GOOD"
 start_ns="$(date +%s%N)"
 run_expect 0 "doctor walks 50000 files" harness doctor
 end_ns="$(date +%s%N)"
@@ -362,6 +440,18 @@ run_expect 1 "same-size overwrite" harness doctor
 assert_contains "$LAST_ERR" "$DOWNLOADS/marker" "same-size overwrite names the file"
 cp -a "$WORK/marker.stamp" "$DOWNLOADS/marker"
 run_expect 0 "same-size overwrite restored" harness doctor
+cp -a "$DOWNLOADS/wide" "$WORK/wide.stamp"
+python3 - "$DOWNLOADS/wide" <<'PY'
+import sys
+with open(sys.argv[1], "r+b") as handle:
+    handle.seek(1024 * 1024)
+    handle.write(b"Z")
+PY
+touch -r "$WORK/wide.stamp" "$DOWNLOADS/wide"
+run_expect 1 "mid-file edit past 128KiB" harness doctor
+assert_contains "$LAST_ERR" "$DOWNLOADS/wide" "mid-file edit names the file"
+cp -a "$WORK/wide.stamp" "$DOWNLOADS/wide"
+run_expect 0 "mid-file edit restored" harness doctor
 run_expect 0 "cleanup after the download walk" harness cleanup
 
 rm -rf "$FAKE_HOME"
@@ -385,9 +475,10 @@ chmod 755 "$OUTER/run-nearest.sh"
 printf '/Applications/Original.app\n' > /tmp/fake-handler
 PATH="/tmp/fake-darwin:$PATH" "$A_BASH" "$OUTER/run-nearest.sh" >"$WORK/nearest.out" 2>"$WORK/nearest.err" || fail "nearest app launch failed: $(cat "$WORK/nearest.err")"
 app_bundle="$(sed -n 's/^app_bundle=//p' "$EVIDENCE/launch/accessibility-host.txt")"
-[[ "$(basename "$app_bundle")" == "Helper.app" ]] || fail "nearest bundle was not recorded: $(cat "$EVIDENCE/launch/accessibility-host.txt")"
+[[ "$(basename "$app_bundle")" == "VeryLongApplicationName.app" ]] || fail "outer bundle was not recorded: $(cat "$EVIDENCE/launch/accessibility-host.txt")"
+grep -q '/Helper.app/' "$EVIDENCE/launch/accessibility-host.txt" || fail "inner helper missing: $(cat "$EVIDENCE/launch/accessibility-host.txt")"
 grep -q '/A.app/' "$EVIDENCE/launch/accessibility-host.txt" || fail "shorter ancestor missing: $(cat "$EVIDENCE/launch/accessibility-host.txt")"
-pass "nearest app bundle is Helper.app"
+pass "outer bundle of the nearest process"
 run_expect 0 "cleanup after nearest app" harness cleanup
 
 echo "REGRESS GREEN bash $BASH_VERSION" | tee -a "$LOG"

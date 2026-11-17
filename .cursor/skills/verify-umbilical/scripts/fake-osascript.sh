@@ -4,7 +4,7 @@ script=""
 if [[ "${1:-}" == "-l" ]]; then
   script="$(cat)"
 fi
-if printf '%s\n' "$script" | grep -q URLForApplicationToOpenURL; then
+if printf '%s\n' "$script" | grep -F -q 'sharedWorkspace.URLForApplicationToOpenURL('; then
   if [[ -f /tmp/fake-handler ]]; then
     cat /tmp/fake-handler
   else
@@ -15,7 +15,7 @@ fi
 if printf '%s\n' "$script" | grep -F -q 'setDefaultApplicationAtURLToOpenURLsWithSchemeError'; then
   exit 1
 fi
-if printf '%s\n' "$script" | grep -F -q 'setDefaultApplicationAtURLToOpenURLsWithSchemeCompletionHandler'; then
+if printf '%s\n' "$script" | grep -F -q 'sharedWorkspace.setDefaultApplicationAtURLToOpenURLsWithSchemeCompletionHandler(appURL, "umbilical", function'; then
   if [[ -f /tmp/fake-handler-late ]]; then
     printf '%s\n' "$4" > /tmp/fake-handler
     exit 1
@@ -27,7 +27,7 @@ if printf '%s\n' "$script" | grep -F -q 'setDefaultApplicationAtURLToOpenURLsWit
   printf 'restored\n'
   exit 0
 fi
-if printf '%s\n' "$script" | grep -q descriptorWithProcessIdentifier; then
+if printf '%s\n' "$script" | grep -F -q 'sendWithOptionsTimeoutError('; then
   if [[ -f /tmp/fake-deliver-nil ]]; then
     if printf '%s\n' "$script" | grep -q "returned nil"; then
       exit 1
