@@ -222,9 +222,11 @@ jobs:
       - name: Test the restore helper
         run: |
           set -euo pipefail
-          git sparse-checkout disable
-          git checkout HEAD -- .cursor/skills/verify-umbilical/scripts
-          bash .cursor/skills/verify-umbilical/scripts/strict-restore-helper.sh
+          root="$(git rev-parse --show-toplevel)"
+          cd "$root"
+          git archive HEAD .cursor/skills/verify-umbilical/scripts | tar -x
+          test -f "$root/.cursor/skills/verify-umbilical/scripts/strict-restore-helper.sh"
+          bash "$root/.cursor/skills/verify-umbilical/scripts/strict-restore-helper.sh"
         env:
           SWIFTC: /opt/swift-6.2.1/usr/bin/swiftc
 
