@@ -3,6 +3,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "${UMB_INSIDE_PRIVATE_TMP:-}" != "1" ]]; then
+  exec "$SCRIPT_DIR/enter-private-tmp.sh" "$(readlink -f /proc/$$/exe)" "$SCRIPT_DIR/prove-verify-umbilical.sh" "$@"
+fi
 HARNESS="${HARNESS:-$SCRIPT_DIR/verify-umbilical}"
 BASH32="${HARNESS_BASH:-/tmp/bash-3.2.57/bash}"
 PROOF_ROOT="$(mktemp -d /tmp/umb-proof.XXXXXX)"
@@ -14,9 +17,12 @@ REAL_PREFS="$(getent passwd "$(id -un)" | awk -F: '{ print $6 }')/Library/Prefer
 PIDFILE="$PROOF_ROOT/pids"
 export UMB_VERIFY_EVIDENCE="$EVIDENCE"
 export UMB_VERIFY_STATE="$STATE"
-
-rm -rf /tmp/umbilical-verify-marker /tmp/payload-real-target /tmp/payload-link-dir /tmp/payload-real /tmp/victim-payload /tmp/notes-about-verify-umbilical-payload.py /tmp/evidence-link /tmp/evidence-target /tmp/umb-ev-custom /tmp/umb-ev-cleanup /tmp/early-ev /tmp/u31-home /tmp/u31-downloads /tmp/link-to-parent /tmp/umb-payload-real /tmp/link-outside
-mkdir -p "$EVIDENCE"
+UMB_FAKE_DIR="$PROOF_ROOT/fake"
+export UMB_FAKE_DIR
+export UMB_FAULT_SPEC="$UMB_FAKE_DIR/fault-target"
+FAKE_DARWIN="$PROOF_ROOT/fake-darwin"
+FIXTURES="$PROOF_ROOT/fixtures"
+mkdir -p "$EVIDENCE" "$UMB_FAKE_DIR" "$FAKE_DARWIN" "$FIXTURES"
 printf 'kept after cleanup\n' >"$EVIDENCE/kept.txt"
 : >"$EVIDENCE/proof.log"
 : >"$PIDFILE"
@@ -32,27 +38,62 @@ pass() {
 }
 
 track() {
-  printf '%s\n' "$1" >>"$PIDFILE"
+  local pid="$1" start exe
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  start="$(lstart_of "$pid" 2>/dev/null || true)"
+  [[ -n "$start" ]] || return 0
+  exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+  if awk -F '\t' -v pid="$pid" -v start="$start" '$1 == pid && $2 == start { found = 1 } END { exit found ? 0 : 1 }' "$PIDFILE"; then
+    return 0
+  fi
+  printf '%s\t%s\t%s\n' "$pid" "$start" "$exe" >>"$PIDFILE"
+}
+
+track_tree() {
+  local pid="$1" child
+  track "$pid"
+  while IFS= read -r child; do
+    [[ -z "$child" || "$child" == "$pid" ]] && continue
+    track_tree "$child"
+  done < <(pgrep -P "$pid" || true)
+}
+
+release_pid() {
+  local pid="$1"
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+  track_tree "$pid"
+  kill -TERM "$pid" 2>/dev/null || true
 }
 
 stop_tracked() {
-  local pid
-  if [[ -f "$PIDFILE" ]]; then
-    while IFS= read -r pid; do
-      [[ -z "$pid" ]] && continue
-      if kill -0 "$pid" 2>/dev/null; then
-        kill -TERM "$pid" 2>/dev/null || true
-      fi
-    done <"$PIDFILE"
-  fi
+  local pid start exe now_start now_exe child
+  [[ -f "$PIDFILE" ]] || return 0
+  tac "$PIDFILE" | while IFS=$'\t' read -r pid start exe; do
+    [[ -z "$pid" ]] && continue
+    now_start="$(lstart_of "$pid" 2>/dev/null || true)"
+    now_exe="$(readlink -f "/proc/$pid/exe" 2>/dev/null || true)"
+    [[ -n "$start" && "$now_start" == "$start" && -n "$exe" && "$now_exe" == "$exe" ]] || continue
+    while IFS= read -r child; do
+      [[ -z "$child" ]] && continue
+      kill -TERM "$child" 2>/dev/null || true
+    done < <(pgrep -P "$pid" || true)
+    kill -TERM "$pid" 2>/dev/null || true
+  done || true
+  sleep 0.3
+  return 0
 }
 copy_evidence() {
+  if [[ "${UMB_VERIFY_SAVE_LOGS:-}" != "1" ]]; then
+    return 0
+  fi
   mkdir -p "$ARTIFACTS" 2>/dev/null || true
   if [[ -d "$EVIDENCE" ]]; then
+    local ver="${BASH_VERSION%%\(*}"
+    cp -f "$EVIDENCE/proof.log" "$ARTIFACTS/proof-bash-${ver}.log" 2>/dev/null || true
     cp -f "$EVIDENCE/proof.log" "$EVIDENCE/commands.log" "$EVIDENCE/kept.txt" "$ARTIFACTS/" 2>/dev/null || true
   fi
 }
-trap 'stop_tracked; copy_evidence' EXIT
+trap 'stop_tracked || true; copy_evidence' EXIT
 
 run_harness() {
   "$BASH32" "$HARNESS" "$@"
@@ -74,7 +115,7 @@ run_expect() {
       echo "command: $*"
       cat "$err"
       cat "$out"
-    } >>"$EVIDENCE/proof.log"
+    } | tee -a "$EVIDENCE/proof.log" >&2
     rm -f "$out" "$err"
     fail "$label wanted exit $want, got $status"
   fi
@@ -156,18 +197,18 @@ make_app() {
 }
 
 lstart_of() {
-  TZ=UTC0 LC_ALL=C ps -o lstart= -p "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+  TZ=UTC0 LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' || true
 }
 
 start_holder() {
   local exe="$1"
   local home="$2"
   nohup env HOME="$home" CFFIXED_USER_HOME="$home" __CFPREFERENCES_AVOID_DAEMON=1 \
-    "$exe" >/tmp/umb-holder.out 2>&1 &
+    "$exe" >$PROOF_ROOT/holder.out 2>&1 &
   local pid="$!"
-  track "$pid"
   sleep 0.3
   kill -0 "$pid" 2>/dev/null || fail "fixture $pid exited"
+  track_tree "$pid"
   printf '%s\n' "$pid"
 }
 
@@ -180,9 +221,15 @@ new_scratch() {
 }
 
 list_verify_parents() {
-  local root
+  local root seen ident
+  seen=" "
   for root in /tmp /private/tmp; do
     [[ -d "$root" ]] || continue
+    ident="$(stat -L -c '%d:%i' "$root" 2>/dev/null || stat -L -f '%d:%i' "$root")"
+    case "$seen" in
+      *" $ident "*) continue ;;
+    esac
+    seen="$seen$ident "
     find "$root" -maxdepth 1 -name 'umbilical-verify.*' -printf '%p\n'
   done | LC_ALL=C sort
 }
@@ -264,8 +311,13 @@ assert_contains "$LAST_ERR" "cannot be used as a command option" "option message
 run_expect 1 "drive without instance" run_harness drive add-download
 assert_contains "$LAST_ERR" "no verification instance" "drive doctor failure"
 run_expect 1 "doctor without instance" run_harness doctor
+run_expect 1 "missing explicit state" run_harness cleanup
+assert_contains "$LAST_ERR" "state file not found" "missing explicit state message"
+saved_idle_state="$UMB_VERIFY_STATE"
+unset UMB_VERIFY_STATE
 run_expect 0 "cleanup with nothing" run_harness cleanup
 assert_contains "$LAST_OUT" "nothing to clean" "cleanup idle text"
+export UMB_VERIFY_STATE="$saved_idle_state"
 run_expect 2 "doctor rejects discard" run_harness doctor --discard
 assert_contains "$LAST_ERR" "--discard is only valid for cleanup" "doctor discard message"
 run_expect 2 "freeze rejects discard" run_harness freeze-account --discard 20260101T000000Z-abcdef01
@@ -310,9 +362,9 @@ mutate_call "M5 lookup name" harness "URLForApplicationToOpenURL(" "URLForApplic
 mutate_call "M6 delivery name" harness "sendWithOptionsTimeoutError(" "sendWithOptionsTimeout("
 pass "handler call is parsed"
 
-GOOD="/tmp/umb-fixtures/Umbilical.app"
-rm -rf /tmp/umb-fixtures
-mkdir -p /tmp/evidence-target /tmp/umb-fixtures
+GOOD="$FIXTURES/Umbilical.app"
+rm -rf $FIXTURES
+mkdir -p /tmp/evidence-target $FIXTURES
 ln -s /tmp/evidence-target /tmp/evidence-link
 make_app "$GOOD" "me.peapod.umbilical" "1.0.2" "-" holder
 # evidence symlink is checked before the parent. Parent can be absent.
@@ -335,15 +387,18 @@ fi
 pass "parent symlink target was left alone"
 rm -f /tmp/umbilical-verify.badlink
 
+if [[ -e /tmp/umbilical-verify.badmode || -L /tmp/umbilical-verify.badmode ]]; then
+  fail "refusing to replace /tmp/umbilical-verify.badmode"
+fi
 mkdir -m 755 /tmp/umbilical-verify.badmode
 UMB_VERIFY_PARENT=/tmp/umbilical-verify.badmode run_expect 1 "parent mode" run_harness launch --app "$GOOD"
 assert_contains "$LAST_ERR" "mode is 755, expected 700" "parent mode message"
 rm -rf /tmp/umbilical-verify.badmode
 
-rm -rf /tmp/early-ev
+EARLY_EV="$PROOF_ROOT/early-ev"
 if [[ "$REAL_UNAME" == "Linux" ]]; then
   parents_before="$(list_verify_parents)"
-  run_expect 3 "launch on linux" run_harness launch --app "$GOOD" --evidence /tmp/early-ev
+  run_expect 3 "launch on linux" run_harness launch --app "$GOOD" --evidence "$EARLY_EV"
   assert_contains "$LAST_ERR" "needs macOS" "launch platform message"
   assert_absent "$LAST_ERR" "codesign" "launch did not read a signature"
   [[ ! -f "$STATE" ]] || fail "launch created a state file"
@@ -352,15 +407,15 @@ if [[ "$REAL_UNAME" == "Linux" ]]; then
   fi
   pass "launch started no process"
   [[ "$(list_verify_parents)" == "$parents_before" ]] || fail "linux launch created a verification parent"
-  [[ ! -e /tmp/early-ev ]] || fail "linux launch created the evidence directory"
+  [[ ! -e "$EARLY_EV" ]] || fail "linux launch created the evidence directory"
   pass "linux launch created no directories"
 fi
 
-PLACE="/tmp/umb-fixtures/Placeholder.app"
-WRONG="/tmp/umb-fixtures/Wrong.app"
-INVALID="/tmp/umb-fixtures/Invalid.app"
-PRESENT="/tmp/umb-fixtures/Present.app"
-NOEXE="/tmp/umb-fixtures/NoExe.app"
+PLACE="$FIXTURES/Placeholder.app"
+WRONG="$FIXTURES/Wrong.app"
+INVALID="$FIXTURES/Invalid.app"
+PRESENT="$FIXTURES/Present.app"
+NOEXE="$FIXTURES/NoExe.app"
 # shellcheck disable=SC2016
 make_app "$PLACE" "me.peapod.umbilical" "1.0.2" '$(POLAR_ORGANIZATION_ID)' sleep
 make_app "$WRONG" "com.example.other" "1.0.2" "-" sleep
@@ -390,8 +445,8 @@ if pgrep -x umbilical >/dev/null; then
 fi
 pass "invalid launch started no process"
 
-mkdir -p /tmp/fake-codesign
-cat > /tmp/fake-codesign/codesign <<'EOF'
+mkdir -p $PROOF_ROOT/fake-codesign
+cat > $PROOF_ROOT/fake-codesign/codesign <<'EOF'
 #!/bin/sh
 cat <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -402,8 +457,8 @@ cat <<'PLIST'
 </dict></plist>
 PLIST
 EOF
-chmod 755 /tmp/fake-codesign/codesign
-PATH="/tmp/fake-codesign:$PATH" run_expect 1 "keychain entitlement" run_harness launch --app "$GOOD"
+chmod 755 $PROOF_ROOT/fake-codesign/codesign
+PATH="$PROOF_ROOT/fake-codesign:$PATH" run_expect 1 "keychain entitlement" run_harness launch --app "$GOOD"
 assert_contains "$LAST_ERR" "keychain-access-groups" "keychain refusal"
 assert_absent "$LAST_ERR" "hidden" "keychain value hidden"
 if pgrep -x umbilical >/dev/null; then
@@ -411,7 +466,7 @@ if pgrep -x umbilical >/dev/null; then
 fi
 pass "keychain refusal started no process"
 
-cat > /tmp/fake-codesign/codesign <<'EOF'
+cat > $PROOF_ROOT/fake-codesign/codesign <<'EOF'
 #!/bin/sh
 cat <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -422,7 +477,7 @@ cat <<'PLIST'
 </dict></plist>
 PLIST
 EOF
-PATH="/tmp/fake-codesign:$PATH" run_expect 1 "release without get-task-allow" run_harness launch --app "$PRESENT"
+PATH="$PROOF_ROOT/fake-codesign:$PATH" run_expect 1 "release without get-task-allow" run_harness launch --app "$PRESENT"
 assert_contains "$LAST_ERR" "get-task-allow" "release refusal"
 if pgrep -x umbilical >/dev/null; then
   fail "release refusal started a process"
@@ -430,7 +485,7 @@ fi
 pass "release refusal started no process"
 
 # A string that merely contains the key name is not the entitlement.
-cat > /tmp/fake-codesign/codesign <<'EOF'
+cat > $PROOF_ROOT/fake-codesign/codesign <<'EOF'
 #!/bin/sh
 cat <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -443,16 +498,16 @@ cat <<'PLIST'
 </dict></plist>
 PLIST
 EOF
-PATH="/tmp/fake-codesign:$PATH" run_expect 3 "entitlement text is not a key" run_harness launch --app "$GOOD"
+PATH="$PROOF_ROOT/fake-codesign:$PATH" run_expect 3 "entitlement text is not a key" run_harness launch --app "$GOOD"
 assert_absent "$LAST_ERR" "keychain-access-groups" "substring was not treated as the entitlement"
 assert_contains "$LAST_ERR" "needs macOS" "parsed entitlements still reach the platform check"
 pass "entitlement parser ignored a substring"
 
-cat > /tmp/fake-codesign/codesign <<'EOF'
+cat > $PROOF_ROOT/fake-codesign/codesign <<'EOF'
 #!/bin/sh
 exit 0
 EOF
-PATH="/tmp/fake-codesign:$PATH" run_expect 1 "empty entitlements" run_harness launch --app "$GOOD"
+PATH="$PROOF_ROOT/fake-codesign:$PATH" run_expect 1 "empty entitlements" run_harness launch --app "$GOOD"
 assert_contains "$LAST_ERR" "no entitlements" "empty entitlements message"
 if pgrep -x umbilical >/dev/null; then
   fail "empty entitlements started a process"
@@ -628,17 +683,17 @@ pass "account plist unchanged after mismatch"
 emit_state "$RUN_ID" "$PID" "$GOOD" "$SCRATCH" "1.0.2" "$LSTART"
 
 # CFFIXED_USER_HOME is required, not just HOME.
-kill -TERM "$PID" 2>/dev/null || true
+release_pid "$PID"
 sleep 0.2
-nohup env HOME="$SCRATCH/home" "$APP_EXE" >/tmp/umb-holder.out 2>&1 &
+nohup env HOME="$SCRATCH/home" "$APP_EXE" >$PROOF_ROOT/holder.out 2>&1 &
 PID="$!"
-track "$PID"
 sleep 0.3
+track_tree "$PID"
 LSTART="$(lstart_of "$PID")"
 emit_state "$RUN_ID" "$PID" "$GOOD" "$SCRATCH" "1.0.2" "$LSTART"
 run_expect 1 "missing CFFIXED_USER_HOME" run_harness doctor
 assert_contains "$LAST_ERR" "CFFIXED_USER_HOME" "CFFIXED message"
-kill -TERM "$PID" 2>/dev/null || true
+release_pid "$PID"
 sleep 0.2
 
 # Restore a fully isolated holder for the remaining identity tests.
@@ -677,10 +732,10 @@ fi
 pass "relaunch left the live pid"
 
 # Unrelated pid and its child survive cleanup when identity does not match.
-nohup bash -c 'sleep 240 & wait' >/tmp/unrelated.out 2>&1 &
+nohup bash -c 'sleep 240 & wait' >$PROOF_ROOT/unrelated.out 2>&1 &
 UNRELATED="$!"
-track "$UNRELATED"
 sleep 0.3
+track_tree "$UNRELATED"
 UNRELATED_CHILD="$(pgrep -P "$UNRELATED" || true)"
 UNRELATED_CHILD="${UNRELATED_CHILD%%$'\n'*}"
 [[ -n "$UNRELATED_CHILD" ]] || fail "unrelated process has no child"
@@ -726,7 +781,7 @@ fi
 pass "discard refused before an identity mismatch"
 
 emit_state "$RUN_ID" "$PID" "$GOOD" "$SCRATCH" "1.0.2" "$LSTART"
-kill -TERM "$PID" 2>/dev/null || true
+release_pid "$PID"
 sleep 0.2
 run_expect 3 "relaunch on linux" run_harness relaunch
 assert_contains "$LAST_ERR" "needs macOS" "relaunch platform message"
@@ -742,11 +797,11 @@ LSTART="$(lstart_of "$PID")"
 emit_state "$RUN_ID" "$PID" "$GOOD" "$SCRATCH" "1.0.2" "$LSTART"
 run_expect 1 "doctor home mismatch" run_harness doctor
 assert_contains "$LAST_ERR" "HOME is /tmp" "home mismatch text"
-kill -TERM "$PID" 2>/dev/null || true
+release_pid "$PID"
 sleep 0.2
 
 nohup env HOME="$SCRATCH/home" CFFIXED_USER_HOME="$SCRATCH/home" __CFPREFERENCES_AVOID_DAEMON=1 \
-  /bin/sleep 120 >/tmp/umb-sleep.out 2>&1 &
+  /bin/sleep 120 >$PROOF_ROOT/sleep.out 2>&1 &
 PID="$!"
 track "$PID"
 sleep 0.2
@@ -754,7 +809,7 @@ LSTART="$(lstart_of "$PID")"
 emit_state "$RUN_ID" "$PID" "$GOOD" "$SCRATCH" "1.0.2" "$LSTART"
 run_expect 1 "doctor exe mismatch" run_harness doctor
 assert_contains "$LAST_ERR" "executable is" "exe mismatch text"
-kill -TERM "$PID" 2>/dev/null || true
+release_pid "$PID"
 
 emit_state "$RUN_ID" "999999" "$GOOD" "$SCRATCH" "1.0.2" "Wed Jan 1 00:00:00 1970"
 if kill -0 999999 2>/dev/null; then
@@ -769,7 +824,7 @@ LSTART="$(lstart_of "$PID")"
 emit_state "$RUN_ID" "$PID" "$GOOD" "$SCRATCH" "1.0.2" "$LSTART"
 run_expect 1 "doctor second process" run_harness doctor
 assert_contains "$LAST_ERR" "another process named umbilical" "second process text"
-kill -TERM "$EXTRA" 2>/dev/null || true
+release_pid "$EXTRA"
 sleep 0.2
 
 # Matching cleanup kills the recorded pid and its child, and keeps evidence.
@@ -887,8 +942,8 @@ if rows("/proc/net/tcp6"):
 PY
 pass "payload listens on 127.0.0.1 only"
 
-printf 'import time\ntime.sleep(180)\n' > /tmp/notes-about-verify-umbilical-payload.py
-nohup python3 /tmp/notes-about-verify-umbilical-payload.py >/tmp/notes-payload.out 2>&1 &
+printf 'import time\ntime.sleep(180)\n' > $PROOF_ROOT/notes-about-verify-umbilical-payload.py
+nohup python3 $PROOF_ROOT/notes-about-verify-umbilical-payload.py >$PROOF_ROOT/notes-payload.out 2>&1 &
 NOTES_PID="$!"
 track "$NOTES_PID"
 sleep 0.2
@@ -898,7 +953,7 @@ if ! kill -0 "$NOTES_PID" 2>/dev/null; then
   fail "payload stop killed the lookalike pid"
 fi
 pass "lookalike pid still alive"
-kill -TERM "$NOTES_PID" 2>/dev/null || true
+release_pid "$NOTES_PID"
 
 run_expect 0 "payload stop" run_harness payload stop --pid "$PAYLOAD_PID"
 if kill -0 "$PAYLOAD_PID" 2>/dev/null; then
@@ -917,13 +972,13 @@ rm -rf "$PRIVATE_PAYLOAD"
 
 # python3 failure must not leave the inspect temp file.
 BEFORE_TMP="$(find /tmp -maxdepth 1 -name 'tmp.*' -printf '%f\n' | sort)"
-mkdir -p /tmp/badpy
-cat > /tmp/badpy/python3 <<'EOF'
+mkdir -p $PROOF_ROOT/badpy
+cat > $PROOF_ROOT/badpy/python3 <<'EOF'
 #!/bin/sh
 exit 1
 EOF
-chmod 755 /tmp/badpy/python3
-PATH="/tmp/badpy:$PATH" run_expect 1 "inspect without python3" run_harness inspect-app --app "$GOOD"
+chmod 755 $PROOF_ROOT/badpy/python3
+PATH="$PROOF_ROOT/badpy:$PATH" run_expect 1 "inspect without python3" run_harness inspect-app --app "$GOOD"
 assert_contains "$LAST_ERR" "could not read" "python failure message"
 AFTER_TMP="$(find /tmp -maxdepth 1 -name 'tmp.*' -printf '%f\n' | sort)"
 if [[ "$BEFORE_TMP" != "$AFTER_TMP" ]]; then
@@ -936,60 +991,68 @@ awk '
   /^file_sha256\(\)/ { printing = 1 }
   printing { print }
   printing && /^}$/ { exit }
-' "$HARNESS" > /tmp/sha-fn.sh
-mkdir -p /tmp/sha-bin
-cp "$(command -v awk)" /tmp/sha-bin/awk
+' "$HARNESS" > $PROOF_ROOT/sha-fn.sh
+mkdir -p $PROOF_ROOT/sha-bin
+cp "$(command -v awk)" $PROOF_ROOT/sha-bin/awk
 REAL_SHA="$(command -v sha256sum)"
-python3 - "$REAL_SHA" <<'PY'
+python3 - "$REAL_SHA" "$PROOF_ROOT/sha-bin/shasum" <<'PY'
 import sys
 path = sys.argv[1]
-open("/tmp/sha-bin/shasum", "w").write(
+dest = sys.argv[2]
+open(dest, "w").write(
     "#!/bin/sh\nfile=\"\"\nfor arg in \"$@\"; do\n  file=\"$arg\"\ndone\nexec %s \"$file\"\n" % path
 )
 PY
-chmod 755 /tmp/sha-bin/shasum
-SUM_OUT="$(PATH="/tmp/sha-bin" "$BASH32" -c 'set -euo pipefail; source /tmp/sha-fn.sh; die() { echo "die $*" >&2; exit 1; }; file_sha256 /etc/hostname')"
+chmod 755 "$PROOF_ROOT/sha-bin/shasum"
+SUM_OUT="$(PATH="$PROOF_ROOT/sha-bin" "$BASH32" -c 'set -euo pipefail; source "$1"; die() { echo "die $*" >&2; exit 1; }; file_sha256 /etc/hostname' _ "$PROOF_ROOT/sha-fn.sh")"
 EXPECT_SUM="$(sha256sum /etc/hostname | awk '{ print $1 }')"
 [[ "$SUM_OUT" == "$EXPECT_SUM" ]] || fail "shasum fallback produced $SUM_OUT"
 pass "shasum fallback matches sha256sum"
 
 # Symlinked grandparent must not escape /tmp.
-rm -rf /var/tmp/u31-out /tmp/u31gp /var/tmp/u31-pay /tmp/paygp
-mkdir -p /var/tmp/u31-out /var/tmp/u31-pay/sub
-ln -s /var/tmp/u31-out /tmp/u31gp
-ln -s /var/tmp/u31-pay /tmp/paygp
-run_expect 1 "evidence symlink grandparent" run_harness launch --app "$GOOD" --evidence /tmp/u31gp/ev
+VAR_OUT="$(mktemp -d /var/tmp/umb-out.XXXXXX)"
+VAR_PAY="$(mktemp -d /var/tmp/umb-pay.XXXXXX)"
+mkdir -p "$VAR_PAY/sub"
+EV_LINK="$(mktemp -u /tmp/umb-evlink.XXXXXX)"
+PAY_LINK="$(mktemp -u /tmp/umb-paylink.XXXXXX)"
+ln -s "$VAR_OUT" "$EV_LINK"
+ln -s "$VAR_PAY" "$PAY_LINK"
+run_expect 1 "evidence symlink grandparent" run_harness launch --app "$GOOD" --evidence "$EV_LINK/ev"
 assert_contains "$LAST_ERR" "evidence directory must stay under" "symlink evidence refusal"
-[[ ! -e /var/tmp/u31-out/ev ]] || fail "evidence symlink escaped"
+[[ ! -e "$VAR_OUT/ev" ]] || fail "evidence symlink escaped"
 pass "evidence symlink stayed inside the guard"
-run_expect 1 "payload symlink grandparent" run_harness payload start --directory /tmp/paygp/sub/payload --name verify-payload.txt --body hi
+run_expect 1 "payload symlink grandparent" run_harness payload start --directory "$PAY_LINK/sub/payload" --name verify-payload.txt --body hi
 assert_contains "$LAST_ERR" "payload directory must stay under" "symlink payload refusal"
-[[ ! -e /var/tmp/u31-pay/sub/payload ]] || fail "payload symlink escaped"
+[[ ! -e "$VAR_PAY/sub/payload" ]] || fail "payload symlink escaped"
 pass "payload symlink stayed inside the guard"
-rm -f /tmp/u31gp /tmp/paygp
-rm -rf /var/tmp/u31-out /var/tmp/u31-pay
+rm -f "$EV_LINK" "$PAY_LINK"
+rm -rf "$VAR_OUT" "$VAR_PAY"
 
-mkdir -p /tmp/umb-payload-real
-ln -sfn /tmp/umb-payload-real /tmp/link-to-parent
-run_expect 0 "payload parent symlink under /tmp" run_harness payload start --directory /tmp/link-to-parent/child --name verify-payload.txt --body through-link
+PAYLOAD_REAL="$(mktemp -d /tmp/umb-payload-real.XXXXXX)"
+LINK_PARENT="$(mktemp -u /tmp/umb-link-parent.XXXXXX)"
+ln -sfn "$PAYLOAD_REAL" "$LINK_PARENT"
+run_expect 0 "payload parent symlink under /tmp" run_harness payload start --directory "$LINK_PARENT/child" --name verify-payload.txt --body through-link
 LINK_PAYLOAD_PID="$(printf '%s\n' "$LAST_OUT" | sed -n 's/^pid=//p')"
-[[ -f /tmp/umb-payload-real/child/www/verify-payload.txt ]] || fail "payload parent symlink was not resolved"
+[[ -f "$PAYLOAD_REAL/child/www/verify-payload.txt" ]] || fail "payload parent symlink was not resolved"
 run_expect 0 "payload stop after parent symlink" run_harness payload stop --pid "$LINK_PAYLOAD_PID"
 pass "payload start resolved a parent symlink under /tmp"
-ln -sfn /var/tmp /tmp/link-outside
-run_expect 1 "payload parent symlink leaves /tmp" run_harness payload start --directory /tmp/link-outside/umb-escaped --name verify-payload.txt --body hi
-[[ ! -e /var/tmp/umb-escaped ]] || fail "payload parent symlink wrote outside /tmp"
+LINK_OUTSIDE="$(mktemp -u /tmp/umb-link-outside.XXXXXX)"
+ESCAPED="umb-escaped-$$"
+ln -sfn /var/tmp "$LINK_OUTSIDE"
+run_expect 1 "payload parent symlink leaves /tmp" run_harness payload start --directory "$LINK_OUTSIDE/$ESCAPED" --name verify-payload.txt --body hi
+[[ ! -e "/var/tmp/$ESCAPED" ]] || fail "payload parent symlink wrote outside /tmp"
 pass "payload parent symlink outside /tmp wrote nothing"
-rm -rf /tmp/umb-payload-real /tmp/link-to-parent
-rm -f /tmp/link-outside
+rm -rf "$PAYLOAD_REAL"
+rm -f "$LINK_PARENT" "$LINK_OUTSIDE"
+rm -rf "/var/tmp/$ESCAPED"
 
 # Fake macOS layer. The real account home is never the target.
-FAKE_HOME=/tmp/u31-home
+FAKE_HOME=$PROOF_ROOT/home
 export FAKE_HOME
 export FAKE_APP_EXE="$GOOD/Contents/MacOS/umbilical"
-rm -rf /tmp/fake-darwin "$FAKE_HOME" /tmp/fake-handler /tmp/fake-handler-flip /tmp/fake-open-second /tmp/fake-second-pid /tmp/open-was-called /tmp/fake-umb-fault-target
-mkdir -p /tmp/fake-darwin
-cat > /tmp/fake-darwin/uname <<'EOF'
+rm -rf $FAKE_DARWIN "$FAKE_HOME" $UMB_FAKE_DIR/fake-handler $UMB_FAKE_DIR/fake-handler-flip $UMB_FAKE_DIR/fake-open-second $UMB_FAKE_DIR/fake-second-pid $UMB_FAKE_DIR/open-was-called $UMB_FAULT_SPEC
+mkdir -p $FAKE_DARWIN
+cat > $FAKE_DARWIN/uname <<'EOF'
 #!/bin/bash
 if [[ "${1:-}" == "-s" || $# -eq 0 ]]; then
   printf 'Darwin\n'
@@ -997,11 +1060,11 @@ if [[ "${1:-}" == "-s" || $# -eq 0 ]]; then
 fi
 exec /usr/bin/uname "$@"
 EOF
-cat > /tmp/fake-darwin/dscl <<'EOF'
+cat > $FAKE_DARWIN/dscl <<'EOF'
 #!/bin/bash
 printf 'NFSHomeDirectory: %s\n' "${FAKE_HOME:?}"
 EOF
-cat > /tmp/fake-darwin/codesign <<'EOF'
+cat > $FAKE_DARWIN/codesign <<'EOF'
 #!/bin/sh
 cat <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1012,14 +1075,14 @@ cat <<'PLIST'
 </dict></plist>
 PLIST
 EOF
-cat > /tmp/fake-darwin/open <<'EOF'
+cat > "$FAKE_DARWIN/open" <<EOF
 #!/bin/bash
-printf '%s\n' "$*" >> /tmp/open-was-called
+printf '%s\n' "\$*" >> "$UMB_FAKE_DIR/open-was-called"
 exit 1
 EOF
-cp "$SCRIPT_DIR/fake-osascript.sh" /tmp/fake-darwin/osascript
-chmod 755 /tmp/fake-darwin/uname /tmp/fake-darwin/dscl /tmp/fake-darwin/codesign /tmp/fake-darwin/open /tmp/fake-darwin/osascript
-printf '/Applications/Original.app\n' > /tmp/fake-handler
+cp "$SCRIPT_DIR/fake-osascript.sh" $FAKE_DARWIN/osascript
+chmod 755 $FAKE_DARWIN/uname $FAKE_DARWIN/dscl $FAKE_DARWIN/codesign $FAKE_DARWIN/open $FAKE_DARWIN/osascript
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
 
 reset_fake_home() {
   chmod -R u+rwx "$FAKE_HOME" 2>/dev/null || true
@@ -1034,7 +1097,7 @@ mkdir -p "$FAKE_HOME/Library/Preferences"
 printf 'locked' > "$FAKE_HOME/Library/Preferences/me.peapod.umbilical.plist"
 chmod 000 "$FAKE_HOME/Library/Preferences/me.peapod.umbilical.plist"
 parents_before="$(list_verify_parents)"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "unreadable account plist" run_harness launch --app "$GOOD"
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "unreadable account plist" run_harness launch --app "$GOOD"
 assert_contains "$LAST_ERR" "could not hash" "unreadable plist message"
 [[ ! -f "$STATE" ]] || fail "unreadable plist wrote state"
 if pgrep -x umbilical >/dev/null; then
@@ -1047,9 +1110,9 @@ chmod 644 "$FAKE_HOME/Library/Preferences/me.peapod.umbilical.plist" 2>/dev/null
 
 # Start time is UTC0, so a later cleanup in another zone still matches.
 reset_fake_home
-rm -f "$STATE" /tmp/fake-umb-fault-target
-PATH="/tmp/fake-darwin:$PATH" TZ=America/New_York run_expect 0 "launch under America/New_York" run_harness launch --app "$GOOD"
-PATH="/tmp/fake-darwin:$PATH" TZ=Pacific/Auckland run_expect 0 "cleanup under Pacific/Auckland" run_harness cleanup
+rm -f "$STATE" $UMB_FAULT_SPEC
+PATH="$FAKE_DARWIN:$PATH" TZ=America/New_York run_expect 0 "launch under America/New_York" run_harness launch --app "$GOOD"
+PATH="$FAKE_DARWIN:$PATH" TZ=Pacific/Auckland run_expect 0 "cleanup under Pacific/Auckland" run_harness cleanup
 if pgrep -x umbilical >/dev/null; then
   fail "timezone cleanup left the app"
 fi
@@ -1059,55 +1122,55 @@ pass "timezone cleanup removed scratch"
 
 # Every extra account path, a second pid, and a post-quit write.
 reset_fake_home
-rm -f "$STATE" /tmp/fake-handler-flip /tmp/fake-open-second /tmp/fake-second-pid /tmp/open-was-called /tmp/fake-deliver-nil /tmp/fake-deliver-fail /tmp/fake-handler-restore-fail
+rm -f "$STATE" $UMB_FAKE_DIR/fake-handler-flip $UMB_FAKE_DIR/fake-open-second $UMB_FAKE_DIR/fake-second-pid $UMB_FAKE_DIR/open-was-called $UMB_FAKE_DIR/fake-deliver-nil $UMB_FAKE_DIR/fake-deliver-fail $UMB_FAKE_DIR/fake-handler-restore-fail
 write_real_dscl() {
-  cat > /tmp/fake-darwin/dscl <<EOF
+  cat > $FAKE_DARWIN/dscl <<EOF
 #!/bin/bash
 printf 'NFSHomeDirectory: %s\n' "${FAKE_HOME:?}"
 EOF
-  chmod 755 /tmp/fake-darwin/dscl
+  chmod 755 $FAKE_DARWIN/dscl
 }
-cat > /tmp/fake-darwin/dscl <<'EOF'
+cat > $FAKE_DARWIN/dscl <<'EOF'
 #!/bin/bash
 exit 1
 EOF
-chmod 755 /tmp/fake-darwin/dscl
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "failing dscl refuses launch" run_harness launch --app "$GOOD"
+chmod 755 $FAKE_DARWIN/dscl
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "failing dscl refuses launch" run_harness launch --app "$GOOD"
 assert_contains "$LAST_ERR" "could not resolve the account home" "failing dscl message"
 if pgrep -x umbilical >/dev/null; then
   fail "failing dscl started a process"
 fi
 pass "failing dscl started no process"
-cat > /tmp/fake-darwin/dscl <<'EOF'
+cat > $FAKE_DARWIN/dscl <<'EOF'
 #!/bin/bash
 printf 'NFSHomeDirectory: relative/home\n'
 EOF
-chmod 755 /tmp/fake-darwin/dscl
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "relative home refuses launch" run_harness launch --app "$GOOD"
+chmod 755 $FAKE_DARWIN/dscl
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "relative home refuses launch" run_harness launch --app "$GOOD"
 assert_contains "$LAST_ERR" "could not resolve the account home" "relative home message"
 write_real_dscl
-printf '/Applications/Original.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch before dscl dies" run_harness launch --app "$GOOD"
-cat > /tmp/fake-darwin/dscl <<'EOF'
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "launch before dscl dies" run_harness launch --app "$GOOD"
+cat > $FAKE_DARWIN/dscl <<'EOF'
 #!/bin/bash
 exit 1
 EOF
-chmod 755 /tmp/fake-darwin/dscl
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "doctor after dscl dies" run_harness doctor
+chmod 755 $FAKE_DARWIN/dscl
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "doctor after dscl dies" run_harness doctor
 assert_contains "$LAST_ERR" "could not resolve the account home" "doctor dscl message"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "cleanup after dscl dies" run_harness cleanup
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "cleanup after dscl dies" run_harness cleanup
 assert_contains "$LAST_ERR" "could not resolve the account home" "cleanup dscl message"
 assert_absent "$LAST_OUT" "cleaned" "dscl cleanup did not say cleaned"
 assert_absent "$LAST_ERR" "cleaned" "dscl cleanup error did not say cleaned"
 [[ -f "$STATE" ]] || fail "dscl cleanup removed the state file"
 write_real_dscl
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "cleanup after dscl returns" run_harness cleanup
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "cleanup after dscl returns" run_harness cleanup
 [[ ! -f "$STATE" ]] || fail "dscl recovery left state"
 pass "failing dscl keeps doctor and cleanup nonzero"
 
 mkdir -p "$FAKE_HOME/Library/Caches/me.peapod.umbilical"
 chmod 000 "$FAKE_HOME/Library/Caches/me.peapod.umbilical"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "unreadable top dir refuses launch" run_harness launch --app "$GOOD"
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "unreadable top dir refuses launch" run_harness launch --app "$GOOD"
 assert_contains "$LAST_ERR" "could not hash" "unreadable top dir message"
 assert_absent "$LAST_ERR" "Traceback" "unreadable top dir has no traceback"
 if pgrep -x umbilical >/dev/null; then
@@ -1116,26 +1179,27 @@ fi
 [[ ! -f "$STATE" ]] || fail "unreadable top dir wrote state"
 chmod 755 "$FAKE_HOME/Library/Caches/me.peapod.umbilical"
 rm -rf "$FAKE_HOME/Library/Caches/me.peapod.umbilical"
+rmdir "$FAKE_HOME/Library/Caches" 2>/dev/null || true
 pass "unreadable top dir started no process"
 
 mkdir -p "$FAKE_HOME/Library/Application Support/me.peapod.umbilical/locked"
 printf 'kept\n' > "$FAKE_HOME/Library/Application Support/me.peapod.umbilical/locked/file"
-printf '/Applications/Original.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "fake darwin launch" run_harness launch --app "$GOOD"
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "fake darwin launch" run_harness launch --app "$GOOD"
 grep -qx '/Applications/Original.app' "$EVIDENCE/launch/handler-before.txt" || fail "handler was not recorded before launch"
 grep -q 'app=absent' "$EVIDENCE/launch/accessibility-host.txt" || fail "accessibility host did not record app=absent"
 chmod 000 "$FAKE_HOME/Library/Application Support/me.peapod.umbilical/locked"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "mode 000 subdir" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "mode 000 subdir" run_harness doctor
 assert_contains "$LAST_ERR" "could not hash" "mode 000 message"
 assert_absent "$LAST_ERR" "Traceback" "mode 000 has no traceback"
 chmod 755 "$FAKE_HOME/Library/Application Support/me.peapod.umbilical/locked"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "mode 000 restored" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "mode 000 restored" run_harness doctor
 pass "unreadable account entries fail closed"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "cleanup after mode 000" run_harness cleanup
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "cleanup after mode 000" run_harness cleanup
 saved_state="$UMB_VERIFY_STATE"
 unset UMB_VERIFY_STATE
-printf '/Applications/Original.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch with the default state file" run_harness launch --app "$GOOD"
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "launch with the default state file" run_harness launch --app "$GOOD"
 live_state="$(printf '%s\n' "$LAST_OUT" | sed -n 's/^state=//p')"
 live_parent="$(printf '%s\n' "$LAST_OUT" | sed -n 's/^verify_parent=//p')"
 [[ -f "$live_state" ]] || fail "default launch wrote no state file"
@@ -1146,7 +1210,7 @@ decoy="$(mktemp -d /tmp/umbilical-verify.XXXXXX)"
 chmod 700 "$decoy"
 printf 'other\n' > "$decoy/state.env"
 chmod 600 "$decoy/state.env"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "cleanup with two state files while the app is live" run_harness cleanup
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "cleanup with two state files while the app is live" run_harness cleanup
 assert_contains "$LAST_ERR" "$live_state" "cleanup names the live state"
 assert_contains "$LAST_ERR" "$decoy/state.env" "cleanup names the other state"
 assert_absent "$LAST_OUT" "nothing to clean" "two states did not say nothing to clean"
@@ -1156,7 +1220,7 @@ if ! pgrep -x umbilical >/dev/null 2>&1; then
 fi
 [[ -f "$live_state" ]] || fail "ambiguous cleanup removed the live state"
 rm -rf "$decoy"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "cleanup finds the only live state" run_harness cleanup
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "cleanup finds the only live state" run_harness cleanup
 assert_contains "$LAST_OUT" "cleaned" "single state cleanup"
 if pgrep -x umbilical >/dev/null 2>&1; then
   fail "single state cleanup left the app running"
@@ -1166,8 +1230,8 @@ export UMB_VERIFY_STATE="$saved_state"
 pass "cleanup finds one live state and refuses two"
 reset_fake_home
 rm -f "$STATE"
-printf '/Applications/Original.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch for path checks" run_harness launch --app "$GOOD"
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "launch for path checks" run_harness launch --app "$GOOD"
 check_one_path() {
   local rel="$1"
   local root="$2"
@@ -1186,76 +1250,77 @@ PY
   rm -rf "${FAKE_HOME:?}/${root:?}"
   run_expect 0 "path restored $root" run_harness doctor
 }
-PATH="/tmp/fake-darwin:$PATH" check_one_path "Library/Preferences/me.peapod.umbilical.plist" "Library/Preferences/me.peapod.umbilical.plist"
-PATH="/tmp/fake-darwin:$PATH" check_one_path "Library/Preferences/ByHost/me.peapod.umbilical.ABC.plist" "Library/Preferences/ByHost/me.peapod.umbilical.ABC.plist"
-PATH="/tmp/fake-darwin:$PATH" check_one_path "Library/Saved Application State/me.peapod.umbilical.savedState/windows.plist" "Library/Saved Application State/me.peapod.umbilical.savedState"
-PATH="/tmp/fake-darwin:$PATH" check_one_path "Library/Containers/me.peapod.umbilical/Data" "Library/Containers/me.peapod.umbilical"
-PATH="/tmp/fake-darwin:$PATH" check_one_path "Library/Group Containers/me.peapod.umbilical/x" "Library/Group Containers/me.peapod.umbilical"
-PATH="/tmp/fake-darwin:$PATH" check_one_path "Library/Group Containers/TEAM.me.peapod.umbilical/x" "Library/Group Containers/TEAM.me.peapod.umbilical"
-PATH="/tmp/fake-darwin:$PATH" check_one_path "Library/Application Support/me.peapod.umbilical/x" "Library/Application Support/me.peapod.umbilical"
-PATH="/tmp/fake-darwin:$PATH" check_one_path "Library/Caches/me.peapod.umbilical/x" "Library/Caches/me.peapod.umbilical"
-PATH="/tmp/fake-darwin:$PATH" check_one_path "Library/HTTPStorages/me.peapod.umbilical/x" "Library/HTTPStorages/me.peapod.umbilical"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "paths clear again" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" check_one_path "Library/Preferences/me.peapod.umbilical.plist" "Library/Preferences/me.peapod.umbilical.plist"
+PATH="$FAKE_DARWIN:$PATH" check_one_path "Library/Preferences/ByHost/me.peapod.umbilical.ABC.plist" "Library/Preferences/ByHost/me.peapod.umbilical.ABC.plist"
+PATH="$FAKE_DARWIN:$PATH" check_one_path "Library/Saved Application State/me.peapod.umbilical.savedState/windows.plist" "Library/Saved Application State/me.peapod.umbilical.savedState"
+PATH="$FAKE_DARWIN:$PATH" check_one_path "Library/Containers/me.peapod.umbilical/Data" "Library/Containers/me.peapod.umbilical"
+PATH="$FAKE_DARWIN:$PATH" check_one_path "Library/Group Containers/me.peapod.umbilical/x" "Library/Group Containers/me.peapod.umbilical"
+PATH="$FAKE_DARWIN:$PATH" check_one_path "Library/Group Containers/TEAM.me.peapod.umbilical/x" "Library/Group Containers/TEAM.me.peapod.umbilical"
+PATH="$FAKE_DARWIN:$PATH" check_one_path "Library/Application Support/me.peapod.umbilical/x" "Library/Application Support/me.peapod.umbilical"
+PATH="$FAKE_DARWIN:$PATH" check_one_path "Library/Caches/me.peapod.umbilical/x" "Library/Caches"
+PATH="$FAKE_DARWIN:$PATH" check_one_path "Library/Developer/foo" "Library/Developer"
+PATH="$FAKE_DARWIN:$PATH" check_one_path "Library/HTTPStorages/me.peapod.umbilical/x" "Library/HTTPStorages/me.peapod.umbilical"
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "paths clear again" run_harness doctor
 
-printf '/tmp/umb-fixtures/Umbilical.app\n' > /tmp/fake-handler-flip
-rm -f /tmp/open-was-called
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "open-url restores handler" run_harness ui open-url --url "umbilical://download?url=https%3A%2F%2Fexample.com%2Ffile"
-[[ ! -f /tmp/open-was-called ]] || fail "open-url called open"
+printf '%s\n' "$GOOD" > $UMB_FAKE_DIR/fake-handler-flip
+rm -f $UMB_FAKE_DIR/open-was-called
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "open-url restores handler" run_harness ui open-url --url "umbilical://download?url=https%3A%2F%2Fexample.com%2Ffile"
+[[ ! -f $UMB_FAKE_DIR/open-was-called ]] || fail "open-url called open"
 grep -qx '/Applications/Original.app' "$EVIDENCE/open-url/handler-restored.txt" || fail "handler was not restored"
 cmp "$EVIDENCE/launch/handler-before.txt" "$EVIDENCE/open-url/handler-before.txt" || fail "open-url reread the handler"
-grep -qx '/Applications/Original.app' /tmp/fake-handler || fail "handler file was not restored"
+grep -qx '/Applications/Original.app' $UMB_FAKE_DIR/fake-handler || fail "handler file was not restored"
 pass "open-url restored the handler path without open"
-rm -f /tmp/fake-handler-flip
+rm -f $UMB_FAKE_DIR/fake-handler-flip
 
-touch /tmp/fake-deliver-nil
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "nil url delivery" run_harness ui open-url --url "umbilical://download?url=https%3A%2F%2Fexample.com%2Ffile"
+touch $UMB_FAKE_DIR/fake-deliver-nil
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "nil url delivery" run_harness ui open-url --url "umbilical://download?url=https%3A%2F%2Fexample.com%2Ffile"
 assert_contains "$LAST_ERR" "could not deliver" "nil delivery message"
-grep -qx '/Applications/Original.app' /tmp/fake-handler || fail "nil delivery moved the handler"
+grep -qx '/Applications/Original.app' $UMB_FAKE_DIR/fake-handler || fail "nil delivery moved the handler"
 pass "nil url delivery failed"
-rm -f /tmp/fake-deliver-nil
+rm -f $UMB_FAKE_DIR/fake-deliver-nil
 
-printf '/tmp/umb-fixtures/Umbilical.app\n' > /tmp/fake-handler-flip
-touch /tmp/fake-deliver-fail
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "delivery failure restores handler" run_harness ui open-url --url "umbilical://download?url=https%3A%2F%2Fexample.com%2Ffile"
+printf '%s\n' "$GOOD" > $UMB_FAKE_DIR/fake-handler-flip
+touch $UMB_FAKE_DIR/fake-deliver-fail
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "delivery failure restores handler" run_harness ui open-url --url "umbilical://download?url=https%3A%2F%2Fexample.com%2Ffile"
 assert_contains "$LAST_ERR" "could not deliver" "delivery failure message"
-grep -qx '/Applications/Original.app' /tmp/fake-handler || fail "delivery failure left the handler moved"
+grep -qx '/Applications/Original.app' $UMB_FAKE_DIR/fake-handler || fail "delivery failure left the handler moved"
 grep -qx '/Applications/Original.app' "$EVIDENCE/open-url/handler-restored.txt" || fail "delivery failure did not record the restore"
 pass "delivery failure restored the handler"
-rm -f /tmp/fake-handler-flip /tmp/fake-deliver-fail
+rm -f $UMB_FAKE_DIR/fake-handler-flip $UMB_FAKE_DIR/fake-deliver-fail
 
-touch /tmp/fake-open-second
-rm -f /tmp/open-was-called /tmp/fake-second-pid
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "open-url second pid" run_harness ui open-url --url "umbilical://download?url=https%3A%2F%2Fexample.com%2Ffile"
-[[ ! -f /tmp/open-was-called ]] || fail "second pid path called open"
+touch $UMB_FAKE_DIR/fake-open-second
+rm -f $UMB_FAKE_DIR/open-was-called $UMB_FAKE_DIR/fake-second-pid
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "open-url second pid" run_harness ui open-url --url "umbilical://download?url=https%3A%2F%2Fexample.com%2Ffile"
+[[ ! -f $UMB_FAKE_DIR/open-was-called ]] || fail "second pid path called open"
 assert_contains "$LAST_ERR" "second umbilical pid" "second pid message"
 grep -q 'CFFIXED_USER_HOME=unset' "$EVIDENCE/open-url/second-pid-env.txt" || fail "second pid env was not recorded"
 LIVE="$(pgrep -x umbilical || true)"
 LIVE="${LIVE%%$'\n'*}"
 [[ -n "$LIVE" ]] || fail "second pid check stopped the original"
 pass "second pid left the original running"
-if [[ -f /tmp/fake-second-pid ]] && kill -0 "$(cat /tmp/fake-second-pid)" 2>/dev/null; then
+if [[ -f $UMB_FAKE_DIR/fake-second-pid ]] && kill -0 "$(cat $UMB_FAKE_DIR/fake-second-pid)" 2>/dev/null; then
   fail "second pid is still running"
 fi
 pass "second pid was stopped"
-rm -f /tmp/fake-open-second
-printf '/tmp/umb-fixtures/Umbilical.app\n' > /tmp/fake-handler-flip
-touch /tmp/fake-open-second /tmp/fake-handler-restore-fail
-rm -f /tmp/fake-second-pid
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "second pid is recorded before a handler failure" run_harness ui open-url --url "umbilical://download?url=https%3A%2F%2Fexample.com%2Ffile"
+rm -f $UMB_FAKE_DIR/fake-open-second
+printf '%s\n' "$GOOD" > $UMB_FAKE_DIR/fake-handler-flip
+touch $UMB_FAKE_DIR/fake-open-second $UMB_FAKE_DIR/fake-handler-restore-fail
+rm -f $UMB_FAKE_DIR/fake-second-pid
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "second pid is recorded before a handler failure" run_harness ui open-url --url "umbilical://download?url=https%3A%2F%2Fexample.com%2Ffile"
 assert_contains "$LAST_ERR" "could not restore" "handler failure still reports the restore"
 grep -q '^pid=' "$EVIDENCE/open-url/second-pid.txt" || fail "handler failure skipped the second pid scan"
-if [[ -f /tmp/fake-second-pid ]] && kill -0 "$(cat /tmp/fake-second-pid)" 2>/dev/null; then
+if [[ -f $UMB_FAKE_DIR/fake-second-pid ]] && kill -0 "$(cat $UMB_FAKE_DIR/fake-second-pid)" 2>/dev/null; then
   fail "handler failure left the second pid running"
 fi
 pass "second pid scan finished before the handler failure"
-rm -f /tmp/fake-open-second /tmp/fake-handler-flip /tmp/fake-handler-restore-fail
-printf '/Applications/Original.app\n' > /tmp/fake-handler
+rm -f $UMB_FAKE_DIR/fake-open-second $UMB_FAKE_DIR/fake-handler-flip $UMB_FAKE_DIR/fake-handler-restore-fail
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
 
 # A write that lands after quit must fail cleanup and keep the scratch.
 PREFS_PATH="$FAKE_HOME/Library/Preferences/me.peapod.umbilical.plist"
 mkdir -p "$(dirname "$PREFS_PATH")"
-printf '%s\n' "$PREFS_PATH" > /tmp/fake-umb-fault-target
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "post-quit account write" run_harness cleanup
+printf '%s\n' "$PREFS_PATH" > $UMB_FAULT_SPEC
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "post-quit account write" run_harness cleanup
 assert_contains "$LAST_ERR" "$PREFS_PATH" "post-quit path"
 assert_absent "$LAST_OUT" "cleaned" "post-quit did not say cleaned"
 assert_absent "$LAST_ERR" "cleaned" "post-quit error did not say cleaned"
@@ -1263,11 +1328,11 @@ assert_absent "$LAST_ERR" "cleaned" "post-quit error did not say cleaned"
 post_scratch="$(sed -n 's/^scratch=//p' "$STATE")"
 [[ -d "$post_scratch" ]] || fail "post-quit removed scratch $post_scratch"
 pass "post-quit kept state and scratch"
-rm -f /tmp/fake-umb-fault-target "$PREFS_PATH"
-printf '/tmp/umb-fixtures/Umbilical.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "cleanup restores the handler" run_harness cleanup
-grep -qx '/Applications/Original.app' /tmp/fake-handler || fail "cleanup left the handler moved"
-grep -qx '/tmp/umb-fixtures/Umbilical.app' "$EVIDENCE/cleanup/handler-after.txt" || fail "cleanup did not record the moved handler"
+rm -f $UMB_FAULT_SPEC "$PREFS_PATH"
+printf '%s\n' "$GOOD" > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "cleanup restores the handler" run_harness cleanup
+grep -qx '/Applications/Original.app' $UMB_FAKE_DIR/fake-handler || fail "cleanup left the handler moved"
+grep -qx "$GOOD" "$EVIDENCE/cleanup/handler-after.txt" || fail "cleanup did not record the moved handler"
 grep -qx '/Applications/Original.app' "$EVIDENCE/cleanup/handler-restored.txt" || fail "cleanup did not record the restored handler"
 [[ ! -f "$STATE" ]] || fail "final fake cleanup left state"
 pass "cleanup restored the handler and matched the account home"
@@ -1275,7 +1340,7 @@ pass "cleanup restored the handler and matched the account home"
 # A configured download folder records size and mtime. Files up to 1 MiB are hashed whole. Larger files use a head, midpoint, and tail sample. A fifo is never opened.
 reset_fake_home
 rm -f "$STATE"
-DOWNLOADS=/tmp/u31-downloads
+DOWNLOADS=$PROOF_ROOT/downloads
 rm -rf "$DOWNLOADS"
 mkdir -p "$DOWNLOADS"
 printf 'marker\n' > "$DOWNLOADS/marker"
@@ -1299,11 +1364,11 @@ payload = json.dumps({"downloadDirectoryPath": folder}).encode()
 with open(path, "wb") as handle:
     plistlib.dump({"umb.settings": payload}, handle)
 PY
-printf '/Applications/Original.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch with a recorded download folder" timeout 30 "$BASH32" "$HARNESS" launch --app "$GOOD"
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "launch with a recorded download folder" timeout 30 "$BASH32" "$HARNESS" launch --app "$GOOD"
 touch "$DOWNLOADS/.DS_Store"
 DL_START="$(date +%s%N)"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "ds_store touch stays clean" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "ds_store touch stays clean" run_harness doctor
 DL_END="$(date +%s%N)"
 DL_MS=$(( (DL_END - DL_START) / 1000000 ))
 echo "download folder check took ${DL_MS}ms" | tee -a "$EVIDENCE/proof.log"
@@ -1311,19 +1376,19 @@ echo "download folder check took ${DL_MS}ms" | tee -a "$EVIDENCE/proof.log"
 pass "download folder check took ${DL_MS}ms"
 mkdir -p "$DOWNLOADS/child"
 printf 'finder\n' > "$DOWNLOADS/child/.DS_Store"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "nested ds_store stays clean" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "nested ds_store stays clean" run_harness doctor
 cp -a "$DOWNLOADS/marker" "$PROOF_ROOT/marker.stamp"
 touch "$DOWNLOADS/marker"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "download mtime change" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "download mtime change" run_harness doctor
 assert_contains "$LAST_ERR" "$DOWNLOADS/marker" "download mtime names the file"
 cp -a "$PROOF_ROOT/marker.stamp" "$DOWNLOADS/marker"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "download mtime restored" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "download mtime restored" run_harness doctor
 printf 'XXXXXX\n' > "$DOWNLOADS/marker"
 touch -r "$PROOF_ROOT/marker.stamp" "$DOWNLOADS/marker"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "same-size overwrite" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "same-size overwrite" run_harness doctor
 assert_contains "$LAST_ERR" "$DOWNLOADS/marker" "same-size overwrite names the file"
 cp -a "$PROOF_ROOT/marker.stamp" "$DOWNLOADS/marker"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "same-size overwrite restored" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "same-size overwrite restored" run_harness doctor
 cp -a "$DOWNLOADS/wide" "$PROOF_ROOT/wide.stamp"
 python3 - "$DOWNLOADS/wide" <<'PY'
 import sys
@@ -1332,25 +1397,25 @@ with open(sys.argv[1], "r+b") as handle:
     handle.write(b"Z")
 PY
 touch -r "$PROOF_ROOT/wide.stamp" "$DOWNLOADS/wide"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "mid-file edit past 128KiB" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "mid-file edit past 128KiB" run_harness doctor
 assert_contains "$LAST_ERR" "$DOWNLOADS/wide" "mid-file edit names the file"
 cp -a "$PROOF_ROOT/wide.stamp" "$DOWNLOADS/wide"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "mid-file edit restored" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "mid-file edit restored" run_harness doctor
 printf 'appledouble\n' > "$DOWNLOADS/._old.zip"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "appledouble name" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "appledouble name" run_harness doctor
 assert_contains "$LAST_ERR" "$DOWNLOADS/._old.zip" "appledouble name"
 rm -f "$DOWNLOADS/._old.zip"
 printf 'inside\n' > "$DOWNLOADS/child/new"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "file inside a child folder" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "file inside a child folder" run_harness doctor
 assert_contains "$LAST_ERR" "$DOWNLOADS/child/new" "child file name"
 rm -f "$DOWNLOADS/child/new"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "download folder restored" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "download folder restored" run_harness doctor
 printf 'from-the-app\n' > "$DOWNLOADS/extra"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "new download name" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "new download name" run_harness doctor
 assert_contains "$LAST_ERR" "$DOWNLOADS/extra" "new download name"
 rm -f "$DOWNLOADS/extra"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "removed download name" run_harness doctor
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "cleanup after the new name is gone" run_harness cleanup
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "removed download name" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "cleanup after the new name is gone" run_harness cleanup
 [[ ! -f "$STATE" ]] || fail "download cleanup left state"
 pass "a removed download name lets cleanup finish"
 rm -rf "$DOWNLOADS"
@@ -1358,25 +1423,25 @@ rm -rf "$DOWNLOADS"
 # Absent handler, restore failure, freeze-account, and discard.
 reset_fake_home
 rm -f "$STATE"
-printf 'absent\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch with an absent handler" run_harness launch --app "$GOOD"
+printf 'absent\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "launch with an absent handler" run_harness launch --app "$GOOD"
 grep -qx 'absent' "$EVIDENCE/launch/handler-before.txt" || fail "absent handler was not recorded"
-printf '/tmp/umb-fixtures/Umbilical.app\n' > /tmp/fake-handler-flip
+printf '%s\n' "$GOOD" > $UMB_FAKE_DIR/fake-handler-flip
 rm -f "$EVIDENCE/open-url/handler-restored.txt" "$EVIDENCE/open-url/handler-after.txt"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "absent handler becomes an app" run_harness ui open-url --url "umbilical://download?url=https%3A%2F%2Fexample.com%2Ffile"
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "absent handler becomes an app" run_harness ui open-url --url "umbilical://download?url=https%3A%2F%2Fexample.com%2Ffile"
 assert_contains "$LAST_ERR" "absent" "absent handler message"
-assert_contains "$LAST_ERR" "/tmp/umb-fixtures/Umbilical.app" "absent handler names the new path"
+assert_contains "$LAST_ERR" "$FIXTURES/Umbilical.app" "absent handler names the new path"
 if [[ -f "$EVIDENCE/open-url/handler-restored.txt" ]] && grep -qx 'unchanged' "$EVIDENCE/open-url/handler-restored.txt"; then
   fail "absent handler was reported unchanged"
 fi
 pass "absent to an app is a change"
-rm -f /tmp/fake-handler-flip
-printf 'absent\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "cleanup while the handler is absent again" run_harness cleanup
+rm -f $UMB_FAKE_DIR/fake-handler-flip
+printf 'absent\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "cleanup while the handler is absent again" run_harness cleanup
 
 reset_fake_home
 rm -f "$STATE"
-DOWNLOADS=/tmp/u31-downloads
+DOWNLOADS=$PROOF_ROOT/downloads
 rm -rf "$DOWNLOADS"
 mkdir -p "$DOWNLOADS"
 python3 - "$FAKE_HOME" "$DOWNLOADS" <<'PY'
@@ -1388,43 +1453,43 @@ payload = json.dumps({"downloadDirectoryPath": folder}).encode()
 with open(path, "wb") as handle:
     plistlib.dump({"umb.settings": payload}, handle)
 PY
-printf '/Applications/Original.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch for discard" run_harness launch --app "$GOOD"
-printf '/tmp/umb-fixtures/Umbilical.app\n' > /tmp/fake-handler
-touch /tmp/fake-handler-restore-fail
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "cleanup cannot restore the handler" run_harness cleanup
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "launch for discard" run_harness launch --app "$GOOD"
+printf '%s\n' "$GOOD" > $UMB_FAKE_DIR/fake-handler
+touch $UMB_FAKE_DIR/fake-handler-restore-fail
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "cleanup cannot restore the handler" run_harness cleanup
 assert_contains "$LAST_ERR" "/Applications/Original.app" "restore failure names the recorded path"
-assert_contains "$LAST_ERR" "/tmp/umb-fixtures/Umbilical.app" "restore failure names the current path"
+assert_contains "$LAST_ERR" "$FIXTURES/Umbilical.app" "restore failure names the current path"
 assert_absent "$LAST_OUT" "cleaned" "restore failure did not say cleaned"
 [[ -f "$STATE" ]] || fail "restore failure removed the state file"
 [[ -f "$EVIDENCE/cleanup/account-after.txt" ]] || fail "handler failure did not write account-after"
 [[ -f "$EVIDENCE/cleanup/handler-error.txt" ]] || fail "handler failure did not write handler-error"
 pass "handler failure still wrote the account check"
-rm -f /tmp/fake-handler-restore-fail
+rm -f $UMB_FAKE_DIR/fake-handler-restore-fail
 printf 'stuck\n' > "$DOWNLOADS/extra"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "cleanup still names the new file" run_harness cleanup
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "cleanup still names the new file" run_harness cleanup
 assert_contains "$LAST_ERR" "$DOWNLOADS/extra" "discard setup names the file"
 RUN_FOR_FREEZE="$(sed -n 's/^run_id=//p' "$STATE")"
 LIVE_PARENT="$(sed -n 's/^verify_parent=//p' "$STATE")"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "freeze-account refuses a live state file" run_harness freeze-account "$RUN_FOR_FREEZE"
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "freeze-account refuses a live state file" run_harness freeze-account "$RUN_FOR_FREEZE"
 assert_contains "$LAST_ERR" "does not re-baseline" "freeze-account refusal"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "freeze-account --state before the run id" run_harness freeze-account --state "$STATE" "$RUN_FOR_FREEZE"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "freeze-account --state after the run id" run_harness freeze-account "$RUN_FOR_FREEZE" --state "$STATE"
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "freeze-account --state before the run id" run_harness freeze-account --state "$STATE" "$RUN_FOR_FREEZE"
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "freeze-account --state after the run id" run_harness freeze-account "$RUN_FOR_FREEZE" --state "$STATE"
 saved_state="$UMB_VERIFY_STATE"
 parents_before="$(list_verify_parents)"
 unset UMB_VERIFY_STATE
 unset UMB_VERIFY_PARENT
-PATH="/tmp/fake-darwin:$PATH" run_expect 2 "freeze-account without a parent" run_harness freeze-account "$RUN_FOR_FREEZE"
+PATH="$FAKE_DARWIN:$PATH" run_expect 2 "freeze-account without a parent" run_harness freeze-account "$RUN_FOR_FREEZE"
 export UMB_VERIFY_STATE="$saved_state"
 assert_contains "$LAST_ERR" "does not create a directory" "freeze-account creates nothing"
 [[ "$(list_verify_parents)" == "$parents_before" ]] || fail "freeze-account created a parent"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "doctor still sees the new file" run_harness doctor
-printf '/tmp/umb-fixtures/Umbilical.app\n' > /tmp/fake-handler
-touch /tmp/fake-handler-restore-fail
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "cleanup discard after contamination" run_harness cleanup --discard
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "doctor still sees the new file" run_harness doctor
+printf '%s\n' "$GOOD" > $UMB_FAKE_DIR/fake-handler
+touch $UMB_FAKE_DIR/fake-handler-restore-fail
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "cleanup discard after contamination" run_harness cleanup --discard
 assert_contains "$LAST_ERR" "cleanup --discard removed the run" "discard failure message"
 assert_contains "$LAST_ERR" "/Applications/Original.app" "discard names the recorded handler"
-assert_contains "$LAST_ERR" "/tmp/umb-fixtures/Umbilical.app" "discard names the handler to fix"
+assert_contains "$LAST_ERR" "$FIXTURES/Umbilical.app" "discard names the handler to fix"
 assert_absent "$LAST_OUT" "discarded" "contaminated discard did not say discarded"
 assert_absent "$LAST_OUT" "cleaned" "contaminated discard did not say cleaned"
 [[ -f "$EVIDENCE/cleanup/account-after.txt" ]] || fail "discard did not write account-after"
@@ -1433,10 +1498,10 @@ grep -q "$DOWNLOADS/extra" "$EVIDENCE/cleanup/account-diff.txt" || fail "discard
 [[ ! -f "$STATE" ]] || fail "discard left the state file"
 [[ ! -d "$LIVE_PARENT" ]] || fail "discard left the verification parent"
 pass "cleanup discard records the mismatch and unlocks the run"
-rm -f /tmp/fake-handler-restore-fail
-printf '/Applications/Original.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch after a failed discard" run_harness launch --app "$GOOD"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "clean discard" run_harness cleanup --discard
+rm -f $UMB_FAKE_DIR/fake-handler-restore-fail
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "launch after a failed discard" run_harness launch --app "$GOOD"
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "clean discard" run_harness cleanup --discard
 assert_contains "$LAST_OUT" "discarded" "clean discard output"
 assert_absent "$LAST_OUT" "cleaned" "clean discard did not say cleaned"
 [[ ! -f "$STATE" ]] || fail "clean discard left the state file"
@@ -1448,39 +1513,39 @@ reset_fake_home
 rm -f "$STATE"
 mkdir -p "$FAKE_HOME/Library/Application Support/me.peapod.umbilical" /tmp/umb-link-a /tmp/umb-link-b
 ln -s /tmp/umb-link-a "$FAKE_HOME/Library/Application Support/me.peapod.umbilical/linked"
-printf '/Applications/Original.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch with a directory symlink" run_harness launch --app "$GOOD"
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "launch with a directory symlink" run_harness launch --app "$GOOD"
 support_dir="$FAKE_HOME/Library/Application Support/me.peapod.umbilical"
 support_mtime="$(python3 -c 'import os,sys; print(os.lstat(sys.argv[1]).st_mtime_ns)' "$support_dir")"
 ln -sfn /tmp/umb-link-b "$support_dir/linked"
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "directory symlink retarget" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "directory symlink retarget" run_harness doctor
 assert_contains "$LAST_ERR" "$support_dir" "directory symlink message"
 ln -sfn /tmp/umb-link-a "$support_dir/linked"
 python3 -c 'import os,sys; os.utime(sys.argv[1], ns=(int(sys.argv[2]), int(sys.argv[2])))' "$support_dir" "$support_mtime"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "directory symlink restored" run_harness doctor
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "cleanup after directory symlink" run_harness cleanup
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "directory symlink restored" run_harness doctor
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "cleanup after directory symlink" run_harness cleanup
 pass "directory symlink targets are checked"
 
 # A failing dscl during discard still leaves evidence and unlocks the run.
 reset_fake_home
 rm -f "$STATE"
-printf '/Applications/Original.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch before discard dscl" run_harness launch --app "$GOOD"
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "launch before discard dscl" run_harness launch --app "$GOOD"
 DSCL_PARENT="$(sed -n 's/^verify_parent=//p' "$STATE")"
-cat > /tmp/fake-darwin/dscl <<'EOF'
+cat > $FAKE_DARWIN/dscl <<'EOF'
 #!/bin/bash
 exit 1
 EOF
-chmod 755 /tmp/fake-darwin/dscl
-PATH="/tmp/fake-darwin:$PATH" run_expect 1 "discard while dscl fails" run_harness cleanup --discard
+chmod 755 $FAKE_DARWIN/dscl
+PATH="$FAKE_DARWIN:$PATH" run_expect 1 "discard while dscl fails" run_harness cleanup --discard
 assert_contains "$LAST_ERR" "cleanup --discard removed the run" "dscl discard message"
 assert_absent "$LAST_OUT" "discarded" "dscl discard did not say discarded"
 [[ -f "$EVIDENCE/cleanup/account-error.txt" ]] || fail "dscl discard wrote no account error"
 [[ ! -f "$STATE" ]] || fail "dscl discard left the state file"
 write_real_dscl
-printf '/Applications/Original.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "launch after dscl discard" run_harness launch --app "$GOOD"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "cleanup after dscl discard" run_harness cleanup
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "launch after dscl discard" run_harness launch --app "$GOOD"
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "cleanup after dscl discard" run_harness cleanup
 [[ ! -d "$DSCL_PARENT" ]] || fail "dscl discard left its parent"
 pass "discard survives a failing dscl"
 
@@ -1502,21 +1567,21 @@ status=\$?
 exit \$status
 EOF
 chmod 755 "$OUTER_ROOT/run-nearest.sh"
-printf '/Applications/Original.app\n' > /tmp/fake-handler
-PATH="/tmp/fake-darwin:$PATH" "$A_BASH" "$OUTER_ROOT/run-nearest.sh" >"$PROOF_ROOT/outer.out" 2>"$PROOF_ROOT/outer.err" || fail "nearest app launch failed: $(cat "$PROOF_ROOT/outer.err")"
+printf '/Applications/Original.app\n' > $UMB_FAKE_DIR/fake-handler
+PATH="$FAKE_DARWIN:$PATH" "$A_BASH" "$OUTER_ROOT/run-nearest.sh" >"$PROOF_ROOT/outer.out" 2>"$PROOF_ROOT/outer.err" || fail "nearest app launch failed: $(cat "$PROOF_ROOT/outer.err")"
 app_bundle="$(sed -n 's/^app_bundle=//p' "$EVIDENCE/launch/accessibility-host.txt")"
 [[ "$(basename "$app_bundle")" == "VeryLongApplicationName.app" ]] || fail "outer bundle was not recorded: $(cat "$EVIDENCE/launch/accessibility-host.txt")"
 grep -q '/Helper.app/' "$EVIDENCE/launch/accessibility-host.txt" || fail "inner helper was missing from the walk: $(cat "$EVIDENCE/launch/accessibility-host.txt")"
 grep -q '/A.app/' "$EVIDENCE/launch/accessibility-host.txt" || fail "shorter ancestor was missing from the walk: $(cat "$EVIDENCE/launch/accessibility-host.txt")"
 pass "accessibility host names the outer bundle of the nearest process"
-PATH="/tmp/fake-darwin:$PATH" run_expect 0 "cleanup after nearest app" run_harness cleanup
+PATH="$FAKE_DARWIN:$PATH" run_expect 0 "cleanup after nearest app" run_harness cleanup
 rm -rf "$OUTER_ROOT"
 
 # mktemp may return the /private/tmp real path.
 reset_fake_home
 rm -f "$STATE"
-mkdir -p /tmp/fake-mktemp /private/tmp
-cat > /tmp/fake-mktemp/mktemp <<'EOF'
+mkdir -p $PROOF_ROOT/fake-mktemp /private/tmp
+cat > $PROOF_ROOT/fake-mktemp/mktemp <<'EOF'
 #!/bin/bash
 template=""
 for arg in "$@"; do
@@ -1546,15 +1611,15 @@ if [[ "$base" == scratch-*XXXXXX ]]; then
 fi
 exec /usr/bin/mktemp "$@"
 EOF
-chmod 755 /tmp/fake-mktemp/mktemp
-PATH="/tmp/fake-mktemp:/tmp/fake-darwin:$PATH" run_expect 0 "launch with /private/tmp scratch" run_harness launch --app "$GOOD"
+chmod 755 $PROOF_ROOT/fake-mktemp/mktemp
+PATH="$PROOF_ROOT/fake-mktemp:$FAKE_DARWIN:$PATH" run_expect 0 "launch with /private/tmp scratch" run_harness launch --app "$GOOD"
 PRIVATE_SCRATCH="$(sed -n 's/^scratch=//p' "$STATE")"
 PRIVATE_PARENT="$(sed -n 's/^verify_parent=//p' "$STATE")"
 [[ "$PRIVATE_PARENT" == /private/tmp/umbilical-verify.* ]] || fail "parent path $PRIVATE_PARENT"
 [[ "$PRIVATE_SCRATCH" == "$PRIVATE_PARENT"/scratch-* ]] || fail "scratch path $PRIVATE_SCRATCH"
 [[ -d "$PRIVATE_SCRATCH" ]] || fail "private scratch missing"
 pass "launch accepted /private/tmp scratch"
-PATH="/tmp/fake-mktemp:/tmp/fake-darwin:$PATH" run_expect 0 "cleanup /private/tmp scratch" run_harness cleanup
+PATH="$PROOF_ROOT/fake-mktemp:$FAKE_DARWIN:$PATH" run_expect 0 "cleanup /private/tmp scratch" run_harness cleanup
 [[ ! -d "$PRIVATE_SCRATCH" ]] || fail "private scratch remained"
 pass "cleanup removed /private/tmp scratch"
 

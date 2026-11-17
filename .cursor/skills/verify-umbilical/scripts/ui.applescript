@@ -72,7 +72,7 @@ on describeProcess()
 			set frontmost to true
 			set rows to {}
 			repeat with win in windows
-				set rows to collectLines(win, rows)
+				set rows to my collectLines(win, rows)
 			end repeat
 			set AppleScript's text item delimiters to linefeed
 			set rendered to rows as text
@@ -100,15 +100,15 @@ on collectLines(element, rows)
 		try
 			set enabledText to enabled of element
 		end try
-		set end of rows to lineFor(roleText, nameText, valueText, enabledText)
+		set end of rows to my lineFor(roleText, nameText, valueText, enabledText)
 		try
 			repeat with sheetRef in (sheets of element)
-				set rows to collectLines(sheetRef, rows)
+				set rows to my collectLines(sheetRef, rows)
 			end repeat
 		end try
 		try
 			repeat with child in (UI elements of element)
-				set rows to collectLines(child, rows)
+				set rows to my collectLines(child, rows)
 			end repeat
 		end try
 		return rows
@@ -127,7 +127,7 @@ on clickNamed(itemName)
 		tell process "umbilical"
 			set frontmost to true
 			if (count of windows) is 0 then error "button not found: " & itemName
-			if clickIn(window 1, "AXButton", itemName) then return
+			if my clickIn(window 1, "AXButton", itemName) then return
 			error "button not found: " & itemName
 		end tell
 	end tell
@@ -147,12 +147,12 @@ on clickIn(element, wantedRole, itemName)
 		-- button named Remove must win over the row button of the same name.
 		try
 			repeat with sheetRef in (sheets of element)
-				if clickIn(sheetRef, wantedRole, itemName) then return true
+				if my clickIn(sheetRef, wantedRole, itemName) then return true
 			end repeat
 		end try
 		try
 			repeat with child in (UI elements of element)
-				if clickIn(child, wantedRole, itemName) then return true
+				if my clickIn(child, wantedRole, itemName) then return true
 			end repeat
 		end try
 		return false
@@ -165,8 +165,8 @@ on fillNamed(itemName, newValue)
 		tell process "umbilical"
 			set frontmost to true
 			if (count of windows) is 0 then error "text field not found: " & itemName
-			if writeIn(window 1, "AXTextField", itemName, newValue) then return
-			if writeIn(window 1, "AXTextArea", itemName, newValue) then return
+			if my writeIn(window 1, "AXTextField", itemName, newValue) then return
+			if my writeIn(window 1, "AXTextArea", itemName, newValue) then return
 			error "text field not found: " & itemName
 		end tell
 	end tell
@@ -198,7 +198,7 @@ on readInFront(wantedRole, itemName, mode)
 		tell process "umbilical"
 			set frontmost to true
 			if (count of windows) is 0 then return "MISSING"
-			return readIn(window 1, wantedRole, itemName, mode)
+			return my readIn(window 1, wantedRole, itemName, mode)
 		end tell
 	end tell
 end readInFront
@@ -216,12 +216,12 @@ on writeIn(element, wantedRole, itemName, newValue)
 		end try
 		try
 			repeat with sheetRef in (sheets of element)
-				if writeIn(sheetRef, wantedRole, itemName, newValue) then return true
+				if my writeIn(sheetRef, wantedRole, itemName, newValue) then return true
 			end repeat
 		end try
 		try
 			repeat with child in (UI elements of element)
-				if writeIn(child, wantedRole, itemName, newValue) then return true
+				if my writeIn(child, wantedRole, itemName, newValue) then return true
 			end repeat
 		end try
 		return false
@@ -243,13 +243,13 @@ on readIn(element, wantedRole, itemName, mode)
 		end try
 		try
 			repeat with sheetRef in (sheets of element)
-				set hit to readIn(sheetRef, wantedRole, itemName, mode)
+				set hit to my readIn(sheetRef, wantedRole, itemName, mode)
 				if hit is not "MISSING" then return hit
 			end repeat
 		end try
 		try
 			repeat with child in (UI elements of element)
-				set hit to readIn(child, wantedRole, itemName, mode)
+				set hit to my readIn(child, wantedRole, itemName, mode)
 				if hit is not "MISSING" then return hit
 			end repeat
 		end try

@@ -1,6 +1,6 @@
 # Pause, resume, and remove
 
-Pause, resume, and remove let a user stop an in-progress download, start it again, and take a row off the list. Removing an unfinished download deletes its partial file. Removing a finished download leaves the file in the folder.
+Pause, resume, and remove let a user stop an in-progress download, start it again, and take a row off the list. Removing an unfinished download deletes its partial file. Removing a finished download leaves the file in the folder. Pause, Resume, Remove, and Cancel are separate buttons on the row. The row's accessibility element contains those buttons instead of merging them into one element.
 
 ## Sub-features
 
@@ -21,16 +21,16 @@ Pause, resume, and remove let a user stop an in-progress download, start it agai
 
 Preconditions:
 
-- `verify-umbilical doctor` exits 0.
+- `verify-umbilical doctor --state <printed path>` exits 0.
 - A non-video row is active and has not reached `Complete`. A tiny file can finish before `Pause` is visible. Use a transfer that stays active long enough to click `Pause`. If the row already says `Complete`, this journey has not started.
 - The window says license checks are off, so Resume is allowed.
 
-- **Pause.** Choose `Pause`. Run `verify-umbilical ui click --name "Pause"`. The row state text becomes `Paused`. The status item no longer shows a percent or a speed. The menu still lists the row, with `Paused` in its label. It does not say `No active downloads` while that row remains.
-- **Resume.** Choose `Resume`. Run `verify-umbilical ui click --name "Resume"`. The button title returns to `Pause` and the row leaves `Paused`.
-- **Remove unfinished.** Choose `Remove`. Run `verify-umbilical ui click --name "Remove"`. A dialog titled `Remove this download?` appears. Choose the destructive `Remove`. Run `verify-umbilical ui click --name "Remove"`. The row is gone. The partial file stops growing and its `.aria2` companion is not left as a finished download.
+- **Pause.** Choose `Pause`. Run `verify-umbilical ui click --state <printed path> --name "Pause"`. The row state text becomes `Paused`. The status item no longer shows a percent or a speed. The menu still lists the row, with `Paused` in its label. It does not say `No active downloads` while that row remains.
+- **Resume.** Choose `Resume`. Run `verify-umbilical ui click --state <printed path> --name "Resume"`. The button title returns to `Pause` and the row leaves `Paused`.
+- **Remove unfinished.** Choose `Remove`. Run `verify-umbilical ui click --state <printed path> --name "Remove"`. A dialog titled `Remove this download?` appears. Choose the destructive `Remove`. Run `verify-umbilical ui click --state <printed path> --name "Remove"`. The row is gone. The partial file stops growing and its `.aria2` companion is not left as a finished download.
 - **Remove finished.** On a `Complete` row, choose `Remove` and confirm. The row leaves the list. The file named by the row is still in the download folder.
-- **Cancel video.** On a row whose button says `Cancel`, choose `Cancel`. Run `verify-umbilical ui click --name "Cancel"`. The row leaves without a confirmation dialog.
-- **Proof.** Dump the list after pause and after remove. Run `verify-umbilical ui dump --path EVIDENCE/pause-resume-remove/paused.txt` and `verify-umbilical ui screenshot --path EVIDENCE/pause-resume-remove/paused.png` while the row says `Paused`. After removal, a second dump has no row with that title.
+- **Cancel video.** On a row whose button says `Cancel`, choose `Cancel`. Run `verify-umbilical ui click --state <printed path> --name "Cancel"`. The row leaves without a confirmation dialog.
+- **Proof.** Dump the list after pause and after remove. Run `verify-umbilical ui dump --state <printed path> --path EVIDENCE/pause-resume-remove/paused.txt` and `verify-umbilical ui screenshot --state <printed path> --path EVIDENCE/pause-resume-remove/paused.png` while the row says `Paused`. After removal, a second dump has no row with that title.
 
 ## Gotchas
 

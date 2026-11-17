@@ -6,7 +6,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 
 - Build `umbilical.app` with Xcode and launch it through `verify-umbilical launch --app`.
 - Each run gets a private `/tmp/umbilical-verify.<id>` parent. The scratch directory is created with `mktemp -d` inside it. `HOME` and `CFFIXED_USER_HOME` are `<scratch>/home`. Download files go in `umbilical-verify-downloads` under that scratch directory.
-- `verify-umbilical doctor` exits 0. The recorded pid, bundle id `me.peapod.umbilical`, version, scratch `HOME`, `CFFIXED_USER_HOME`, start time, and preferences snapshot match. The account preferences plist is unchanged.
+- `verify-umbilical doctor --state <printed path>` exits 0. The recorded pid, bundle id `me.peapod.umbilical`, version, scratch `HOME`, `CFFIXED_USER_HOME`, start time, and preferences snapshot match. The account preferences plist is unchanged.
 - The window says `Unofficial build. License checks are off.` A build that enforces Polar is not a verification instance.
 - `Contents/Helpers/aria2c` and `Contents/Helpers/umb-watch` are executable before a download journey. `yt-dlp` is required only for a video download.
 - Never drive an `umbilical` process this run did not start.
@@ -18,7 +18,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 - Treat every command as literal, including the ellipsis character in `Choose Folder…` and `Settings…`.
 - `verify-umbilical` is `.cursor/skills/verify-umbilical/scripts/verify-umbilical`.
 - Run window actions through `verify-umbilical ui`.
-- Run the composed HTTP journey through `verify-umbilical drive add-download`.
+- Run the composed HTTP journey through `verify-umbilical drive add-download --state <printed path>`.
 - Leave proof artifacts in the evidence directory. Cleanup removes the scratch `HOME` and the state file only.
 
 ## Proof and skip reporting

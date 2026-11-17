@@ -84,10 +84,18 @@ UMB_VERIFY_PARENT. It does not create a directory. It reads --state wherever
 it appears and refuses when that state file exists, so it cannot re-baseline
 a live run. The default state file is that parent's state.env. An explicit
 state directory must already exist, mode 700, owned by this user, and not be
-a symlink. Launch refuses a handler path that contains "..", and refuses when
-the handler's resolved path or bundle identity is this verification build.
-cleanup with no --state uses the one state.env this user owns. Zero matches
-prints "nothing to clean". More than one exits 1 and names each path.
+a symlink. Launch refuses a handler path with a ".." component, including
+"..", "../x", "x/..", and "x/../y". A name such as umbilical..app is allowed.
+Launch also refuses when the handler's resolved path or bundle identity is
+this verification build, including a debug copy with the same bundle id and
+get-task-allow. cleanup with no --state uses the one state.env this user owns.
+/tmp and /private/tmp are counted once when they are the same directory. An
+owned run that is a symlink, is not mode 700, or whose state.env is missing,
+a symlink, or not a regular file exits 1 and names that path. Another user's
+run is skipped. Zero usable matches and no running umbilical prints "nothing
+to clean". A running umbilical with no state file exits 1 and is not signaled.
+A missing explicit --state path exits 1. More than one match exits 1 and names
+each path.
 cleanup --discard removes the run even when the handler or the account home
 does not match. It writes that evidence, exits nonzero, and prints what still
 has to be fixed by hand. --discard is valid only on cleanup.
@@ -168,6 +176,20 @@ file_mode() {
   fi
 }
 
+# Follow the path. /tmp and /private/tmp are one directory when one is a symlink.
+directory_identity() {
+  if stat -L -c '%d:%i' "$1" >/dev/null 2>&1; then
+    stat -L -c '%d:%i' "$1"
+  else
+    stat -L -f '%d:%i' "$1"
+  fi
+}
+
+# A name such as umbilical..app is a real component. Only a component equal to ".." is traversal.
+path_has_dotdot_component() {
+  [[ "$1" == ".." || "$1" == ../* || "$1" == */.. || "$1" == */../* ]]
+}
+
 file_mtime() {
   local path="$1"
   local value=""
@@ -193,7 +215,8 @@ resolve_account_home() {
   else
     return 1
   fi
-  [[ -n "$found" && "$found" == /* && "$found" != *..* ]] || return 1
+  [[ -n "$found" && "$found" == /* ]] || return 1
+  path_has_dotdot_component "$found" && return 1
   ACCOUNT_HOME="$found"
 }
 
@@ -293,7 +316,8 @@ path_is_under() {
 check_evidence_path() {
   local canon root ok parent_canon artifacts_root
   [[ -n "$EVIDENCE" ]] || die 1 "evidence directory is not set"
-  [[ "$EVIDENCE" == /* && "$EVIDENCE" != *..* ]] || die 1 "evidence directory must be an absolute path"
+  [[ "$EVIDENCE" == /* ]] || die 1 "evidence directory must be an absolute path"
+  path_has_dotdot_component "$EVIDENCE" && die 1 "evidence directory must be an absolute path"
   if [[ -L "$EVIDENCE" ]]; then
     die 1 "refusing evidence directory because it is a symlink: $EVIDENCE"
   fi
@@ -348,7 +372,8 @@ require_output_path() {
   local path="$1"
   local canon evidence_canon parent base
   [[ -n "$EVIDENCE" ]] || die 1 "evidence directory is not set"
-  [[ "$path" == /* && "$path" != *..* ]] || die 1 "output path must be absolute and must not contain .."
+  [[ "$path" == /* ]] || die 1 "output path must be absolute and must not contain .."
+  path_has_dotdot_component "$path" && die 1 "output path must be absolute and must not contain .."
   if [[ -L "$path" ]]; then
     die 1 "refusing output path because it is a symlink: $path"
   fi
@@ -595,6 +620,19 @@ process_alive() {
   kill -0 "$pid" 2>/dev/null
 }
 
+same_path() {
+  local left="$1"
+  local right="$2"
+  local left_real=""
+  local right_real=""
+  [[ -n "$left" && -n "$right" ]] || return 1
+  [[ "$left" == "$right" ]] && return 0
+  # /tmp is /private/tmp on macOS. The kernel reports the resolved executable.
+  left_real="$(readlink -f "$left" 2>/dev/null || true)"
+  right_real="$(readlink -f "$right" 2>/dev/null || true)"
+  [[ -n "$left_real" && "$left_real" == "$right_real" ]]
+}
+
 process_exe() {
   local pid="$1"
   if [[ -e "/proc/$pid/exe" ]]; then
@@ -759,7 +797,8 @@ path_has_disallowed_symlink() {
 
 validate_state_dir() {
   local dir owner mode base nullglob_was=0
-  [[ -n "$STATE" && "$STATE" == /* && "$STATE" != *..* ]] || die 1 "state file must be an absolute path"
+  [[ -n "$STATE" && "$STATE" == /* ]] || die 1 "state file must be an absolute path"
+  path_has_dotdot_component "$STATE" && die 1 "state file must be an absolute path"
   if path_has_disallowed_symlink "$STATE"; then
     die 1 "refusing state path because it contains a symlink: $STATE"
   fi
@@ -849,10 +888,12 @@ load_state() {
   scratch_matches_run "$scratch" "$run_id" || die 1 "state scratch does not match run_id"
   [[ "$home" == "$scratch/home" ]] || die 1 "state home is not inside the scratch directory"
   [[ "$downloads" == "$scratch/umbilical-verify-downloads" ]] || die 1 "state downloads directory is not inside the scratch directory"
-  [[ "$app_path" == *.app && "$app_path" != *..* && "$app_path" == /* ]] || die 1 "state app_path is not a bundle path"
+  [[ "$app_path" == *.app && "$app_path" == /* ]] || die 1 "state app_path is not a bundle path"
+  path_has_dotdot_component "$app_path" && die 1 "state app_path is not a bundle path"
   [[ "$executable" == "$app_path/Contents/MacOS/umbilical" ]] || die 1 "state executable does not match the bundle"
   [[ "$version" =~ ^[0-9A-Za-z._-]+$ ]] || die 1 "state version is not usable"
-  [[ -n "$state_evidence" && "$state_evidence" == /* && "$state_evidence" != *..* ]] || die 1 "state evidence path is not usable"
+  [[ -n "$state_evidence" && "$state_evidence" == /* ]] || die 1 "state evidence path is not usable"
+  path_has_dotdot_component "$state_evidence" && die 1 "state evidence path is not usable"
   [[ "$state_evidence" != "$scratch" && "$state_evidence" != "$scratch"/* ]] || die 1 "evidence path is inside the scratch directory"
   [[ -n "$lstart" && "$lstart" != *$'\n'* && "$lstart" =~ ^[A-Za-z0-9:[:space:]-]+$ ]] || die 1 "state start time is not usable"
   [[ "$prefs_sha" == "absent" || "$prefs_sha" =~ ^[0-9a-f]{64}$ ]] || die 1 "state preferences hash is not usable"
@@ -868,7 +909,8 @@ load_state() {
   fi
   [[ "$settings_written" == "0" || "$settings_written" == "1" ]] || die 1 "state settings_written is not usable"
   if [[ "$handler_path" != "absent" && "$handler_path" != "skipped" ]]; then
-    [[ "$handler_path" == /* && "$handler_path" != *$'\n'* && "$handler_path" != *..* ]] || die 1 "state handler_path is not usable"
+    [[ "$handler_path" == /* && "$handler_path" != *$'\n'* ]] || die 1 "state handler_path is not usable"
+    path_has_dotdot_component "$handler_path" && die 1 "state handler_path is not usable"
   fi
   [[ -n "$handler_path" ]] || die 1 "state handler_path is not usable"
   [[ "$saw_parent" == "1" && -n "$VERIFY_PARENT" ]] || die 1 "state verify_parent is not usable"
@@ -973,6 +1015,8 @@ account_paths() {
     "$root/Library/Group Containers/${BUNDLE_ID}" \
     "$root/Library/Application Support/${BUNDLE_ID}" \
     "$root/Library/Caches/${BUNDLE_ID}" \
+    "$root/Library/Caches" \
+    "$root/Library/Developer" \
     "$root/Library/HTTPStorages/${BUNDLE_ID}"
   dir="$root/Library/Preferences/ByHost"
   if [[ -L "$dir" ]]; then
@@ -1001,6 +1045,56 @@ account_paths() {
     done
     shopt -u nullglob
   fi
+}
+
+fingerprint_names() {
+  local dir="$1"
+  local sha
+  # Names and sizes only. Do not open file contents and do not record mtime.
+  sha="$(python3 - "$dir" 2>/dev/null <<'PY'
+import hashlib, os, sys
+root = sys.argv[1]
+
+def raise_walk_error(err):
+    raise err
+
+lines = []
+try:
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False, onerror=raise_walk_error):
+        dirnames.sort()
+        filenames.sort()
+        rel_dir = os.path.relpath(dirpath, root)
+        if rel_dir == ".":
+            rel_dir = ""
+        lines.append("dir\t%s" % rel_dir)
+        kept_dirs = []
+        for name in dirnames:
+            path = os.path.join(dirpath, name)
+            rel = os.path.join(rel_dir, name) if rel_dir else name
+            if os.path.islink(path):
+                lines.append("link\t%s" % rel)
+            else:
+                kept_dirs.append(name)
+        dirnames[:] = kept_dirs
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            rel = os.path.join(rel_dir, name) if rel_dir else name
+            if os.path.islink(path):
+                lines.append("link\t%s" % rel)
+                continue
+            st = os.lstat(path)
+            if os.path.isfile(path):
+                lines.append("file\t%s\t%s" % (rel, st.st_size))
+            else:
+                lines.append("other\t%s\t%s" % (rel, st.st_size))
+except OSError:
+    sys.exit(1)
+text = ("\n".join(lines) + "\n").encode()
+sys.stdout.write(hashlib.sha256(text).hexdigest())
+PY
+)" || return 1
+  [[ "$sha" =~ ^[0-9a-f]{64}$ ]] || return 1
+  printf '%s\n' "$sha"
 }
 
 fingerprint_dir() {
@@ -1070,6 +1164,16 @@ fingerprint_path() {
     return 0
   fi
   if [[ -d "$path" ]]; then
+    case "$path" in
+      */Library/Caches|*/Library/Developer)
+        sha="$(fingerprint_names "$path")" || {
+          PREFS_ERROR="could not hash account directory $path. Verification does not change it and does not launch."
+          return 1
+        }
+        printf -v FINGERPRINT_LINE 'names\t%s\t-\t%s' "$sha" "$path"
+        return 0
+        ;;
+    esac
     sha="$(fingerprint_dir "$path")" || {
       PREFS_ERROR="could not hash account directory $path. Verification does not change it and does not launch."
       return 1
@@ -1172,8 +1276,8 @@ write_account_records() {
   # Size and mtime for files and symlinks. Directory names are recorded without
   # their mtime, so a Finder .DS_Store touch does not fail the run. A regular
   # file of at most 1 MiB is hashed in full. A larger file stores a sha256 of
-  # its first 64KiB, a 64KiB window at the midpoint, and its last 64KiB, so a
-  # same-size edit past the ends is visible and a 2 GiB file is not read whole.
+  # its first 64KiB, a 64KiB window at the midpoint, and its last 64KiB. An
+  # edit outside those three windows of a file larger than 1 MiB is not detected.
   # A fifo or other non-regular file is recorded and never opened. The walk
   # stops at 100000 entries. Rows are appended here so a large folder is not
   # copied through the shell.
@@ -1440,7 +1544,7 @@ check_process_identity() {
   fi
   local actual_exe actual_home actual_fixed actual_avoid actual_lstart
   actual_exe="$(process_exe "$pid" || true)"
-  if [[ "$actual_exe" != "$executable" ]]; then
+  if ! same_path "$actual_exe" "$executable"; then
     IDENTITY_REASON="pid $pid executable is ${actual_exe:-unknown}, expected $executable"
     return 1
   fi
@@ -1474,7 +1578,7 @@ kill_identity_ok() {
   fi
   local actual_exe actual_home actual_lstart
   actual_exe="$(process_exe "$pid" || true)"
-  if [[ "$actual_exe" != "$executable" ]]; then
+  if ! same_path "$actual_exe" "$executable"; then
     IDENTITY_REASON="pid $pid executable is ${actual_exe:-unknown}, expected $executable"
     return 1
   fi
@@ -1709,7 +1813,8 @@ spawn_detached() {
 
 safe_type_path() {
   local path="$1"
-  [[ "$path" == /* && "$path" != *..* ]] || die 1 "folder path must be absolute"
+  [[ "$path" == /* ]] || die 1 "folder path must be absolute"
+  path_has_dotdot_component "$path" && die 1 "folder path must be absolute"
   [[ "$path" =~ ^[A-Za-z0-9._/-]+$ ]] || die 1 "folder path has characters the open panel keystroke path cannot carry"
   [[ -d "$path" && ! -L "$path" ]] || die 1 "folder path is not a directory: $path"
 }
@@ -1744,7 +1849,7 @@ payload_script_ok() {
   local path="$1"
   under_tmp_prefix "$path" || return 1
   [[ "$(basename "$path")" == "verify-umbilical-payload.py" ]] || return 1
-  [[ "$path" != *..* ]] || return 1
+  path_has_dotdot_component "$path" && return 1
   [[ -f "$path" && ! -L "$path" ]] || return 1
   local dir
   dir="$(dirname "$path")"
@@ -1781,7 +1886,8 @@ cmd_payload() {
   case "$action" in
     start)
       [[ -n "$DIRECTORY" && -n "$NAME" && -n "$BODY" ]] || die 2 "payload start needs --directory, --name, and --body"
-      [[ "$DIRECTORY" == /* && "$DIRECTORY" != *..* ]] || die 1 "payload directory must be an absolute path"
+      [[ "$DIRECTORY" == /* ]] || die 1 "payload directory must be an absolute path"
+      path_has_dotdot_component "$DIRECTORY" && die 1 "payload directory must be an absolute path"
       [[ "$NAME" =~ ^[A-Za-z0-9._-]+$ ]] || die 2 "payload name is not a single file name"
       local parent script_path payload_canon
       payload_canon="$(canonical_path "$DIRECTORY")" || die 1 "could not resolve payload directory $DIRECTORY"
@@ -2275,7 +2381,7 @@ record_handler_before_spawn() {
       abort_launch_before_spawn "could not record the umbilical:// handler before launch. The app was not started."
     fi
     if [[ "$handler_path" != "absent" ]]; then
-      if [[ "$handler_path" != /* || "$handler_path" == *$'\n'* || "$handler_path" == *..* ]]; then
+      if [[ "$handler_path" != /* || "$handler_path" == *$'\n'* ]] || path_has_dotdot_component "$handler_path"; then
         abort_launch_before_spawn "umbilical:// handler path is not usable ($handler_path). The app was not started."
       fi
       if handler_names_verify_build "$handler_path" "$inspected_app"; then
@@ -2936,14 +3042,18 @@ handler_set_swift() {
   xcode-select -p >/dev/null 2>&1 || return 1
   scratch_is_private || return 1
   cache="$scratch/swift-module-cache"
-  mkdir -p "$cache" || return 1
-  chmod 700 "$cache" || return 1
+  local swift_tmp="$scratch/swift-tmp"
+  mkdir -p "$cache" "$swift_tmp" || return 1
+  chmod 700 "$cache" "$swift_tmp" || return 1
   bin="$scratch/restore-handler"
   rm -f "$bin"
+  # TMPDIR and the module caches stay in this run. HOME is left alone.
   if command -v xcrun >/dev/null 2>&1; then
-    xcrun swiftc -module-cache-path "$cache" -framework AppKit "$SCRIPT_DIR/restore-handler.swift" -o "$bin" || status=$?
+    TMPDIR="$swift_tmp" CLANG_MODULE_CACHE_PATH="$cache" SWIFT_MODULECACHE_PATH="$cache" \
+      xcrun swiftc -module-cache-path "$cache" -framework AppKit "$SCRIPT_DIR/restore-handler.swift" -o "$bin" || status=$?
   else
-    swiftc -module-cache-path "$cache" -framework AppKit "$SCRIPT_DIR/restore-handler.swift" -o "$bin" || status=$?
+    TMPDIR="$swift_tmp" CLANG_MODULE_CACHE_PATH="$cache" SWIFT_MODULECACHE_PATH="$cache" \
+      swiftc -module-cache-path "$cache" -framework AppKit "$SCRIPT_DIR/restore-handler.swift" -o "$bin" || status=$?
   fi
   if [[ "$status" -ne 0 || ! -x "$bin" ]]; then
     rm -f "$bin"
@@ -2956,7 +3066,8 @@ handler_set_swift() {
 
 handler_set() {
   local ident="$1"
-  [[ "$ident" == /* && "$ident" != *$'\n'* && "$ident" != *..* ]] || return 1
+  [[ "$ident" == /* && "$ident" != *$'\n'* ]] || return 1
+  path_has_dotdot_component "$ident" && return 1
   if handler_set_jxa "$ident"; then
     return 0
   fi
@@ -3086,21 +3197,46 @@ cmd_freeze_account() {
 }
 
 list_user_state_files() {
-  local root entry owner mode state
+  local root entry owner mode state ident seen_roots
+  seen_roots=" "
   shopt -s nullglob
   for root in /tmp /private/tmp; do
     [[ -d "$root" ]] || continue
+    ident="$(directory_identity "$root")" || die 1 "could not identify $root"
+    [[ -n "$ident" ]] || die 1 "could not identify $root"
+    case "$seen_roots" in
+      *" $ident "*) continue ;;
+    esac
+    seen_roots="$seen_roots$ident "
     for entry in "$root"/umbilical-verify.*; do
-      [[ -L "$entry" ]] && continue
-      valid_verify_parent_path "$entry" || continue
-      [[ -d "$entry" ]] || continue
-      owner="$(file_owner "$entry")"
-      mode="$(file_mode "$entry")"
+      owner="$(file_owner "$entry" 2>/dev/null || true)"
+      if [[ -z "$owner" ]]; then
+        die 1 "could not read ownership of $entry"
+      fi
       [[ "$owner" == "$(id -u)" ]] || continue
-      [[ "$mode" == "700" ]] || continue
+      if [[ -L "$entry" ]]; then
+        die 1 "verification run is a symlink: $entry"
+      fi
+      if ! valid_verify_parent_path "$entry"; then
+        die 1 "verification run path is not usable: $entry"
+      fi
+      if [[ ! -d "$entry" ]]; then
+        die 1 "verification run is not a directory: $entry"
+      fi
+      mode="$(file_mode "$entry")"
+      if [[ "$mode" != "700" ]]; then
+        die 1 "verification run is not mode 700: $entry"
+      fi
       state="$entry/state.env"
-      [[ -L "$state" ]] && continue
-      [[ -f "$state" ]] || continue
+      if [[ -L "$state" ]]; then
+        die 1 "state file is a symlink: $state"
+      fi
+      if [[ -e "$state" && ! -f "$state" ]]; then
+        die 1 "state file is not a regular file: $state"
+      fi
+      if [[ ! -f "$state" ]]; then
+        die 1 "state file is missing: $state"
+      fi
       printf '%s\n' "$state"
     done
   done
@@ -3110,9 +3246,18 @@ list_user_state_files() {
 cmd_cleanup() {
   parse_common "$@"
   if [[ -z "$STATE" ]]; then
-    local found count
-    found="$(list_user_state_files)"
+    local found count found_file live
+    found_file="$(mktemp)" || die 1 "could not list verification state"
+    # Redirect, do not use a command substitution. die has to leave this shell.
+    list_user_state_files >"$found_file"
+    found="$(cat "$found_file")"
+    rm -f "$found_file"
     if [[ -z "$found" ]]; then
+      live="$(pgrep -x umbilical || true)"
+      if [[ -n "$live" ]]; then
+        die 1 "an umbilical process is running and no state file was found. Pass --state. The process was not signaled:
+$live"
+      fi
       echo "nothing to clean"
       exit 0
     fi
@@ -3124,11 +3269,7 @@ $found"
     STATE="$found"
   fi
   if [[ ! -e "$STATE" && ! -L "$STATE" ]]; then
-    fill_default_evidence
-    validate_evidence_location
-    log_line "cleanup nothing to clean"
-    echo "nothing to clean"
-    exit 0
+    die 1 "state file not found: $STATE"
   fi
   load_state
   validate_evidence_location

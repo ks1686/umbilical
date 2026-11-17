@@ -10,7 +10,11 @@ static void on_term(int sig) {
   char path[1024];
   size_t n;
   (void)sig;
-  spec = fopen("/tmp/fake-umb-fault-target", "r");
+  const char *spec_path = getenv("UMB_FAULT_SPEC");
+  if (!spec_path || !spec_path[0]) {
+    return;
+  }
+  spec = fopen(spec_path, "r");
   if (spec) {
     if (fgets(path, sizeof path, spec)) {
       n = strlen(path);

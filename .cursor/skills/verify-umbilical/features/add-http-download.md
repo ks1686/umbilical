@@ -22,15 +22,15 @@ Add download lets a user type an http or https URL, save the file inside the cho
 
 Preconditions:
 
-- `verify-umbilical doctor` exits 0.
+- `verify-umbilical doctor --state <printed path>` exits 0.
 - The window says `Unofficial build. License checks are off.`
 - `Contents/Helpers/aria2c` and `Contents/Helpers/umb-watch` are executable.
 - The download folder is the scratch `umbilical-verify-downloads` directory and does not already contain `verify-payload.txt`.
 
-- **Composed journey.** Choose the folder if needed, add the loopback payload, and wait until the file matches. Run `verify-umbilical drive add-download`. The command writes the action, the accessibility dump, the screenshot, the file sha256, and the quarantine value under the evidence directory. Exit 0 means the row reached `Complete`, the bytes match `umbilical-verify-payload`, and the quarantine attribute contains `umbilical`.
-- **Open the sheet.** Choose `Add Download`. Run `verify-umbilical ui click --name "Add Download"`. A sheet titled `Add Download` shows the field `https://example.com/file`, the field `Save as (optional)`, the `Video` checkbox, and the buttons `Paste`, `Cancel`, and `Add`.
-- **Enter the URL.** Leave save-as empty. Run `verify-umbilical ui fill --name "https://example.com/file" --value "http://127.0.0.1:PORT/verify-payload.txt"` and `verify-umbilical ui value --name "https://example.com/file"`. The value is that URL. Run `verify-umbilical ui checkbox --name "Video"`. The result is `0`.
-- **Save.** Choose `Add`. Run `verify-umbilical ui click --name "Add"`. The sheet closes. Run `verify-umbilical ui wait-text --text "Complete" --timeout 60`. The row title is `verify-payload.txt` and the state text is `Complete`.
+- **Composed journey.** Choose the folder if needed, add the loopback payload, and wait until the file matches. Run `verify-umbilical drive add-download --state <printed path>`. The command writes the action, the accessibility dump, the screenshot, the file sha256, and the quarantine value under the evidence directory. Exit 0 means the row reached `Complete`, the bytes match `umbilical-verify-payload`, and the quarantine attribute contains `umbilical`.
+- **Open the sheet.** Choose `Add Download`. Run `verify-umbilical ui click --state <printed path> --name "Add Download"`. A sheet titled `Add Download` shows the field `https://example.com/file`, the field `Save as (optional)`, the `Video` checkbox, and the buttons `Paste`, `Cancel`, and `Add`.
+- **Enter the URL.** Leave save-as empty. Run `verify-umbilical ui fill --state <printed path> --name "https://example.com/file" --value "http://127.0.0.1:PORT/verify-payload.txt"` and `verify-umbilical ui value --state <printed path> --name "https://example.com/file"`. The value is that URL. Run `verify-umbilical ui checkbox --state <printed path> --name "Video"`. The result is `0`.
+- **Save.** Choose `Add`. Run `verify-umbilical ui click --state <printed path> --name "Add"`. The sheet closes. Run `verify-umbilical ui wait-text --state <printed path> --text "Complete" --timeout 60`. The row title is `verify-payload.txt` and the state text is `Complete`.
 - **Reject empty.** Open the sheet and choose `Add` without typing. The sheet says `Enter an http or https URL.`
 - **Reject scheme.** Fill `file:///tmp/x` and choose `Add`. The sheet says `That URL scheme is not allowed (file).` Fill `magnet:?xt=urn:btih:0123456789abcdef` and choose `Add`. The sheet names the magnet scheme. No row appears.
 - **Reject userinfo.** Fill `https://user:password@example.com/a` and choose `Add`. The sheet says `URLs that include a username or password are rejected.`

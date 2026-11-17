@@ -21,16 +21,16 @@ Choosing a download folder lets a user pick the only directory umbilical will sa
 
 Preconditions:
 
-- `verify-umbilical doctor` exits 0.
+- `verify-umbilical doctor --state <printed path>` exits 0.
 - The accessibility dump contains `Choose a download folder`.
 - The scratch downloads directory exists and is empty.
 
-- **Choose the folder.** Choose `Choose Folder…`, go to the scratch downloads directory, and choose `Choose`. Run `verify-umbilical ui choose-folder --path /tmp/umbilical-verify.RUNID/scratch-RUN/umbilical-verify-downloads`, using the `downloads` path from the state file. The open panel's confirm button is `Choose`. The window then says `No downloads` and shows `umbilical-verify-downloads`.
-- **Settings path.** Open the status item and choose `Settings…`. Run `verify-umbilical ui menu --name "Settings…"`. The Downloads section shows Folder with that same path.
-- **Relaunch.** Quit, then start the same home again. Run `verify-umbilical ui quit`, wait until doctor reports the pid is not running, then `verify-umbilical relaunch`. The window shows `umbilical-verify-downloads` and does not ask for a folder again.
-- **Outside folder.** Create a real directory next to the download folder, for example `<scratch>/outside-the-download-folder`. Do not pass `/tmp`: on macOS `/tmp` is a symlink, and `ui choose-folder` refuses a symlink. Run `verify-umbilical ui click --name "Add Download"` and `verify-umbilical ui choose-folder --path <scratch>/outside-the-download-folder`. The sheet says `That folder cannot be used.` and the download list stays empty.
+- **Choose the folder.** Choose `Choose Folder…`, go to the scratch downloads directory, and choose `Choose`. Run `verify-umbilical ui choose-folder --state <printed path> --path <downloads from the state file>`. Do not pass `--path /tmp`. The open panel's confirm button is `Choose`. The window then says `No downloads` and shows `umbilical-verify-downloads`.
+- **Settings path.** Open the status item and choose `Settings…`. Run `verify-umbilical ui menu --state <printed path> --name "Settings…"`. The Downloads section shows Folder with that same path.
+- **Relaunch.** Quit, then start the same home again. Run `verify-umbilical ui quit --state <printed path>`, wait until doctor reports the pid is not running, then `verify-umbilical relaunch --state <printed path>`. The window shows `umbilical-verify-downloads` and does not ask for a folder again.
+- **Outside folder.** Create a real directory next to the download folder, for example `<scratch>/outside-the-download-folder`. Do not pass `/tmp`: on macOS `/tmp` is a symlink, and `ui choose-folder` refuses a symlink. Run `verify-umbilical ui click --state <printed path> --name "Add Download"` and `verify-umbilical ui choose-folder --state <printed path> --path <scratch>/outside-the-download-folder`. The sheet says `That folder cannot be used.` and the download list stays empty.
 - **Child folder.** Create `umbilical-verify-downloads/incoming`, choose that directory from the add sheet, and add an HTTP file. The saved file's parent directory is `incoming`.
-- **Proof.** Capture the window after the folder is chosen and again after relaunch. Run `verify-umbilical ui dump --path EVIDENCE/choose-download-folder/window.txt` and `verify-umbilical ui screenshot --path EVIDENCE/choose-download-folder/window.png`. Both artifacts show `umbilical` and `umbilical-verify-downloads`.
+- **Proof.** Capture the window after the folder is chosen and again after relaunch. Run `verify-umbilical ui dump --state <printed path> --path EVIDENCE/choose-download-folder/window.txt` and `verify-umbilical ui screenshot --state <printed path> --path EVIDENCE/choose-download-folder/window.png`. Both artifacts show `umbilical` and `umbilical-verify-downloads`.
 
 ## Gotchas
 

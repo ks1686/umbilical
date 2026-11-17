@@ -29,7 +29,10 @@ struct DownloadRowView: View {
             controls
         }
         .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
+        // Contain, do not combine. Pause, Resume, Remove, and Cancel stay
+        // separate buttons so a driver can click them by title.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(row.title)
         .confirmationDialog(
             "Remove this download?",
             isPresented: $confirmingRemove,

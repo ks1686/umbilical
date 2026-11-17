@@ -150,20 +150,27 @@ def jxa_set_ok(ident, args):
     return parts[2].startswith("function")
 
 
-def lookup_ok(ident):
-    return ident.endswith(".sharedWorkspace." + GET_NAME)
+def lookup_ok(ident, args):
+    return ident.endswith(".sharedWorkspace." + GET_NAME) and split_top_args(args) == ["url"]
 
 
-def send_ok(ident):
-    return ident.split(".")[-1] == SEND_NAME
+def send_ok(ident, args):
+    return ident == "event." + SEND_NAME and split_top_args(args) == ["1", "30", "error"]
 
 
 def swift_ok(ident, args):
-    if not ident.endswith(".shared." + SWIFT_NAME):
+    if ident != "NSWorkspace.shared." + SWIFT_NAME:
         return False
     if "completionHandler:" in args:
         return False
-    return "at:" in args and "toOpenURLsWithScheme:" in args and "completion:" in args
+    parts = split_top_args(args)
+    if len(parts) != 3:
+        return False
+    if parts[0] != "at: appURL":
+        return False
+    if parts[1] != 'toOpenURLsWithScheme: "umbilical"':
+        return False
+    return parts[2].startswith("completion:")
 
 
 def classify(ident, args):
@@ -175,14 +182,29 @@ def classify(ident, args):
             return GOOD_SWIFT
         return "bad"
     if name.startswith("URLForApplicationToOpenURL"):
-        if lookup_ok(ident):
+        if lookup_ok(ident, args):
             return GOOD_GET
         return "bad"
     if name.startswith("sendWithOptionsTimeout"):
-        if send_ok(ident):
+        if send_ok(ident, args):
             return GOOD_SEND
         return "bad"
     return None
+
+
+def required_snippets(path, text):
+    if path.endswith(".swift"):
+        needed = (
+            "NSWorkspace.shared.setDefaultApplication",
+            'toOpenURLsWithScheme: "umbilical"',
+        )
+    else:
+        needed = (
+            'URLWithString("umbilical://download")',
+            'setDefaultApplicationAtURLToOpenURLsWithSchemeCompletionHandler(appURL, "umbilical", function',
+            "sendWithOptionsTimeoutError(1, 30, error)",
+        )
+    return ["%s:%s" % (path, token) for token in needed if token not in text]
 
 
 def analyze(path):
@@ -190,6 +212,7 @@ def analyze(path):
         text = handle.read()
     good = []
     bad = []
+    bad.extend(required_snippets(path, text))
     blank = list(text)
     for start, end, ident, args in interesting_calls(text):
         kind = classify(ident, args)

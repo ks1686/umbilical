@@ -2,11 +2,13 @@ import AppKit
 import Foundation
 
 // Fallback when the JavaScript restore does not finish.
-// The completion may run on another queue. Wait on the semaphore and give up after 60 seconds.
+// The completion can be delivered on the main queue, so the main run loop has to be running.
+// A timer stops the wait after 60 seconds.
 
 final class ResultBox: @unchecked Sendable {
     var failed = false
     var message = ""
+    var finished = false
 }
 
 let arguments = CommandLine.arguments
@@ -17,21 +19,30 @@ if arguments.count != 3 {
 
 let appURL = URL(fileURLWithPath: arguments[1])
 let scheme = arguments[2]
-let box = ResultBox()
-let semaphore = DispatchSemaphore(value: 0)
+if scheme != "umbilical" {
+    fputs("restore-handler only restores the umbilical scheme\n", stderr)
+    exit(2)
+}
 
-NSWorkspace.shared.setDefaultApplication(at: appURL, toOpenURLsWithScheme: scheme, completion: { error in
+let box = ResultBox()
+let timer = Timer(timeInterval: 60, repeats: false) { _ in
+    if !box.finished {
+        fputs("handler restore timed out waiting for NSWorkspace\n", stderr)
+        exit(1)
+    }
+}
+
+NSWorkspace.shared.setDefaultApplication(at: appURL, toOpenURLsWithScheme: "umbilical", completion: { error in
     if let error = error {
         box.failed = true
         box.message = error.localizedDescription
     }
-    semaphore.signal()
+    box.finished = true
+    CFRunLoopStop(CFRunLoopGetMain())
 })
 
-if semaphore.wait(timeout: .now() + 60) == .timedOut {
-    fputs("handler restore timed out waiting for NSWorkspace\n", stderr)
-    exit(1)
-}
+RunLoop.main.add(timer, forMode: .common)
+RunLoop.main.run()
 
 if box.failed {
     fputs(box.message + "\n", stderr)
