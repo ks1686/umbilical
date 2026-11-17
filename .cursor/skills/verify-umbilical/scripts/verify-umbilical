@@ -3069,17 +3069,21 @@ stop_bounded_child() {
 }
 
 # Run a command and return its status. After SECONDS, stop that child if it is
-# still the process we started. Return 124 when the limit wins. This is the
-# backstop for a restore helper that never returns.
+# still the process we started. Return 124 when the limit wins. A child that
+# exits on its own keeps its status, so a failed restore helper stays failed.
+# This is the backstop for a restore helper that never returns.
 run_bounded() {
   local seconds="$1"
   shift
   local child started now start_mark exe_mark attempt
+  local saved_opts="$-" result=0
   [[ "$seconds" =~ ^[0-9]+$ ]] || return 2
+  # Monitor mode is off so a killed child is not announced as a shell job.
+  # The previous mode is restored on the way out. The child stays in the job
+  # table. Removing it makes wait report success for a failed child.
+  set +m
   "$@" &
   child=$!
-  # Drop the job so a later signal is not reported as a shell job error.
-  disown "$child" 2>/dev/null || true
   start_mark=""
   exe_mark=""
   attempt=0
@@ -3097,13 +3101,24 @@ run_bounded() {
   while kill -0 "$child" 2>/dev/null; do
     now="$(date +%s)"
     if [[ $((now - started)) -ge "$seconds" ]]; then
-      stop_bounded_child "$child" "$start_mark" "$exe_mark"
-      wait "$child" || true
-      return 124
+      # bash 3.2 writes Terminated while this child is stopped, not only
+      # from wait. The limit already won, so that noise is discarded.
+      {
+        stop_bounded_child "$child" "$start_mark" "$exe_mark"
+        wait "$child" || true
+      } 2>/dev/null
+      result=124
+      break
     fi
     sleep 0.2
   done
-  wait "$child" || return $?
+  if [[ "$result" -ne 124 ]]; then
+    wait "$child" || result=$?
+  fi
+  case "$saved_opts" in
+    *m*) set -m ;;
+  esac
+  return "$result"
 }
 
 handler_set_swift() {

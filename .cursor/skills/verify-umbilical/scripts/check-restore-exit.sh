@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The restore helper must exit after a successful restore. The old no-argument
 # main run loop does not, and this script fails if that form comes back.
-# It also checks that the harness stops a child it started, and only that child.
+# It also checks that the harness stops a child it started, and only that child,
+# and that a child exit of 1 is returned as 1.
 set -euo pipefail
 umask 077
 
@@ -218,6 +219,61 @@ PY
 # shellcheck disable=SC1091
 source "$WORK/bounded.bash"
 
+python3 - "$HARNESS" <<'PY' || fail "run_bounded removes the child from the job table"
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+match = re.search(r"(?m)^run_bounded\(\) \{\n(?:.*\n)*?^\}", text)
+if not match:
+    raise SystemExit("missing run_bounded")
+if re.search(r"(?m)^\s*disown\b", match.group(0)):
+    raise SystemExit("disown is inside run_bounded")
+PY
+
+had_m=0
+case $- in
+  *m*) had_m=1 ;;
+esac
+set +e
+run_bounded 5 "$BASH" -c 'exit 1'
+child_status=$?
+set -e
+has_m=0
+case $- in
+  *m*) has_m=1 ;;
+esac
+[[ "$had_m" -eq "$has_m" ]] || fail "run_bounded changed monitor mode"
+[[ "$child_status" -eq 1 ]] || fail "child exit 1 came back as $child_status"
+pass "run_bounded returns 1 when the child exits 1"
+
+set +e
+run_bounded 5 "$BASH" -c 'exit 0'
+child_status=$?
+set -e
+[[ "$child_status" -eq 0 ]] || fail "child exit 0 came back as $child_status"
+pass "run_bounded returns 0 when the child exits 0"
+
+python3 - "$WORK/bounded.bash" "$WORK/bounded-disown.bash" <<'PY' || fail "could not build the disown copy"
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+old = "run_bounded() {"
+if old not in text:
+    raise SystemExit("missing run_bounded")
+text = text.replace(old, "run_bounded_disown() {", 1)
+needle = "  child=$!\n"
+if needle not in text:
+    raise SystemExit("missing child assignment")
+text = text.replace(needle, needle + "  disown \"$child\" 2>/dev/null || true\n", 1)
+pathlib.Path(sys.argv[2]).write_text(text)
+PY
+# shellcheck disable=SC1091
+source "$WORK/bounded-disown.bash"
+set +e
+run_bounded_disown 5 "$BASH" -c 'exit 1'
+disown_status=$?
+set -e
+[[ "$disown_status" -eq 0 ]] || fail "disown copy returned $disown_status for exit 1, so this check would stay green"
+pass "putting disown back makes a failing child look successful"
+
 sleep 60 &
 BYSTANDER=$!
 disown "$BYSTANDER" 2>/dev/null || true
@@ -233,9 +289,12 @@ done
 
 started="$(date +%s)"
 set +e
-run_bounded 3 sleep 60
+run_bounded 3 sleep 60 2>"$WORK/bounded.err"
 bounded_status=$?
 set -e
+if grep -q 'Terminated' "$WORK/bounded.err"; then
+  fail "job control message leaked: $(cat "$WORK/bounded.err")"
+fi
 ended="$(date +%s)"
 [[ "$bounded_status" -eq 124 ]] || fail "stuck child exit $bounded_status, wanted 124"
 [[ $((ended - started)) -lt 8 ]] || fail "stuck child was still waited on after $((ended - started))s"

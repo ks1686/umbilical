@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Round-9 regressions for verify-umbilical. Run from any directory.
+# Round-10 regressions for verify-umbilical. Run from any directory.
 # The harness runs under the same bash that executes this script.
 set -euo pipefail
 umask 077
