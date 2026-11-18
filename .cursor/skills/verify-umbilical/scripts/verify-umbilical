@@ -114,12 +114,49 @@ log_line() {
   fi
 }
 
+# Stop a process spawned in this run before its scratch is removed. Return 1
+# when that process is still alive and cannot be matched, so the caller keeps
+# the scratch instead of deleting it under a running app.
+stop_verified_launch() {
+  local tree now_exe actual_exe actual_home
+  [[ -n "${pid:-}" && "$pid" =~ ^[0-9]+$ ]] || return 0
+  process_alive "$pid" || return 0
+  if [[ -n "${lstart:-}" && -n "${executable:-}" && -n "${home:-}" ]]; then
+    kill_identity_ok || return 1
+    tree="$(mktemp)"
+    now_exe="$(process_exe "$pid" || true)"
+    tree_remember_root "$tree" "$pid" "$lstart" "$now_exe"
+    tree_note_descendants "$tree" "$pid"
+    escalate_recorded_tree "$tree"
+    rm -f "$tree"
+    if process_alive "$pid"; then
+      return 1
+    fi
+    return 0
+  fi
+  if [[ -z "${executable:-}" || -z "${home:-}" ]]; then
+    return 1
+  fi
+  actual_exe="$(process_exe "$pid" || true)"
+  actual_home="$(process_env "$pid" HOME || true)"
+  [[ "$actual_exe" == "$executable" && "$actual_home" == "$home" ]] || return 1
+  signal_pid "$pid"
+  if process_alive "$pid"; then
+    return 1
+  fi
+  return 0
+}
+
 release_ephemeral_scratch() {
   if [[ -n "${INSPECT_TMP:-}" ]]; then
     rm -f "$INSPECT_TMP"
     INSPECT_TMP=""
   fi
   if [[ "${CLEAN_PARENT_ON_DIE:-0}" == "1" ]]; then
+    if ! stop_verified_launch; then
+      CLEAN_PARENT_ON_DIE=0
+      return 0
+    fi
     CLEAN_PARENT_ON_DIE=0
     IN_DIE=1
     remove_scratch_dir || true
@@ -3054,9 +3091,11 @@ function run(argv) {
 JS
 }
 
-# Rows are pid, start time, and executable. A reused pid has a new start time
-# and is left alone. Descendants are included so a child that ignores TERM
-# cannot leave a grandchild behind when the parent is killed.
+# Rows are pid, start time, executable, and role. A reused pid has a new start
+# time and is left alone. The root still has to match its recorded executable.
+# A descendant is matched by pid and start time, because exec keeps both.
+# Descendants are included so a child that ignores TERM cannot leave a
+# grandchild behind when the parent is killed.
 tree_pid_known() {
   local file="$1"
   local pid="$2"
@@ -3077,7 +3116,7 @@ tree_remember() {
     return 0
   fi
   exe="$(process_exe "$pid" || true)"
-  printf '%s\t%s\t%s\n' "$pid" "$start" "$exe" >>"$file"
+  printf '%s\t%s\t%s\t%s\n' "$pid" "$start" "$exe" "desc" >>"$file"
 }
 
 tree_remember_root() {
@@ -3091,19 +3130,23 @@ tree_remember_root() {
   if tree_pid_known "$file" "$pid"; then
     return 0
   fi
-  printf '%s\t%s\t%s\n' "$pid" "$start" "$exe" >>"$file"
+  printf '%s\t%s\t%s\t%s\n' "$pid" "$start" "$exe" "root" >>"$file"
 }
 
 tree_matches() {
   local pid="$1"
   local start="$2"
   local exe="$3"
+  local role="${4:-root}"
   local now_start now_exe
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
   [[ "$pid" -gt 1 ]] || return 1
   kill -0 "$pid" 2>/dev/null || return 1
   now_start="$(process_lstart "$pid" || true)"
   [[ -n "$start" && "$now_start" == "$start" ]] || return 1
+  if [[ "$role" == "desc" ]]; then
+    return 0
+  fi
   if [[ -n "$exe" ]]; then
     now_exe="$(process_exe "$pid" || true)"
     [[ "$now_exe" == "$exe" ]] || return 1
@@ -3141,22 +3184,22 @@ tree_note_descendants() {
 tree_signal_matching() {
   local file="$1"
   local sig="$2"
-  local pid start exe
+  local pid start exe role
   [[ -s "$file" ]] || return 0
-  while IFS=$'\t' read -r pid start exe; do
+  while IFS=$'\t' read -r pid start exe role; do
     [[ -z "$pid" ]] && continue
-    tree_matches "$pid" "$start" "$exe" || continue
+    tree_matches "$pid" "$start" "$exe" "$role" || continue
     kill "-$sig" "$pid" 2>/dev/null || true
   done <"$file"
 }
 
 tree_any_alive() {
   local file="$1"
-  local pid start exe
+  local pid start exe role
   [[ -s "$file" ]] || return 1
-  while IFS=$'\t' read -r pid start exe; do
+  while IFS=$'\t' read -r pid start exe role; do
     [[ -z "$pid" ]] && continue
-    if tree_matches "$pid" "$start" "$exe"; then
+    if tree_matches "$pid" "$start" "$exe" "$role"; then
       return 0
     fi
   done <"$file"
@@ -3166,7 +3209,7 @@ tree_any_alive() {
 escalate_recorded_tree() {
   local file="$1"
   local attempt=0
-  local scan pid start exe child
+  local scan pid start exe role child
   tree_signal_matching "$file" TERM
   while [[ "$attempt" -lt 5 ]]; do
     if ! tree_any_alive "$file"; then
@@ -3174,9 +3217,9 @@ escalate_recorded_tree() {
     fi
     scan="$(mktemp)"
     cp "$file" "$scan"
-    while IFS=$'\t' read -r pid start exe; do
+    while IFS=$'\t' read -r pid start exe role; do
       [[ -z "${pid:-}" ]] && continue
-      if ! tree_matches "$pid" "$start" "$exe"; then
+      if ! tree_matches "$pid" "$start" "$exe" "$role"; then
         continue
       fi
       while IFS= read -r child; do
@@ -3595,6 +3638,54 @@ $found"
   fi
 }
 
+# Test hook. Spawn one detached process into a private scratch, then wait.
+# A signal must stop that process before release_ephemeral_scratch deletes
+# the scratch. Falling through must leave both in place.
+hold_for_spawn_signal() {
+  local marker="${UMB_VERIFY_SPAWN_HOLD}"
+  case "$marker" in
+    /tmp/*|/private/tmp/*) ;;
+    *) die 2 "spawn hold marker must be under /tmp" ;;
+  esac
+  if [[ -L "$marker" || ! -f "$marker" ]]; then
+    die 2 "spawn hold marker is not a regular file"
+  fi
+  if [[ "$(file_owner "$marker")" != "$(id -u)" ]]; then
+    die 2 "spawn hold marker is not owned by this user"
+  fi
+  VERIFY_PARENT="$(mktemp -d /tmp/umbilical-verify.XXXXXX)" || die 1 "could not create a verification parent"
+  CREATED_PARENT=1
+  chmod 700 "$VERIFY_PARENT" || die 1 "could not create a verification parent"
+  run_id="20260101T000000Z-abcdef01"
+  scratch="$VERIFY_PARENT/scratch-${run_id}-spawn1"
+  home="$scratch/home"
+  mkdir -p "$home" "$scratch/tmp" || die 1 "could not create the scratch directory"
+  chmod 700 "$scratch" "$home" "$scratch/tmp" || die 1 "could not create the scratch directory"
+  cat >"$VERIFY_PARENT/watch.sh" <<'EOF'
+scratch="$1"
+marker="$2"
+while [[ -d "$scratch" ]]; do
+  sleep 0.05
+done
+printf 'scratch-removed\n' >>"$marker"
+exec sleep 120
+EOF
+  chmod 755 "$VERIFY_PARENT/watch.sh" || die 1 "could not create the spawn watcher"
+  mkfifo "$scratch/hold" || die 1 "could not create the spawn hold"
+  CLEAN_PARENT_ON_DIE=1
+  nohup env HOME="$home" /bin/bash "$VERIFY_PARENT/watch.sh" "$scratch" "$marker" </dev/null >/dev/null 2>&1 &
+  pid="$!"
+  disown "$pid" || true
+  sleep 0.1
+  executable="$(process_exe "$pid" || true)"
+  lstart="$(process_lstart "$pid" || true)"
+  [[ -n "$executable" && -n "$lstart" ]] || die 1 "could not record the spawned process"
+  printf '%s\n%s\n%s\n%s\n' "$$" "$scratch" "$pid" "$lstart" >"$marker" || die 1 "could not record the spawn hold"
+  read -r -t 60 _ <"$scratch/hold" || true
+  echo "verify-umbilical: spawn hold ended without a signal" >&2
+  exit 1
+}
+
 # Test hook. Create one private scratch and wait until INT or TERM. The signal
 # trap then runs release_ephemeral_scratch, the same teardown die uses.
 hold_for_signal() {
@@ -3631,6 +3722,9 @@ main() {
   if [[ -z "$COMMAND" || "$COMMAND" == "-h" || "$COMMAND" == "--help" ]]; then
     usage
     exit 2
+  fi
+  if [[ -n "${UMB_VERIFY_SPAWN_HOLD:-}" ]]; then
+    hold_for_spawn_signal
   fi
   if [[ -n "${UMB_VERIFY_SIGNAL_HOLD:-}" ]]; then
     hold_for_signal

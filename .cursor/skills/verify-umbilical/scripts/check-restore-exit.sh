@@ -450,6 +450,15 @@ same_id() {
   [[ -n "$now" && "$now" == "$start" ]]
 }
 
+same_id_line() {
+  local pid="$1"
+  local start="$2"
+  local now
+  [[ -n "$pid" && -n "$start" ]] || return 1
+  now="$(process_lstart "$pid" || true)"
+  [[ -n "$now" && "$now" == "$start" ]]
+}
+
 python3 - "$WORK/bounded.bash" "$WORK/bounded-direct.bash" <<'PY' || fail "could not build the direct-only kill copy"
 import pathlib, sys
 text = pathlib.Path(sys.argv[1]).read_text()
@@ -541,6 +550,89 @@ now_exe="$(process_exe "$BYSTANDER" || true)"
 [[ "$now_start" == "$BYSTANDER_START" && "$now_exe" == "$BYSTANDER_EXE" ]] || fail "tree kill signaled the bystander"
 kill -0 "$BYSTANDER" 2>/dev/null || fail "tree kill removed the bystander"
 pass "KILL after the grace period reaps a grandchild that ignores TERM"
+
+cc -o "$WORK/ignore-exec" -x c - <<'EOF' || fail "could not compile the exec target"
+#include <signal.h>
+#include <unistd.h>
+int main(void) {
+  signal(SIGTERM, SIG_IGN);
+  for (;;) pause();
+}
+EOF
+chmod 755 "$WORK/ignore-exec"
+cat >"$WORK/exec-on-term.sh" <<EOF
+trap 'exec "$WORK/ignore-exec"' TERM
+sleep 60
+EOF
+chmod 755 "$WORK/exec-on-term.sh"
+python3 - "$BASH" "$WORK/exec-on-term.sh" "$WORK/exec-child.out" "$WORK/exec.pid" <<'PY' || fail "could not start the exec child"
+import subprocess, sys
+bash, script, out_path, pid_path = sys.argv[1:]
+proc = subprocess.Popen(
+    [bash, script],
+    stdout=open(out_path, "w"),
+    stderr=subprocess.STDOUT,
+    stdin=subprocess.DEVNULL,
+    start_new_session=True,
+)
+open(pid_path, "w").write("%s\n" % proc.pid)
+PY
+exec_pid="$(tr -d '[:space:]' <"$WORK/exec.pid")"
+sleep 0.2
+exec_start="$(process_lstart "$exec_pid" || true)"
+exec_exe="$(process_exe "$exec_pid" || true)"
+[[ -n "$exec_start" && -n "$exec_exe" ]] || fail "exec child did not start"
+python3 - "$WORK/exec-root.out" "$WORK/exec-root.pid" <<'PY' || fail "could not start the exec root"
+import subprocess, sys
+out_path, pid_path = sys.argv[1:]
+proc = subprocess.Popen(
+    ["/bin/sleep", "30"],
+    stdout=open(out_path, "w"),
+    stderr=subprocess.STDOUT,
+    stdin=subprocess.DEVNULL,
+    start_new_session=True,
+)
+open(pid_path, "w").write("%s\n" % proc.pid)
+PY
+root_pid="$(tr -d '[:space:]' <"$WORK/exec-root.pid")"
+sleep 0.1
+root_start="$(process_lstart "$root_pid" || true)"
+root_exe="$(process_exe "$root_pid" || true)"
+[[ -n "$root_start" && -n "$root_exe" ]] || fail "exec root did not start"
+printf '%s\t%s\n' "$exec_pid" "$exec_start" >>"$WORK/leftover-ids"
+printf '%s\t%s\n' "$root_pid" "$root_start" >>"$WORK/leftover-ids"
+exec_tree="$(mktemp)"
+printf '%s\t%s\t%s\troot\n' "$root_pid" "$root_start" "$root_exe" >"$exec_tree"
+printf '%s\t%s\t%s\tdesc\n' "$exec_pid" "$exec_start" "$exec_exe" >>"$exec_tree"
+python3 - "$WORK/bounded.bash" "$WORK/bounded-exe.bash" <<'PY' || fail "could not build the executable-checked copy"
+import pathlib, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+old = '''  if [[ "$role" == "desc" ]]; then
+    return 0
+  fi
+'''
+if old not in text:
+    raise SystemExit("desc match is missing")
+pathlib.Path(sys.argv[2]).write_text(text.replace(old, "", 1))
+PY
+(
+  # shellcheck disable=SC1091
+  source "$WORK/bounded-exe.bash"
+  escalate_recorded_tree "$exec_tree"
+)
+if same_id_line "$exec_pid" "$exec_start"; then
+  pass "an executable check skips a descendant that execs during TERM"
+else
+  fail "executable-checked copy killed the exec descendant, so this check would stay green"
+fi
+# shellcheck disable=SC1091
+source "$WORK/bounded.bash"
+escalate_recorded_tree "$exec_tree"
+if same_id_line "$exec_pid" "$exec_start"; then
+  fail "descendant that execs during TERM is still running"
+fi
+pass "KILL reaches a descendant that execs during TERM"
+rm -f "$exec_tree"
 
 [[ "$(readlink -f /tmp)" == "/private/tmp" ]] || fail "not in the macOS /tmp layout"
 mkdir -p "$WORK/signal-bystander"
@@ -660,6 +752,102 @@ run_signal_hold_int "$HARNESS" INT yes
 pass "INT runs the same teardown as die"
 run_signal_hold_term "$HARNESS" TERM yes
 pass "TERM runs the same teardown as die"
+
+run_spawn_hold() {
+  local harness="$1"
+  local expect_stop="$2"
+  local marker shell_pid scratch child_pid child_start attempt parent
+  marker="$(mktemp "$WORK/spawn-marker.XXXXXX")"
+  : >"$marker"
+  cp "$marker" "$WORK/active-hold"
+  python3 - "$BASH" "$harness" "$marker" "$WORK/spawn.out" "$WORK/spawn.err" <<'PY' || fail "could not start the spawn hold"
+import os, subprocess, sys
+bash, harness, marker, out_path, err_path = sys.argv[1:]
+env = os.environ.copy()
+env["UMB_VERIFY_SPAWN_HOLD"] = marker
+proc = subprocess.Popen(
+    [bash, harness, "doctor"],
+    stdout=open(out_path, "w"),
+    stderr=open(err_path, "w"),
+    stdin=subprocess.DEVNULL,
+    env=env,
+    start_new_session=True,
+)
+proc.poll()
+PY
+  shell_pid=""
+  scratch=""
+  child_pid=""
+  child_start=""
+  attempt=0
+  while [[ "$attempt" -lt 50 ]]; do
+    if [[ -s "$marker" ]]; then
+      shell_pid="$(sed -n '1p' "$marker")"
+      scratch="$(sed -n '2p' "$marker")"
+      child_pid="$(sed -n '3p' "$marker")"
+      child_start="$(sed -n '4p' "$marker")"
+      if [[ "$shell_pid" =~ ^[0-9]+$ && -n "$scratch" && "$child_pid" =~ ^[0-9]+$ && -n "$child_start" ]]; then
+        cp "$marker" "$WORK/active-hold"
+        break
+      fi
+    fi
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  [[ -n "$shell_pid" && -n "$scratch" && -n "$child_pid" ]] || fail "spawn hold did not start ($(cat "$marker"))"
+  kill -TERM "$shell_pid" 2>/dev/null || true
+  attempt=0
+  while [[ "$attempt" -lt 50 ]]; do
+    kill -0 "$shell_pid" 2>/dev/null || break
+    sleep 0.05
+    attempt=$((attempt + 1))
+  done
+  if kill -0 "$shell_pid" 2>/dev/null; then
+    kill -KILL "$shell_pid" 2>/dev/null || true
+    fail "spawn hold ignored TERM"
+  fi
+  sleep 0.3
+  parent="$(dirname "$scratch")"
+  if [[ "$expect_stop" == "yes" ]]; then
+    if grep -q 'scratch-removed' "$marker"; then
+      fail "signal removed the scratch while the spawned process was alive"
+    fi
+    if same_id_line "$child_pid" "$child_start"; then
+      fail "signal left the spawned process running"
+    fi
+    [[ ! -e "$scratch" ]] || fail "signal left the spawned scratch $scratch"
+    [[ ! -e "$parent" ]] || fail "signal left $parent"
+  else
+    grep -q 'scratch-removed' "$marker" || fail "skipping the spawn stop still deleted nothing the child could see, so this check would stay green [$(cat "$marker")]"
+    same_id_line "$child_pid" "$child_start" || fail "skipping the spawn stop killed the child before the scratch disappeared"
+    kill -KILL "$child_pid" 2>/dev/null || true
+    case "$parent" in
+      /tmp/umbilical-verify.*|/private/tmp/umbilical-verify.*)
+        rm -rf "$parent"
+        ;;
+    esac
+  fi
+  rm -f "$WORK/active-hold"
+  sleep 0.2
+}
+
+python3 - "$HARNESS" "$WORK/harness-no-spawn-stop" <<'PY' || fail "could not drop the spawn stop"
+import pathlib, re, sys
+text = pathlib.Path(sys.argv[1]).read_text()
+updated, count = re.subn(
+    r"(?m)^stop_verified_launch\(\) \{\n(?:.*\n)*?^\}",
+    "stop_verified_launch() {\n  return 0\n}",
+    text,
+    count=1,
+)
+if count != 1:
+    raise SystemExit("removed %s stop_verified_launch functions" % count)
+pathlib.Path(sys.argv[2]).write_text(updated)
+PY
+run_spawn_hold "$WORK/harness-no-spawn-stop" no
+pass "without the spawn stop, TERM removes the scratch under the running process"
+run_spawn_hold "$HARNESS" yes
+pass "TERM after spawn stops the process before deleting its scratch"
 now_start="$(process_lstart "$BYSTANDER" || true)"
 now_exe="$(process_exe "$BYSTANDER" || true)"
 [[ "$now_start" == "$BYSTANDER_START" && "$now_exe" == "$BYSTANDER_EXE" ]] || fail "signal teardown signaled the bystander"
