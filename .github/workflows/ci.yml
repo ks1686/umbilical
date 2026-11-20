@@ -207,6 +207,29 @@ jobs:
           sudo tar -xzf /tmp/swift.tar.gz -C /opt/swift --strip-components=1
           echo /opt/swift/usr/bin >>"${GITHUB_PATH}"
 
+      - name: Install Swift 6.2.1
+        run: |
+          set -euo pipefail
+          url="https://download.swift.org/swift-6.2.1-release/ubuntu2404/swift-6.2.1-RELEASE/swift-6.2.1-RELEASE-ubuntu24.04.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 \
+            --output /tmp/swift-6.2.1.tar.gz "$url"
+          echo "4022cb64faf7e2681c19f9b62a22fb7d9055db6194d9e4a4bef9107b6ce10946  /tmp/swift-6.2.1.tar.gz" \
+            | sha256sum -c -
+          sudo mkdir -p /opt/swift-6.2.1
+          sudo tar -xzf /tmp/swift-6.2.1.tar.gz -C /opt/swift-6.2.1 --strip-components=1
+          /opt/swift-6.2.1/usr/bin/swiftc --version
+
+      - name: Test the restore helper
+        run: |
+          set -euo pipefail
+          root="$(git rev-parse --show-toplevel)"
+          cd "$root"
+          git archive HEAD .cursor/skills/verify-umbilical/scripts | tar -x
+          test -f "$root/.cursor/skills/verify-umbilical/scripts/strict-restore-helper.sh"
+          bash "$root/.cursor/skills/verify-umbilical/scripts/strict-restore-helper.sh"
+        env:
+          SWIFTC: /opt/swift-6.2.1/usr/bin/swiftc
+
       - name: Test the engine
         run: swift test
         env:
