@@ -14,7 +14,11 @@ if [[ "${1:-}" == "--setup" ]]; then
   bash_bin="$5"
   shift 5
   [[ "$(id -u)" -eq 0 ]] || exit 1
+  # Setup runs as root. Do not inherit a caller umask of 077, or /private
+  # and /tmp/bash-3.2.57 become 700 and the dropped-uid process cannot use /tmp.
+  umask 022
   mkdir -p "$root/private/tmp" "$root/var/tmp" "$root/proc" "$root/dev" "$root/root"
+  chmod 755 "$root" "$root/private" "$root/var" "$root/proc" "$root/dev" "$root/root"
   mount -t tmpfs -o mode=1777 tmpfs "$root/private/tmp"
   mount -t tmpfs -o mode=1777 tmpfs "$root/var/tmp"
   ln -s private/tmp "$root/tmp"
