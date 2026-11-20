@@ -31,6 +31,10 @@ mkdir -p "$EVIDENCE"
 pass() { echo "PASS: $*" | tee -a "$LOG"; }
 fail() { echo "FAIL: $*" | tee -a "$LOG" >&2; exit 1; }
 
+private_mode="$(stat -c '%a' /private)"
+[[ "$private_mode" == "755" ]] || fail "/private mode is $private_mode, expected 755"
+pass "/private stays traversable when the caller used umask 077"
+
 copy_log() {
   if [[ "${UMB_VERIFY_SAVE_LOGS:-}" != "1" ]]; then
     return 0
@@ -370,7 +374,7 @@ pass "freeze-account left no directory"
 # Fake Darwin. The real account home is never touched.
 export FAKE_HOME
 export FAKE_APP_EXE="$GOOD/Contents/MacOS/umbilical"
-rm -rf $FAKE_DARWIN
+rm -rf "$FAKE_DARWIN"
 mkdir -p $FAKE_DARWIN "$FAKE_HOME"
 cat > $FAKE_DARWIN/uname <<'EOF'
 #!/bin/bash

@@ -497,7 +497,7 @@ pass "handler call is parsed"
 "$BASH" "$SCRIPT_DIR/check-restore-exit.sh" "$SCRIPT_DIR/restore-handler.swift" "$HARNESS" | tee -a "$EVIDENCE/proof.log" || fail "restore helper exit check"
 
 GOOD="$FIXTURES/Umbilical.app"
-rm -rf $FIXTURES
+rm -rf "$FIXTURES"
 mkdir -p /tmp/evidence-target $FIXTURES
 ln -s /tmp/evidence-target /tmp/evidence-link
 make_app "$GOOD" "me.peapod.umbilical" "1.0.2" "-" holder
@@ -1184,7 +1184,7 @@ rm -rf "/var/tmp/$ESCAPED"
 FAKE_HOME=$PROOF_ROOT/home
 export FAKE_HOME
 export FAKE_APP_EXE="$GOOD/Contents/MacOS/umbilical"
-rm -rf $FAKE_DARWIN "$FAKE_HOME" $UMB_FAKE_DIR/fake-handler $UMB_FAKE_DIR/fake-handler-flip $UMB_FAKE_DIR/fake-open-second $UMB_FAKE_DIR/fake-second-pid $UMB_FAKE_DIR/open-was-called $UMB_FAULT_SPEC
+rm -rf "$FAKE_DARWIN" "$FAKE_HOME" "$UMB_FAKE_DIR/fake-handler" "$UMB_FAKE_DIR/fake-handler-flip" "$UMB_FAKE_DIR/fake-open-second" "$UMB_FAKE_DIR/fake-second-pid" "$UMB_FAKE_DIR/open-was-called" "$UMB_FAULT_SPEC"
 mkdir -p $FAKE_DARWIN
 cat > $FAKE_DARWIN/uname <<'EOF'
 #!/bin/bash

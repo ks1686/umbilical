@@ -208,7 +208,7 @@ def required_snippets(path, text):
             'setDefaultApplicationAtURLToOpenURLsWithSchemeCompletionHandler(appURL, "umbilical", function',
             "sendWithOptionsTimeoutError(1, 30, error)",
         )
-    return ["%s:%s" % (path, token) for token in needed if token not in text]
+    return [f"{path}:{token}" for token in needed if token not in text]
 
 
 def analyze(path):
@@ -225,7 +225,7 @@ def analyze(path):
             for offset in range(start, end):
                 blank[offset] = " "
         elif kind == "bad":
-            bad.append("%s:%s" % (path, ident.split(".")[-1]))
+            bad.append(f"{path}:{ident.split('.')[-1]}")
     remaining = "".join(blank)
     leftover = [token for token in TOKENS if token in remaining]
     return good, bad, leftover
@@ -287,6 +287,9 @@ def self_check(path):
     if re.search(r"startswith\([^)\n]*\)\s+or\s+\w+\.startswith\(", source):
         sys.stdout.write("a startswith chain is back\n")
         return 1
+    if re.search(r"%[sd]|%\s*\(", source):
+        sys.stdout.write("percent formatting is back\n")
+        return 1
     sys.stdout.write("watched() startswith tuple check passed\n")
     return 0
 
@@ -305,7 +308,7 @@ def main(argv):
         for kind in good:
             counts[kind] += 1
         bad.extend(wrong)
-        leftover.extend("%s:%s" % (path, token) for token in remains)
+        leftover.extend(f"{path}:{token}" for token in remains)
     expect_swift = 1 if any(path.endswith(".swift") for path in argv[1:]) else 0
     if (
         bad
@@ -316,15 +319,10 @@ def main(argv):
         or counts[GOOD_SWIFT] != expect_swift
     ):
         sys.stdout.write(
-            "handler call check failed: set=%s get=%s send=%s swift=%s bad=%s leftover=%s\n"
-            % (
-                counts[GOOD_SET],
-                counts[GOOD_GET],
-                counts[GOOD_SEND],
-                counts[GOOD_SWIFT],
-                ",".join(bad),
-                ",".join(leftover),
-            )
+            "handler call check failed: "
+            f"set={counts[GOOD_SET]} get={counts[GOOD_GET]} "
+            f"send={counts[GOOD_SEND]} swift={counts[GOOD_SWIFT]} "
+            f"bad={','.join(bad)} leftover={','.join(leftover)}\n"
         )
         return 1
     sys.stdout.write("handler call check passed\n")
