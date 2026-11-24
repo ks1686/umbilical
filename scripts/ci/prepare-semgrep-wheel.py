@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Write the local Semgrep wheel used by requirements/semgrep.txt.
 
-semgrep 1.181.0 through 1.184.0 pin mcp==1.29.0 and OpenTelemetry 1.37.
-Those pins make the patched releases uninstallable. This downloads the
-official manylinux wheel, checks its hash, and writes a local version whose
-Requires-Dist lines allow the versions in requirements/semgrep.in.
+semgrep 1.181.0 through 1.186.0 pin mcp==1.29.0, OpenTelemetry 1.37,
+and wcmatch 8.x. Those pins make the patched releases uninstallable.
+This downloads the official manylinux wheel, checks its hash, and writes
+a local version whose Requires-Dist lines allow the versions in
+requirements/semgrep.in.
 
-The local version is 1.181.0+umbilical.1 so pip will not prefer the PyPI
+The local version is 1.181.0+umbilical.2 so pip will not prefer the PyPI
 wheel of 1.181.0. Compressed payloads are copied unchanged.
 """
 
@@ -23,7 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 WHEEL_NAME = (
-    "semgrep-1.181.0+umbilical.1-cp310.cp311.cp312.cp313.cp314."
+    "semgrep-1.181.0+umbilical.2-cp310.cp311.cp312.cp313.cp314."
     "py310.py311.py312.py313.py314-none-manylinux_2_34_x86_64.whl"
 )
 OUT = ROOT / "requirements" / "wheels" / WHEEL_NAME
@@ -35,37 +36,38 @@ WHEEL_URL = (
 )
 WHEEL_SHA256 = "c142ec04a2ed144970cb0a92f6877651dd3c088505eec737bb7f4db7ae5f0ffa"
 EXPECTED_PATCHED_SHA256 = (
-    "e26b771b0f6011d15aaed40b6d7c355cea49d5bd5c8c8f286be65fb732a60687"
+    "fd46c798d0e92c3fb8ab25ad821ad12e0387c25e407ea8d132abc8e5089c87e6"
 )
 
 OLD_DATA = "semgrep-1.181.0.data/"
-NEW_DATA = "semgrep-1.181.0+umbilical.1.data/"
+NEW_DATA = "semgrep-1.181.0+umbilical.2.data/"
 OLD_DIST = "semgrep-1.181.0.dist-info/"
-NEW_DIST = "semgrep-1.181.0+umbilical.1.dist-info/"
+NEW_DIST = "semgrep-1.181.0+umbilical.2.dist-info/"
 
 REPLACEMENTS = (
-    ("Version: 1.181.0\n", "Version: 1.181.0+umbilical.1\n"),
+    ("Version: 1.181.0\n", "Version: 1.181.0+umbilical.2\n"),
     ("Requires-Dist: mcp==1.29.0", "Requires-Dist: mcp>=1.30.0"),
     (
         "Requires-Dist: opentelemetry-api~=1.37.0",
-        "Requires-Dist: opentelemetry-api>=1.45.1",
+        "Requires-Dist: opentelemetry-api>=1.45.2",
     ),
     (
         "Requires-Dist: opentelemetry-sdk~=1.37.0",
-        "Requires-Dist: opentelemetry-sdk>=1.45.1",
+        "Requires-Dist: opentelemetry-sdk>=1.45.2",
     ),
     (
         "Requires-Dist: opentelemetry-exporter-otlp-proto-http~=1.37.0",
-        "Requires-Dist: opentelemetry-exporter-otlp-proto-http>=1.45.1",
+        "Requires-Dist: opentelemetry-exporter-otlp-proto-http>=1.45.2",
     ),
     (
         "Requires-Dist: opentelemetry-instrumentation-requests~=0.58b0",
-        "Requires-Dist: opentelemetry-instrumentation-requests>=0.66b1",
+        "Requires-Dist: opentelemetry-instrumentation-requests>=0.66b2",
     ),
     (
         "Requires-Dist: opentelemetry-instrumentation-threading~=0.58b0",
-        "Requires-Dist: opentelemetry-instrumentation-threading>=0.66b1",
+        "Requires-Dist: opentelemetry-instrumentation-threading>=0.66b2",
     ),
+    ("Requires-Dist: wcmatch~=8.3", "Requires-Dist: wcmatch>=11.2"),
 )
 
 LOCAL_HEADER = struct.Struct("<4s2B4HL2L2H")
@@ -303,17 +305,26 @@ def assert_wheel(patched: bytes) -> None:
         if bad:
             raise SystemExit(f"bad crc for {bad}")
         names = check.namelist()
-        if any(name.startswith(OLD_DATA) or name.startswith(OLD_DIST) for name in names):
+        if any(name.startswith((OLD_DATA, OLD_DIST)) for name in names):
             raise SystemExit("wheel still contains the original version paths")
         metadata_name = next(name for name in names if name.endswith(".dist-info/METADATA"))
         record_name = next(name for name in names if name.endswith(".dist-info/RECORD"))
         metadata = check.read(metadata_name).decode()
         record = check.read(record_name).decode()
-        if "Version: 1.181.0+umbilical.1" not in metadata:
+        if "Version: 1.181.0+umbilical.2" not in metadata:
             raise SystemExit("METADATA version was not rewritten")
-        if "mcp>=1.30.0" not in metadata or "opentelemetry-api>=1.45.1" not in metadata:
+        if (
+            "mcp>=1.30.0" not in metadata
+            or "opentelemetry-api>=1.45.2" not in metadata
+            or "wcmatch>=11.2" not in metadata
+        ):
             raise SystemExit("patched METADATA does not contain the new requirements")
-        if "mcp==1.29.0" in metadata or "~=1.37.0" in metadata or "~=0.58b0" in metadata:
+        if (
+            "mcp==1.29.0" in metadata
+            or "~=1.37.0" in metadata
+            or "~=0.58b0" in metadata
+            or "wcmatch~=8.3" in metadata
+        ):
             raise SystemExit("patched METADATA still has the old pins")
         if record_hash(check.read(metadata_name)) not in record:
             raise SystemExit("RECORD hash does not match patched METADATA")

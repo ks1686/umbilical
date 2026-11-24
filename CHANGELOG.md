@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Bump opentelemetry-api and wcmatch in the semgrep tooling requirements (requirements/semgrep.txt) for Dependabot alerts.
 - Bump mcp and opentelemetry-api in the semgrep tooling requirements (requirements/semgrep.txt) for Dependabot alerts.
 
 ## 1.0.2

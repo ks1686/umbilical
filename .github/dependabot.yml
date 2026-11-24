@@ -1,0 +1,23 @@
+# The Semgrep lock in /requirements installs a locally rebuilt wheel
+# (semgrep==1.181.0+umbilical.2) that Dependabot cannot resolve from
+# PyPI. pip-compile fails with dependency_file_not_resolvable, which
+# is why Dependabot Updates stayed red. Bumps in that directory are
+# done by hand. GitHub Actions updates stay enabled.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: "pip"
+    directory: "/requirements"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 0
+    ignore:
+      - dependency-name: "*"
